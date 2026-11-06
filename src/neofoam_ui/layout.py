@@ -78,9 +78,10 @@ def _measure(op: dict[str, Any], collapsed: frozenset[str] = frozenset()) -> tup
         op["_w"], op["_h"] = AW + 2 * PAD, COLLAPSED_H
     else:
         sizes = [_measure(c, collapsed) for c in op["children"]]
-        inner_w = max(w for w, _ in sizes)
+        inner_w = max((w for w, _ in sizes), default=AW)
         op["_w"] = inner_w + 2 * PAD + LOOP_RIGHT
-        op["_h"] = LOOP_HEAD + sum(h for _, h in sizes) + GAP * (len(sizes) - 1) + PAD
+        # An empty (predicate-only) loop is just its head.
+        op["_h"] = LOOP_HEAD + sum(h for _, h in sizes) + GAP * max(len(sizes) - 1, 0) + PAD
     return op["_w"], op["_h"]
 
 
@@ -140,13 +141,14 @@ def _ops(
                     "connectable": False,
                 }
             )
-            first, last = _ops(op["children"], op["id"], PAD, LOOP_HEAD, inner_w, nodes, edges,
-                               collapsed)
-            edges.append(_edge(dec_id, first, label="[true]"))
-            edges.append(
-                _edge(last, dec_id, sourceHandle="r", targetHandle="r",
-                      **{"class": "nf-back", "style": {"strokeDasharray": "5 4"}})
-            )
+            if op["children"]:
+                first, last = _ops(op["children"], op["id"], PAD, LOOP_HEAD, inner_w, nodes, edges,
+                                   collapsed)
+                edges.append(_edge(dec_id, first, label="[true]"))
+                edges.append(
+                    _edge(last, dec_id, sourceHandle="r", targetHandle="r",
+                          **{"class": "nf-back", "style": {"strokeDasharray": "5 4"}})
+                )
         if prev is not None:
             label = "[false]" if prev["kind"] == "loop" else None
             edges.append(_edge(prev["id"], op["id"], **({"label": label} if label else {})))

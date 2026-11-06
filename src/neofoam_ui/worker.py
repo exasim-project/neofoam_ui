@@ -32,7 +32,10 @@ import threading
 from typing import Any, Callable, TextIO
 
 from neofoam_ui.engine import Session
-from neofoam_ui.parallel import Hub, finalize_mpi, follow, rank_info, relay
+from neofoam_ui.parallel import Hub, finish, follow, rank_info, relay
+
+#: Seconds after a ``stop`` before the worker exits even if the solver is stuck.
+STOP_GRACE = 20.0
 
 __all__ = ["load_solver", "main"]
 
@@ -129,37 +132,58 @@ def main(argv: list[str] | None = None) -> int:
         session.gather = hub.stats
     commands: queue.Queue[dict[str, Any]] = queue.Queue()
 
+    def handle(cmd: dict[str, Any]) -> None:
+        # Pause / stop / breakpoints must reach a session that is busy running.
+        kind = cmd["cmd"]
+        if kind == "pause":
+            session.pause_requested = True
+        elif kind == "stop":
+            session.stop_requested = True
+            commands.put(cmd)
+            # A solver stuck inside an operation (e.g. a collective whose peer died)
+            # never returns to the command loop: exit anyway.
+            timer = threading.Timer(STOP_GRACE, os._exit, (1,))
+            timer.daemon = True
+            timer.start()
+        elif kind == "breakpoints":
+            session.breakpoints = {str(i) for i in cmd["ids"]}
+        elif kind == "delay":
+            session.delay = float(cmd["seconds"])
+        elif kind == "step":
+            commands.put({"cmd": "step", "mode": str(cmd["mode"]), "node": cmd.get("node")})
+        else:
+            raise ValueError(f"unknown command {kind!r}")
+
     def read_commands() -> None:
-        for line in sys.stdin:
-            if not line.strip():
-                continue
-            cmd = json.loads(line)
-            # Pause / stop / breakpoints must reach a session that is busy running.
-            if cmd["cmd"] == "pause":
-                session.pause_requested = True
-            elif cmd["cmd"] == "stop":
-                session.stop_requested = True
-                commands.put(cmd)
-            elif cmd["cmd"] == "breakpoints":
-                session.breakpoints = set(cmd["ids"])
-            elif cmd["cmd"] == "delay":
-                session.delay = float(cmd["seconds"])
-            else:
-                commands.put(cmd)
-        commands.put({"cmd": "stop"})  # UI went away
+        try:
+            for line in sys.stdin:
+                if not line.strip():
+                    continue
+                try:
+                    handle(json.loads(line))
+                except (ValueError, KeyError, TypeError) as exc:  # a bad command, not a dead UI
+                    out({"type": "log_error", "text": f"bad command {line.strip()!r}: {exc!r}"})
+        finally:
+            commands.put({"cmd": "stop"})  # UI went away (or the reader died)
 
     threading.Thread(target=read_commands, daemon=True).start()
     session.start()
     while True:
         cmd = commands.get()
         if cmd["cmd"] == "stop":
+            finalized = True
             if hub is not None:
                 hub.stop()
-                finalize_mpi()
+                finalized = finish(session)
             out({"type": "stopped"})
+            if not finalized:
+                os._exit(1)  # stuck in a collective: let mpirun clean up
             return 0
         if cmd["cmd"] == "step":
-            session.advance(cmd["mode"], cmd.get("node"))
+            try:
+                session.advance(cmd["mode"], cmd.get("node"))
+            except ValueError as exc:  # unknown step mode
+                out({"type": "log_error", "text": str(exc)})
 
 
 if __name__ == "__main__":

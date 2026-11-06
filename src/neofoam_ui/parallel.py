@@ -26,14 +26,13 @@ import json
 import os
 import socket
 import sys
-import threading
 import time
 import traceback
 from typing import Any, Iterator, Optional
 
 from neofoam_ui.engine import Event, Session
 
-__all__ = ["SYNC_ENV", "Hub", "finalize_mpi", "follow", "rank_info", "relay"]
+__all__ = ["SYNC_ENV", "Hub", "finalize_mpi", "finish", "follow", "rank_info", "relay"]
 
 SYNC_ENV = "NEOFOAM_UI_SYNC"
 
@@ -60,12 +59,20 @@ def _address() -> tuple[str, int]:
     return host or "127.0.0.1", int(port)
 
 
-def finalize_mpi(timeout: float = 10.0) -> None:
+#: Seconds rank 0 waits for a follower's reply before dropping it.
+REPLY_TIMEOUT = 60.0
+#: Seconds a rank waits for MPI_Finalize on stop before exiting regardless.
+FINALIZE_TIMEOUT = 10.0
+
+
+def finalize_mpi() -> None:
     """``MPI_Finalize`` if the solver initialised MPI, so ``mpirun`` sees a clean exit.
 
     OpenFOAM finalizes in the argList destructor, which never runs here: the
     session holds the context until the process ends. Collective, so every rank
-    calls it on ``stop``; a rank stuck in a collective must not hang the exit.
+    calls it on ``stop``. Call it on the thread that initialised MPI
+    (:meth:`Session.in_solver_thread`), with a timeout: a rank stuck in a
+    collective never returns from it.
     """
     name = ctypes.util.find_library("mpi")
     if name is None:
@@ -81,9 +88,12 @@ def finalize_mpi(timeout: float = 10.0) -> None:
     lib.MPI_Finalized(ctypes.byref(flag))
     if flag.value:
         return
-    done = threading.Thread(target=lib.MPI_Finalize, daemon=True)
-    done.start()
-    done.join(timeout)
+    lib.MPI_Finalize()
+
+
+def finish(session: Session) -> bool:
+    """Finalize MPI on the solver's thread; False if it did not complete in time."""
+    return session.in_solver_thread(finalize_mpi, FINALIZE_TIMEOUT)
 
 
 class Hub:
@@ -96,6 +106,7 @@ class Hub:
         try:
             for _ in range(followers):
                 conn, _ = server.accept()
+                conn.settimeout(REPLY_TIMEOUT)
                 stream = conn.makefile("rw", encoding="utf-8")
                 hello = json.loads(stream.readline())
                 self._peers.append((hello["rank"], stream))
@@ -105,17 +116,34 @@ class Hub:
 
     def _send(self, msg: dict[str, Any]) -> None:
         line = json.dumps(msg) + "\n"
-        for _, stream in self._peers:
-            stream.write(line)
-            stream.flush()
+        for peer in list(self._peers):
+            try:
+                peer[1].write(line)
+                peer[1].flush()
+            except OSError:
+                self._drop(peer, "is gone")
+
+    def _drop(self, peer: tuple[int, Any], why: str) -> None:
+        print(f"neofoam_ui: rank {peer[0]} {why}; no longer followed", file=sys.stderr, flush=True)
+        self._peers.remove(peer)
 
     def go(self) -> None:
         self._send({"op": "go"})
 
     def stats(self) -> list[dict[str, dict[str, Any]]]:
+        """Each follower's field stats; a rank that is gone or does not answer is dropped."""
         self._send({"op": "stats"})
-        lines = [stream.readline() for _, stream in self._peers]
-        return [json.loads(line) for line in lines if line]  # "" = that rank is gone
+        replies = []
+        for peer in list(self._peers):
+            try:
+                line = peer[1].readline()
+            except OSError:  # incl. the reply timeout: its stream is out of step from now on
+                line = ""
+            if line:
+                replies.append(json.loads(line))
+            else:
+                self._drop(peer, "did not answer")
+        return replies
 
     def stop(self) -> None:
         try:
@@ -176,6 +204,7 @@ def follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
             stream.write(json.dumps(stats) + "\n")
             stream.flush()
         elif op == "stop":
-            finalize_mpi()
+            if session is not None and not finish(session):
+                os._exit(1)  # stuck in a collective: let mpirun clean up
             return 0
     return 1  # rank 0 went away

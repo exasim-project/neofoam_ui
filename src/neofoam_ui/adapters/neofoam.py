@@ -87,7 +87,7 @@ class ObservedNeoFoamSolver(_FieldsMixin):
             with observe(stepper):  # type: ignore[arg-type]  # duck-typed observer
                 return self._run(self.argv)
 
-        thread = ThreadedProgram(target)
+        thread = session.program_thread = ThreadedProgram(target)
         stepper = _Stepper(session, thread.pause)
         for event in thread:
             if event.kind == "end" and thread.result is not None:
@@ -109,6 +109,11 @@ class _Stepper:
         self.t0 = 0.0
         #: Ops currently between before/after (an untracked op run inside a tracked one is skipped).
         self.open: list[Optional[str]] = []
+        #: Per scope (loop id, "" = top level): nodes already run in its current pass, so the
+        #: same Operation object listed twice under one parent maps to ``x`` then ``x#2``.
+        self.taken: dict[str, set[str]] = {}
+        #: Node of the loop test between before_loop_test and after_loop_test.
+        self.test_node: Optional[str] = None
 
     # -- init -----------------------------------------------------------------------------
 
@@ -148,19 +153,23 @@ class _Stepper:
 
         index(operations.ops, ops, "")
 
-    def _node(self, op: Any) -> Optional[str]:
+    def _pick(self, op: Any) -> Optional[str]:
+        """The node ``op`` runs as here: the next not yet run in the current scope's pass."""
         parent = self.stack[-1][0] if self.stack else ""
-        for p, node in self.nodes.get(id(op), ()):
-            if p == parent:
-                return node
-        return None
+        places = [node for p, node in self.nodes.get(id(op), ()) if p == parent]
+        if not places:
+            return None
+        taken = self.taken.setdefault(parent, set())
+        node = next((n for n in places if n not in taken), places[0])
+        taken.add(node)
+        return node
 
     def _see(self, ctx: Any) -> None:
         if self.s.ctx is not ctx:
             self.s.set_context(ctx)
 
     def before_operation(self, op: Any, ctx: Any) -> None:
-        node = self._node(op) if not any(self.open) else None
+        node = self._pick(op) if not any(self.open) else None
         self.open.append(node)
         if node is None:
             return
@@ -176,18 +185,24 @@ class _Stepper:
         self.s.record("exec", node, self.names[node], ms, stack=tuple(self.stack))
 
     def before_loop_test(self, op: Any, ctx: Any, iteration: int) -> None:
-        if self.stack and self.stack[-1][0] in {n for _, n in self.nodes.get(id(op), ())}:
-            self.stack.pop()  # the body of the previous iteration is done
-        node = self._node(op)
-        if node is None or any(self.open):
+        self.test_node = None
+        if any(self.open):
             return
+        if self.stack and self.stack[-1][0] in {n for _, n in self.nodes.get(id(op), ())}:
+            node = self.stack.pop()[0]  # the body of the previous iteration is done
+        else:
+            node = self._pick(op)  # first test: entering the loop
+        if node is None:
+            return
+        self.taken.pop(node, None)  # its body starts a new pass
+        self.test_node = node
         self._see(ctx)
         self.pause(Event("test", node, len(self.stack), iter=iteration, stack=tuple(self.stack)))
         self.t0 = time.perf_counter()
 
     def after_loop_test(self, op: Any, ctx: Any, iteration: int, result: bool) -> None:
-        node = self._node(op)
-        if node is None or any(self.open):
+        node, self.test_node = self.test_node, None
+        if node is None:
             return
         ms = (time.perf_counter() - self.t0) * 1e3
         self.s.record("test", node, self.names[node], ms, stack=tuple(self.stack),

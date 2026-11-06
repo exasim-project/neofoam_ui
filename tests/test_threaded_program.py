@@ -15,7 +15,8 @@ class SelfDriven(Heat1D):
         self.fail_at = fail_at
 
     def program(self, session):
-        thread = self.thread = ThreadedProgram(lambda: self._run(session, thread.pause))
+        thread = self.thread = session.program_thread = ThreadedProgram(
+            lambda: self._run(session, thread.pause))
         yield from thread
 
     def _run(self, s, pause):
@@ -107,3 +108,27 @@ def test_closing_unwinds_the_solver_thread():
 @pytest.mark.parametrize("mode", ["over", "out", "run"])
 def test_other_modes_match_tree_mode(mode):
     assert events(SelfDriven(), mode)[1] == events(Heat1D(), mode)[1]
+
+
+@pytest.mark.parametrize("finish", [False, True])
+def test_calls_run_on_the_solver_thread(finish):
+    import threading
+
+    solver = SelfDriven()
+    session = Session(solver, lambda m: None)
+    session.start()
+    if finish:
+        session.advance("run")
+        assert session.finished
+    names = []
+    assert session.in_solver_thread(lambda: names.append(threading.current_thread().name), 5)
+    assert names == ["solver"]
+
+
+def test_tree_mode_calls_run_here():
+    import threading
+
+    session = Session(Heat1D(), lambda m: None)
+    names = []
+    assert session.in_solver_thread(lambda: names.append(threading.current_thread().name))
+    assert names == [threading.current_thread().name]

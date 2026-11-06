@@ -65,3 +65,10 @@ def test_nodes_show_their_position():
     steps, ops = _graph()
     nodes = {n["id"]: n for n in build_flow(steps, ops)["nodes"]}
     assert nodes["time_loop/inner_loop/solve"]["data"]["number"] == "1.4.2"
+
+
+def test_empty_loop_is_drawn():
+    ops = [{"id": "wait", "name": "wait", "kind": "loop", "children": [], "test": "until()"},
+           {"id": "after", "name": "after", "kind": "action", "children": []}]
+    nodes = {n["id"]: n for n in build_flow([], ops)["nodes"]}
+    assert nodes["wait"]["type"] == "loop" and "wait::test" in nodes and "after" in nodes

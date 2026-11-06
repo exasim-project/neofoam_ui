@@ -137,6 +137,7 @@ class StepperApp:
         self.ctrl = server.controller
         self.solver_spec = solver_spec
         self.proc: Optional[asyncio.subprocess.Process] = None
+        self._restarting = False
         self.init_steps: list[dict[str, Any]] = []
         self.ops: list[dict[str, Any]] = []
         self.index: dict[str, dict[str, Any]] = {}
@@ -197,6 +198,7 @@ class StepperApp:
     # -- worker -------------------------------------------------------------------------
 
     async def spawn(self) -> None:
+        """Start a worker and read its messages in the background."""
         env = dict(os.environ)
         src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
@@ -220,9 +222,13 @@ class StepperApp:
         self._send({"cmd": "delay", "seconds": self.state.delay_ms / 1000})
         self._send({"cmd": "breakpoints", "ids": list(self.state.bps)})
         asynchronous.create_task(self._read_stderr(self.proc))
-        proc = self.proc
+        asynchronous.create_task(self._read_stdout(self.proc))
+
+    async def _read_stdout(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stdout is not None
         async for line in proc.stdout:
+            if self.proc is not proc:  # replaced by a restart: drop the old worker's messages
+                break
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
@@ -238,6 +244,8 @@ class StepperApp:
     async def _read_stderr(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stderr is not None
         async for line in proc.stderr:
+            if self.proc is not proc:
+                break
             with self.state:
                 self._console(line.decode(errors="replace").rstrip(), "err")
 
@@ -258,6 +266,8 @@ class StepperApp:
             self._rebuild_graph()
         elif kind == "log":
             self._on_log(msg)
+        elif kind == "log_error":
+            self._console(f"✖ {msg['text']}", "err")
         elif kind == "stdout":
             self._console(msg["text"], "out")
         elif kind == "breakpoint":
@@ -414,6 +424,15 @@ class StepperApp:
         self._send({"cmd": "stop"})
 
     async def restart(self) -> None:
+        if self._restarting:  # e.g. a double click while the old worker shuts down
+            return
+        self._restarting = True
+        try:
+            await self._restart()
+        finally:
+            self._restarting = False
+
+    async def _restart(self) -> None:
         old = self.proc
         self.proc = None
         if old is not None and old.returncode is None:

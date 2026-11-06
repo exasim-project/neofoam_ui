@@ -199,6 +199,8 @@ class Session:
         self.last_written_by: dict[str, str] = {}
         self.last_writes: list[str] = []
         self._prints: dict[str, int] = {}
+        #: The thread a self-driving solver runs on (set by its program), see :meth:`in_solver_thread`.
+        self.program_thread: Optional[ThreadedProgram] = None
         #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
         self.gather: Optional[Callable[[], list[dict[str, dict[str, Any]]]]] = None
         program = getattr(solver, "program", None)
@@ -234,6 +236,13 @@ class Session:
         self.ops = ops
         assign_ids(self.ops)
         self.emit({"type": "graph", "activity": "exec", "ops": [op_dict(o) for o in self.ops]})
+
+    def in_solver_thread(self, fn: Callable[[], Any], timeout: Optional[float] = None) -> bool:
+        """Run ``fn`` on the thread the solver runs on; False if that timed out."""
+        if self.program_thread is None:  # tree mode: the solver runs on this thread
+            fn()
+            return True
+        return self.program_thread.call(fn, timeout)
 
     def record(self, kind: str, node: str, name: str, ms: float, **extra: Any) -> None:
         """Book-keeping after an event ran: timing, call count, written fields, log line."""
@@ -388,7 +397,8 @@ class Session:
         if self.ctx is None:
             return {"scalars": {}, "fields": [], "init_done": sorted(self.results)}
         stats = self.field_stats()
-        for other in self.gather() if self.gather else ():  # the other MPI ranks
+        # The other MPI ranks; not after a failure, they may be stuck in a collective.
+        for other in self.gather() if self.gather and not self.failed else ():
             for name, theirs in other.items():
                 if name not in stats:
                     stats[name] = dict(theirs)
@@ -444,6 +454,9 @@ class ThreadedProgram:
     session asks for the next one. An exception in ``target`` is re-raised
     from the generator; ``target`` returning ends it with an ``end`` event.
     Closing the generator unwinds the blocked thread.
+
+    The thread outlives ``target`` so that :meth:`call` can still run code on
+    it — MPI must be finalized on the thread that initialised it.
     """
 
     def __init__(self, target: Callable[[], Any]) -> None:
@@ -452,7 +465,8 @@ class ThreadedProgram:
 
         self._target = target
         self._events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
-        self._resume: queue.Queue[bool] = queue.Queue(maxsize=1)
+        #: True = resume, False = unwind / end, a callable = run it here and keep waiting.
+        self._resume: queue.Queue[Any] = queue.Queue(maxsize=1)
         self._thread = threading.Thread(target=self._main, name="solver", daemon=True)
         #: What ``target`` returned.
         self.result: Any = None
@@ -464,14 +478,47 @@ class ThreadedProgram:
             return
         except BaseException as exc:  # noqa: BLE001 - handed to the session
             self._events.put(("error", exc))
-            return
-        self._events.put(("done", None))
+        else:
+            self._events.put(("done", None))
+        while self._wait() is True:  # serve call() until closed
+            pass
+
+    def _wait(self) -> bool:
+        """Block for the session's word, running any calls handed over meanwhile."""
+        while True:
+            cmd = self._resume.get()
+            if isinstance(cmd, bool):
+                return cmd
+            cmd()
 
     def pause(self, event: Event) -> None:
         """Called from the solver thread: stop here until the session moves on."""
         self._events.put(("event", event))
-        if not self._resume.get():
+        if not self._wait():
             raise _Stopped
+
+    def call(self, fn: Callable[[], Any], timeout: Optional[float] = None) -> bool:
+        """Run ``fn`` on the solver thread while it is paused or finished.
+
+        Returns False if it did not complete within ``timeout`` (e.g. the solver
+        thread is stuck inside an operation).
+        """
+        import threading  # noqa: PLC0415
+
+        if not self._thread.is_alive():
+            return False
+        done = threading.Event()
+
+        def run() -> None:
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 - must not kill the solver thread
+                traceback.print_exc()
+            finally:
+                done.set()
+
+        self._resume.put(run)
+        return done.wait(timeout)
 
     def __iter__(self) -> Iterator[Event]:
         self._thread.start()

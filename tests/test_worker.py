@@ -47,3 +47,23 @@ def test_worker_protocol_roundtrip():
     finally:
         proc.kill()
         proc.wait()
+
+
+def test_bad_commands_are_reported_and_stop_still_works():
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "neofoam_ui.worker", "neofoam_ui.toy.heat1d:Heat1D"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        for bad in ("not json", '{"no": "cmd"}', '{"cmd": "delay", "seconds": "x"}',
+                    '{"cmd": "step", "mode": "sideways"}'):
+            proc.stdin.write(bad + "\n")
+        proc.stdin.write('{"cmd": "stop"}\n')
+        proc.stdin.flush()
+        kinds = [json.loads(line)["type"] for line in proc.stdout]
+        assert kinds.count("log_error") == 4
+        assert kinds[-1] == "stopped"
+        assert proc.wait(timeout=20) == 0
+    finally:
+        proc.kill()
+        proc.wait()
