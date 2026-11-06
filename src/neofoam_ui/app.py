@@ -96,8 +96,15 @@ _CSS = r"""
 .nf-bp.on { background: #d22; border: 1.5px solid #d22; }
 .nf-loop { border: 1.4px solid #7b8fc7; background: rgba(123,143,199,.07); border-radius: 8px; }
 .nf-loop.active { border-color: #e0362c; border-width: 2px; }
+.nf-loop.collapsed { background: #f3f6ff; border-radius: 12px; cursor: pointer; }
+.nf-loop.collapsed.active { background: #ffe9e7; }
+.nf-tog { display: inline-block; width: 16px; cursor: pointer; font-size: 13px; opacity: .9; }
+.nf-loop-size { position: absolute; right: 10px; bottom: 6px; font-size: 11px; opacity: .6; }
+.nf-node.hlw { box-shadow: 0 0 0 3px #f08c00; }
+.nf-node.hlr { box-shadow: 0 0 0 3px #4d8fe0; }
+.nf-vars tr.hl td { outline: 1px solid #f08c00; background: rgba(240,140,0,.12); }
 .nf-loop-title { position: absolute; left: 10px; top: 6px; font-size: 12px; opacity: .8; }
-.nf-loop-test { position: absolute; left: 10px; top: 24px; font-size: 11px; opacity: .65; font-family: ui-monospace, Menlo, monospace; }
+.nf-loop-test { position: absolute; left: 26px; top: 24px; font-size: 11px; opacity: .65; font-family: ui-monospace, Menlo, monospace; }
 .nf-decision { width: 100%; height: 100%; position: relative; cursor: pointer; }
 .nf-decision .d { position: absolute; inset: 5px; transform: rotate(45deg); border: 1.6px solid #7b8fc7; background: #f3f6ff; }
 .nf-decision.cur .d { border-color: #e0362c; border-width: 2.5px; background: #ffe9e7; }
@@ -135,6 +142,9 @@ class StepperApp:
         self.index: dict[str, dict[str, Any]] = {}
         self.calls: dict[str, int] = {}
         self.last_ms: dict[str, float] = {}
+        self.total_ms: dict[str, float] = {}
+        #: Fields each action was observed to change.
+        self.writes_seen: dict[str, list[str]] = {}
         self._reset_state()
         self.editor: Any = None
         self._build_ui()
@@ -143,7 +153,10 @@ class StepperApp:
         self.server.trigger("nf_toggle_bp")(self.toggle_bp)
         self.server.trigger("nf_select")(self.select)
         self.server.trigger("nf_key")(self._on_key)
+        self.server.trigger("nf_collapse")(self.toggle_collapse)
+        self.server.trigger("nf_field")(self.highlight_field)
         self.state.change("delay_ms")(self._on_delay)
+        self.state.change("heat_on")(lambda **_: self._refresh_heat())
 
     # -- state ------------------------------------------------------------------------
 
@@ -160,6 +173,12 @@ class StepperApp:
         s.active_loops = []
         s.visited = []
         s.bps = s.bps if isinstance(s.bps, list) else []
+        s.collapsed = s.collapsed if isinstance(s.collapsed, list) else []
+        s.heat_on = bool(s.heat_on)
+        s.heat = {}
+        s.heat_ms = {}
+        s.hl_field = None
+        s.hl = {}
         s.selected = None
         s.status = "starting solver worker…"
         s.logs = []
@@ -278,6 +297,8 @@ class StepperApp:
         ev = msg["event"]
         self._set_event(ev)
         self.calls, self.last_ms = msg["calls"], msg["last_ms"]
+        self.total_ms = msg.get("total_ms", {})
+        self.writes_seen = msg.get("writes_seen", {})
         s = self.state
         s.running = False
         s.finished = msg["finished"]
@@ -288,6 +309,8 @@ class StepperApp:
             {**r, "min": _fmt(r["min"]), "max": _fmt(r["max"]), "mean": _fmt(r["mean"])}
             for r in summary["fields"]
         ]
+        self._refresh_heat()
+        self._refresh_highlight()
         if s.failed:
             s.status = "✖ failed — see console; Restart to try again"
         elif s.finished:
@@ -329,7 +352,7 @@ class StepperApp:
 
     # -- graph ------------------------------------------------------------------------------
 
-    def _rebuild_graph(self) -> None:
+    def _rebuild_graph(self, fit: bool = True) -> None:
         self.index = {}
         tree: list[dict[str, Any]] = [{"id": "act:init", "name": "Initialization", "depth": 0,
                                        "color": "#8a94a6", "kind": "activity"}]
@@ -354,9 +377,11 @@ class StepperApp:
 
         walk(self.ops, None, 1)
         self.state.tree = tree
-        flow = build_flow(self.init_steps, self.ops or None, self.state.solver_name)
+        collapsed = frozenset(self.state.collapsed or ())
+        flow = build_flow(self.init_steps, self.ops or None, self.state.solver_name, collapsed)
         self.editor.graph = flow
-        self.editor.fit_view()
+        if fit:
+            self.editor.fit_view()
         self._refresh_bp_list()
 
     def _name(self, node_id: Optional[str]) -> str:
@@ -401,6 +426,7 @@ class StepperApp:
                 await old.wait()
         with self.state:
             self.init_steps, self.ops, self.index = [], [], {}
+            self.calls, self.last_ms, self.total_ms, self.writes_seen = {}, {}, {}, {}
             self._reset_state()
             self.editor.clear_graph()
         await self.spawn()
@@ -426,9 +452,68 @@ class StepperApp:
         self.state.selected = node_id
         self._refresh_inspector()
         if pan and node_id in self.index:
-            target = f"{node_id}::test" if self.index[node_id]["kind"] == "loop" else node_id
+            shown = self._shown(node_id)
+            target = (f"{shown}::test" if self.index[shown]["kind"] == "loop"
+                      and shown not in self.state.collapsed else shown)
             self.server.js_call(getattr(self.editor, "_NodeEditor__ref"), "fitView",
                                 {"nodes": [target], "duration": 250, "maxZoom": 1.0, "minZoom": 0.5, "padding": 1.2})
+
+    def toggle_collapse(self, loop_id: str) -> None:
+        collapsed = list(self.state.collapsed)
+        if loop_id in collapsed:
+            collapsed.remove(loop_id)
+        else:
+            collapsed.append(loop_id)
+        self.state.collapsed = collapsed
+        self._rebuild_graph(fit=False)
+        self._refresh_heat()
+
+    def _shown(self, node_id: str) -> str:
+        """``node_id``, or the outermost collapsed loop hiding it."""
+        shown, cur = node_id, self.index.get(node_id, {}).get("parent")
+        while cur:
+            if cur in self.state.collapsed:
+                shown = cur
+            cur = self.index[cur]["parent"]
+        return shown
+
+    def _subtree_ms(self, op_id: str) -> float:
+        info = self.index[op_id]
+        return self.total_ms.get(op_id, 0.0) + sum(self._subtree_ms(c) for c in info["child_ids"])
+
+    def _refresh_heat(self) -> None:
+        """Tint actions, init steps and collapsed loops by their share of the summed time."""
+        s = self.state
+        if not s.heat_on:
+            s.heat, s.heat_ms = {}, {}
+            return
+        times = {k: v for k, v in self.total_ms.items()
+                 if k in self.index and self.index[k]["kind"] in ("action", "init")}
+        times.update({lid: self._subtree_ms(lid) for lid in s.collapsed if lid in self.index})
+        top = max(times.values(), default=0.0) or 1.0
+        s.heat = {k: f"hsl(28, 95%, {96 - 42 * (v / top):.0f}%)" for k, v in times.items()}
+        s.heat_ms = {k: _fmt_ms(v) for k, v in times.items()}
+
+    def highlight_field(self, field: str) -> None:
+        self.state.hl_field = None if self.state.hl_field == field else field
+        self._refresh_highlight()
+
+    def _refresh_highlight(self) -> None:
+        """Ops that wrote (observed or declared) or read (declared) the highlighted field."""
+        field, hl = self.state.hl_field, {}
+        if field:
+            for op_id, info in self.index.items():
+                if info["kind"] == "init":
+                    continue
+                if field in self.writes_seen.get(op_id, ()) or field in (info.get("writes") or ()):
+                    hl[op_id] = "w"
+                elif field in (info.get("reads") or ()):
+                    hl[op_id] = "r"
+            for op_id in list(hl):  # a collapsed loop stands in for its body
+                shown = self._shown(op_id)
+                if shown != op_id and hl.get(shown) != "w":
+                    hl[shown] = hl[op_id]
+        self.state.hl = hl
 
     def _on_delay(self, delay_ms: float, **_: Any) -> None:
         self._send({"cmd": "delay", "seconds": float(delay_ms) / 1000})
@@ -452,8 +537,10 @@ class StepperApp:
             nav += [{"dir": "➡", **chip(c)} for c in info["succs"]]
         else:
             kind_label = "Loop (IterativeOp)" if info["kind"] == "loop" else "Action (SequentialOp)"
-            rows += [{"k": "number", "v": info.get("number") or "—"},
+            rows += [{"k": "position", "v": info.get("pos") or "—"},
                      {"k": "domain", "v": info.get("domain") or "—"}]
+            if info.get("number") and info.get("number") != info.get("pos"):
+                rows.append({"k": "declared no.", "v": info["number"]})
             if info.get("test"):
                 rows.append({"k": "loop test", "v": info["test"]})
             if info.get("guard"):
@@ -475,6 +562,8 @@ class StepperApp:
         rows.append({"k": "calls", "v": str(self.calls.get(sel, 0))})
         if sel in self.last_ms:
             rows.append({"k": "last time", "v": f"{self.last_ms[sel]:.3f} ms"})
+        if sel in self.total_ms:
+            rows.append({"k": "total time", "v": _fmt_ms(self.total_ms[sel])})
         self.state.insp = {
             "id": sel,
             "name": info["name"],
@@ -485,6 +574,7 @@ class StepperApp:
             "nav": nav,
             "reads": info.get("reads") or [],
             "writes": info.get("writes") or [],
+            "seen": self.writes_seen.get(sel, []),
             "bp": sel in self.state.bps,
         }
 
@@ -535,6 +625,9 @@ class StepperApp:
                                title="animation delay while running")
                     v3.VCheckbox(v_model=("follow",), label="follow", hide_details=True,
                                  density="compact", classes="ml-2", style="flex: none;")
+                    v3.VCheckbox(v_model=("heat_on",), label="timing", hide_details=True,
+                                 density="compact", classes="ml-1", style="flex: none;",
+                                 title="tint nodes by their summed run time")
 
             with layout.drawer as drawer:
                 drawer.width = 250
@@ -560,6 +653,8 @@ class StepperApp:
                     html.Div("red = next to execute (token)")
                     html.Div("green = executed this time step")
                     html.Div("● breakpoint — click the gutter left of a node")
+                    html.Div("▾ / ▸ on a loop: collapse / expand its body")
+                    html.Div("click a field: ops that wrote (orange) / read (blue) it")
 
             with layout.content:
                 with html.Div(classes="nf-grid"):
@@ -584,7 +679,10 @@ class StepperApp:
                                             html.Th(h)
                                 with html.Tbody():
                                     with html.Tr(v_for="f in fields_rows", key="f.name",
-                                                 classes=("{ changed: f.changed }",)):
+                                                 classes=("{ changed: f.changed, hl: f.field === hl_field }",),
+                                                 click="trigger('nf_field', [f.field])",
+                                                 style="cursor: pointer;",
+                                                 title="highlight the ops that write / read this field"):
                                         html.Td("{{ f.name }}", classes="nf-mono")
                                         html.Td("{{ f.min }}")
                                         html.Td("{{ f.max }}")
@@ -615,8 +713,9 @@ class StepperApp:
             with CustomNode("action"):
                 with html.Div(classes=(
                     "['nf-node', 'nf-action', { cur: " + cls_node + ", sel: props.id === selected,"
-                    " done: visited.includes(props.id) && props.id !== cur_node, inj: !!props.data.injected_by }]",
-                )):
+                    " done: visited.includes(props.id) && props.id !== cur_node, inj: !!props.data.injected_by,"
+                    " hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]",
+                ), style=(_HEAT,)):
                     Handle(position="top", type="target", id="t")
                     Handle(position="bottom", type="source", id="b")
                     Handle(position="right", type="source", id="r")
@@ -624,8 +723,8 @@ class StepperApp:
                               raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.id])"'])
                     html.Span(classes="nf-stripe", style=("`background:${props.data.color}`",))
                     html.Span("{{ props.data.label }}", classes="nf-label")
-                    html.Span("{{ props.data.guard ? '[' + props.data.guard + ']' : props.data.number }}",
-                              classes="nf-meta")
+                    html.Span("{{ heat_ms[props.id] || (props.data.guard ? '[' + props.data.guard + '] '"
+                              " : '') + props.data.number }}", classes="nf-meta")
                     html.Span("⊕ {{ props.data.injected_by }}", classes="nf-badge",
                               v_if="props.data.injected_by")
 
@@ -633,20 +732,35 @@ class StepperApp:
                 with html.Div(classes=(
                     "['nf-node', 'nf-init', { cur: " + cls_node + ", sel: props.id === selected,"
                     " done: visited.includes(props.id) && props.id !== cur_node }]",
-                )):
+                ), style=(_HEAT,)):
                     Handle(position="top", type="target", id="t")
                     Handle(position="bottom", type="source", id="b")
                     html.Span(classes=("['nf-bp', { on: bps.includes(props.id) }]",),
                               raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.id])"'])
                     html.Span(classes="nf-stripe", style=("`background:${props.data.color}`",))
                     html.Span("{{ props.data.label }}", classes="nf-label")
+                    html.Span("{{ heat_ms[props.id] }}", classes="nf-meta", v_if="heat_ms[props.id]")
 
             with CustomNode("loop"):
-                with html.Div(classes=("['nf-node', 'nf-loop', { active: active_loops.includes(props.id) }]",)):
+                with html.Div(classes=(
+                    "['nf-node', 'nf-loop', { active: active_loops.includes(props.id),"
+                    " collapsed: props.data.collapsed, sel: props.data.collapsed && props.id === selected,"
+                    " hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]",
+                ), style=("props.data.collapsed ? " + _HEAT + " : ''",)):
                     Handle(position="top", type="target", id="t")
                     Handle(position="bottom", type="source", id="b")
-                    html.Div("«loop» {{ props.data.label }}", classes="nf-loop-title")
+                    with html.Div(classes="nf-loop-title"):
+                        html.Span("{{ props.data.collapsed ? '▸' : '▾' }}", classes="nf-tog",
+                                  title="collapse / expand",
+                                  raw_attrs=['@click.stop="trigger(\'nf_collapse\', [props.id])"'])
+                        html.Span("«loop» {{ props.data.number }} {{ props.data.label }}")
                     html.Div("test: {{ props.data.test }}", classes="nf-loop-test")
+                    html.Div("{{ heat_ms[props.id] ? heat_ms[props.id] + ' · ' : '' }}"
+                             "{{ props.data.size }} actions", classes="nf-loop-size",
+                             v_if="props.data.collapsed")
+                    html.Span(classes=("['nf-bp', { on: bps.includes(props.id) }]",),
+                              v_if="props.data.collapsed",
+                              raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.id])"'])
 
             with CustomNode("decision"):
                 with html.Div(classes=(
@@ -700,6 +814,12 @@ class StepperApp:
                     v3.VChip("{{ n.dir }} {{ n.name }}", v_for="n in insp.nav", key="n.dir + n.id",
                              size="small", classes="mr-1 mb-1", variant="tonal",
                              click="trigger('nf_select', [n.id])")
+            with html.Div(classes="nf-sect", v_if="insp.seen.length"):
+                html.Div("Observed writes", classes="nf-h")
+                with html.Div(classes="px-3"):
+                    v3.VChip("{{ f }}", v_for="f in insp.seen", key="'s' + f", size="x-small",
+                             color="warning", variant="tonal", classes="mr-1 mb-1",
+                             prepend_icon="mdi-pencil", click="trigger('nf_field', [f])")
             with html.Div(classes="nf-sect", v_if="insp.reads.length || insp.writes.length"):
                 html.Div("Reads / writes (declared)", classes="nf-h")
                 with html.Div(classes="px-3"):
@@ -726,6 +846,14 @@ class StepperApp:
                 v3.VIcon("mdi-close", size="x-small", raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [b.id])"'])
         html.Div("Click the gutter left of a node to add one.", v_if="!bp_list.length",
                  classes="px-3 text-caption", style="opacity:.6")
+
+
+#: Background of a node in the timing heat map (``heat`` holds a CSS colour per node id).
+_HEAT = "heat[props.id] ? `background:${heat[props.id]}` : ''"
+
+
+def _fmt_ms(ms: float) -> str:
+    return f"{ms / 1000:.2f} s" if ms >= 1000 else f"{ms:.1f} ms"
 
 
 def _fmt(v: Any) -> str:

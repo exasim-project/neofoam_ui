@@ -8,6 +8,7 @@ Two activities are stacked vertically inside one canvas:
   and a back edge from the last child to the diamond.
 
 Positions of children are relative to their parent group (VueFlow ``parentNode``).
+A *collapsed* loop is drawn as a single node without its body.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ GAP = 36
 PAD = 26
 LOOP_HEAD = 104  # title + test text + diamond
 LOOP_RIGHT = 36  # lane for the back edge
+COLLAPSED_H = 64  # a collapsed loop: title + test line
 DIAMOND = 34
 ACT_HEAD = 40  # activity frame title
 TOP = 0
@@ -69,11 +71,13 @@ def _edge(source: str, target: str, **kw: Any) -> dict[str, Any]:
 # -- execution activity --------------------------------------------------------------
 
 
-def _measure(op: dict[str, Any]) -> tuple[float, float]:
+def _measure(op: dict[str, Any], collapsed: frozenset[str] = frozenset()) -> tuple[float, float]:
     if op["kind"] == "action":
         op["_w"], op["_h"] = AW, AH
+    elif op["id"] in collapsed:
+        op["_w"], op["_h"] = AW + 2 * PAD, COLLAPSED_H
     else:
-        sizes = [_measure(c) for c in op["children"]]
+        sizes = [_measure(c, collapsed) for c in op["children"]]
         inner_w = max(w for w, _ in sizes)
         op["_w"] = inner_w + 2 * PAD + LOOP_RIGHT
         op["_h"] = LOOP_HEAD + sum(h for _, h in sizes) + GAP * (len(sizes) - 1) + PAD
@@ -88,6 +92,7 @@ def _ops(
     width: float,
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],
+    collapsed: frozenset[str] = frozenset(),
 ) -> tuple[str, str]:
     """Place ``ops`` stacked in a column of ``width``; return (first id, last id)."""
     y = y0
@@ -100,7 +105,9 @@ def _ops(
             "position": {"x": x, "y": y},
             "data": {
                 "label": op["name"],
-                "number": op.get("number") or "",
+                "number": op.get("pos") or op.get("number") or "",
+                "collapsed": op["id"] in collapsed,
+                "size": _count(op),
                 "color": domain_color(op.get("domain")),
                 "guard": op.get("guard"),
                 "injected_by": op.get("injected_by"),
@@ -116,7 +123,7 @@ def _ops(
         if parent:
             node["parentNode"] = parent
         nodes.append(node)
-        if op["kind"] == "loop":
+        if op["kind"] == "loop" and op["id"] not in collapsed:
             inner_w = op["_w"] - 2 * PAD - LOOP_RIGHT
             dec_id = f"{op['id']}::test"
             nodes.append(
@@ -133,7 +140,8 @@ def _ops(
                     "connectable": False,
                 }
             )
-            first, last = _ops(op["children"], op["id"], PAD, LOOP_HEAD, inner_w, nodes, edges)
+            first, last = _ops(op["children"], op["id"], PAD, LOOP_HEAD, inner_w, nodes, edges,
+                               collapsed)
             edges.append(_edge(dec_id, first, label="[true]"))
             edges.append(
                 _edge(last, dec_id, sourceHandle="r", targetHandle="r",
@@ -145,6 +153,11 @@ def _ops(
         prev = op
         y += op["_h"] + GAP
     return ops[0]["id"], ops[-1]["id"]
+
+
+def _count(op: dict[str, Any]) -> int:
+    """Actions inside a loop, at any depth (shown on a collapsed loop)."""
+    return sum(1 if c["kind"] == "action" else _count(c) for c in op.get("children", []))
 
 
 # -- initialization activity ------------------------------------------------------------
@@ -165,15 +178,19 @@ def build_flow(
     init_steps: list[dict[str, Any]],
     ops: Optional[list[dict[str, Any]]],
     solver_name: str = "",
+    collapsed: frozenset[str] = frozenset(),
 ) -> dict[str, list[dict[str, Any]]]:
-    """Both activities as one VueFlow graph ``{"nodes": [...], "edges": [...]}``."""
+    """Both activities as one VueFlow graph ``{"nodes": [...], "edges": [...]}``.
+
+    ``collapsed``: ids of loops drawn without their body.
+    """
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
 
     # Execution activity first, to know the canvas width.
     if ops:
         for op in ops:
-            _measure(op)
+            _measure(op, collapsed)
         exec_w = max(op["_w"] for op in ops) + 2 * PAD
         exec_h = ACT_HEAD + sum(op["_h"] for op in ops) + GAP * (len(ops) - 1) + PAD
     else:
@@ -215,7 +232,7 @@ def build_flow(
     nodes.append(_activity("act:exec", title, cx - exec_w / 2, y, exec_w, exec_h))
     edges.append(_edge("act:init", "act:exec"))
     if ops:
-        first, last = _ops(ops, "act:exec", PAD, ACT_HEAD, exec_w - 2 * PAD, nodes, edges)
+        first, last = _ops(ops, "act:exec", PAD, ACT_HEAD, exec_w - 2 * PAD, nodes, edges, collapsed)
         last_kind = ops[-1]["kind"]
     else:
         nodes.append({"id": "exec:placeholder", "type": "placeholder", "parentNode": "act:exec",

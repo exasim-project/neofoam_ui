@@ -62,6 +62,8 @@ class Op:
     #: ``file:line`` shown in the inspector; derived from ``func`` when empty.
     source: Optional[str] = None
     id: str = ""
+    #: Position in the tree, ``"1.4.2"`` (set by :func:`assign_ids`).
+    pos: str = ""
 
 
 @dataclass
@@ -123,14 +125,18 @@ class Event:
         }
 
 
-def assign_ids(ops: list[Op], prefix: str = "") -> None:
-    """Give every op a path id (``time_loop/inner_loop/solve``); repeated names get ``#2``, ``#3``."""
+def assign_ids(ops: list[Op], prefix: str = "", pos: str = "") -> None:
+    """Give every op a path id (``time_loop/inner_loop/solve``) and a position (``1.4.2``).
+
+    Repeated names get ``#2``, ``#3``.
+    """
     seen: dict[str, int] = {}
-    for op in ops:
+    for i, op in enumerate(ops, 1):
         seen[op.name] = seen.get(op.name, 0) + 1
         suffix = f"#{seen[op.name]}" if seen[op.name] > 1 else ""
         op.id = f"{prefix}{op.name}{suffix}"
-        assign_ids(op.children, op.id + "/")
+        op.pos = f"{pos}{i}"
+        assign_ids(op.children, op.id + "/", op.pos + ".")
 
 
 def topological_order(steps: list[InitStep]) -> list[InitStep]:
@@ -186,6 +192,10 @@ class Session:
         self.results: dict[str, Any] = {}
         self.calls: dict[str, int] = {}
         self.last_ms: dict[str, float] = {}
+        #: Summed time per node over the whole run (timing heat map).
+        self.total_ms: dict[str, float] = {}
+        #: Fields each action was seen to change (a field fingerprint differed afterwards).
+        self.writes_seen: dict[str, set[str]] = {}
         self.last_written_by: dict[str, str] = {}
         self.last_writes: list[str] = []
         self._prints: dict[str, int] = {}
@@ -227,10 +237,9 @@ class Session:
 
     def record(self, kind: str, node: str, name: str, ms: float, **extra: Any) -> None:
         """Book-keeping after an event ran: timing, call count, written fields, log line."""
-        self.last_ms[node] = ms
-        self.calls[node] = self.calls.get(node, 0) + 1
+        self._count(node, ms)
         if kind == "exec":
-            self._track_writes(name)
+            self._track_writes(node, name)
         self._log(kind, node, name, **extra)
 
     def _walk(self, ops: list[Op], depth: int, stack: tuple[tuple[str, int], ...]) -> Iterator[Event]:
@@ -238,7 +247,7 @@ class Session:
             if op.kind == "action":
                 yield Event("exec", op.id, depth, stack=stack)
                 self._timed(op.id, lambda: op.func(self.ctx))
-                self._track_writes(op.name)
+                self._track_writes(op.id, op.name)
                 self._log("exec", op.id, op.name, stack=stack)
                 continue
             i = 0
@@ -254,18 +263,24 @@ class Session:
     def _timed(self, node: str, fn: Callable[[], Any]) -> Any:
         t0 = time.perf_counter()
         out = fn()
-        self.last_ms[node] = (time.perf_counter() - t0) * 1e3
-        self.calls[node] = self.calls.get(node, 0) + 1
+        self._count(node, (time.perf_counter() - t0) * 1e3)
         return out
+
+    def _count(self, node: str, ms: float) -> None:
+        self.last_ms[node] = ms
+        self.total_ms[node] = self.total_ms.get(node, 0.0) + ms
+        self.calls[node] = self.calls.get(node, 0) + 1
 
     def _field_prints(self) -> dict[str, int]:
         return {k: _fingerprint(v) for k, v in self.solver.fields(self.ctx).items()}
 
-    def _track_writes(self, op_name: str) -> None:
+    def _track_writes(self, node: str, op_name: str) -> None:
         now = self._field_prints()
         self.last_writes = [k for k, v in now.items() if self._prints.get(k) != v]
         for k in self.last_writes:
             self.last_written_by[k] = op_name
+        if self.last_writes:
+            self.writes_seen.setdefault(node, set()).update(self.last_writes)
         self._prints = now
 
     def _log(self, kind: str, node: str, name: str, **extra: Any) -> None:
@@ -388,6 +403,7 @@ class Session:
                 mine["changed"] = mine["changed"] or theirs["changed"]
         rows = [
             {
+                "field": name,
                 "name": st["label"],
                 "min": st["min"] if st["min"] is not None else float("nan"),
                 "max": st["max"] if st["max"] is not None else float("nan"),
@@ -395,7 +411,7 @@ class Session:
                 "written_by": st["written_by"],
                 "changed": st["changed"],
             }
-            for st in stats.values()
+            for name, st in stats.items()
         ]
         return {"scalars": self.solver.scalars(self.ctx), "fields": rows,
                 "init_done": sorted(self.results)}
@@ -410,6 +426,8 @@ class Session:
                 "summary": self.summary(),
                 "calls": self.calls,
                 "last_ms": {k: round(v, 3) for k, v in self.last_ms.items()},
+                "total_ms": {k: round(v, 3) for k, v in self.total_ms.items()},
+                "writes_seen": {k: sorted(v) for k, v in self.writes_seen.items()},
             }
         )
 
@@ -479,6 +497,7 @@ def op_dict(op: Op) -> dict[str, Any]:
         "kind": op.kind,
         "domain": op.domain,
         "number": op.number,
+        "pos": op.pos,
         "test": op.test,
         "guard": op.guard,
         "injected_by": op.injected_by,

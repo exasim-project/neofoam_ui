@@ -314,7 +314,7 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
     common = dict(
         domain=meta.domain_name,
         number=str(meta.operation_number) if meta.operation_number is not None else None,
-        doc=_doc(target),
+        doc=meta.description or _doc(target),
         source=_source(target),
         injected_by=injected.get(id(op)),
     )
