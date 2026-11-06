@@ -1,0 +1,18 @@
+[workspace]
+authors = ["Henning Scheufler <henning.scheufler@web.de>"]
+channels = ["conda-forge"]
+name = "neofoam_ui"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[dependencies]
+python = "3.12.*"
+numpy = "*"
+pytest = "*"
+
+[pypi-dependencies]
+neofoam_ui = { path = ".", editable = true }
+
+[tasks]
+ui = "neofoam-ui"
+test = "pytest -q"

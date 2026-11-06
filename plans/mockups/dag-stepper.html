@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAG Stepper Mockup</title>
+<style>
+:root {
+  --bg: #eef1f5; --panel: #ffffff; --ink: #1d2430; --muted: #6a7383; --line: #d5dae2;
+  --canvas: #fbfcfe; --grid: #eef1f6;
+  --action: #fffbe6; --action-b: #b9a24a;
+  --loop: #f3f6ff; --loop-b: #7b8fc7;
+  --active: #e0362c; --active-bg: #ffe9e7;
+  --done: #2f9e5b; --done-bg: #e6f6ec;
+  --sel: #2b6fd6; --bp: #d22;
+  --accent: #2b6fd6; --chip: #eef3fc;
+  --changed: #fff3c4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --panel: #1c2027; --ink: #e3e7ee; --muted: #8b94a3; --line: #2e3440;
+    --canvas: #171a20; --grid: #1e222a;
+    --action: #2a2716; --action-b: #a28f3e; --loop: #1a2033; --loop-b: #5d72ad;
+    --active-bg: #3a1c1a; --done-bg: #16301f; --chip: #1f2a3d; --changed: #3a3315;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { font-size: 15px; margin: 0 8px 0 0; }
+.field { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--canvas); color: var(--muted); }
+.toolbar { display: flex; gap: 4px; align-items: center; padding: 6px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+button { font: inherit; border: 1px solid var(--line); background: var(--canvas); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sep { width: 1px; height: 22px; background: var(--line); margin: 0 6px; }
+.status { margin-left: auto; color: var(--muted); }
+.status b { color: var(--active); }
+main { display: grid; grid-template-columns: 230px 1fr 320px; grid-template-rows: 1fr 210px; height: calc(100vh - 96px); min-height: 560px; }
+.pane { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; }
+.pane h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+#outline { grid-column: 1; grid-row: 1 / 3; }
+#canvasWrap { grid-column: 2; grid-row: 1; }
+#canvasWrap { background: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 16px 16px; overflow: auto; position: relative; }
+#side { grid-column: 3; grid-row: 1 / 3; border-left: 1px solid var(--line); border-right: 0; display: flex; flex-direction: column; }
+#bottom { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; }
+#bottom .pane:last-child { border-right: 0; }
+.tree div { padding: 3px 12px; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.tree div:hover { background: var(--chip); }
+.tree .sel { background: var(--chip); outline: 1px solid var(--sel); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.bpdot { color: var(--bp); font-size: 10px; width: 10px; }
+.tree .cur { color: var(--active); font-weight: 600; }
+.tree .vis { color: var(--done); }
+.sect { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.sect h3 { font-size: 11px; color: var(--muted); margin: 0 0 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.chip { display: inline-block; background: var(--chip); border: 1px solid var(--line); border-radius: 12px; padding: 1px 8px; margin: 2px 2px 0 0; cursor: pointer; font-size: 12px; }
+.chip:hover { border-color: var(--sel); }
+.kv { display: grid; grid-template-columns: 90px 1fr; gap: 2px 8px; }
+.kv span:nth-child(odd) { color: var(--muted); }
+code, .mono { font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; font-size: 12px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { text-align: left; padding: 3px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11px; }
+tr.changed td { background: var(--changed); }
+#console div { padding: 1px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: nowrap; }
+#console .ev-test { color: var(--loop-b); }
+#console .ev-bp { color: var(--bp); font-weight: 600; }
+.stack div { padding: 2px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.stack div:first-child { color: var(--active); font-weight: 600; }
+svg text { fill: var(--ink); font-size: 12px; }
+svg .lbl { fill: var(--muted); font-size: 11px; }
+.node { cursor: pointer; }
+.node rect.a { fill: var(--action); stroke: var(--action-b); stroke-width: 1.2; }
+.node.done rect.a { fill: var(--done-bg); stroke: var(--done); }
+.node.cur rect.a, .node.cur polygon { fill: var(--active-bg); stroke: var(--active); stroke-width: 2.5; }
+.node.sel rect.a, .node.sel polygon { stroke: var(--sel); stroke-width: 2.5; }
+.node.cur.sel rect.a { stroke: var(--active); }
+.frame { fill: var(--loop); stroke: var(--loop-b); stroke-width: 1.2; }
+.frame.cur { stroke: var(--active); stroke-width: 2; }
+polygon.d { fill: var(--loop); stroke: var(--loop-b); stroke-width: 1.4; }
+.edge { stroke: var(--muted); stroke-width: 1.3; fill: none; marker-end: url(#arr); }
+.edge.back { stroke-dasharray: 4 3; }
+.bp { fill: var(--bp); }
+.token { fill: var(--active); }
+.hint { color: var(--muted); padding: 8px 12px; font-size: 12px; }
+.legend { padding: 8px 12px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.sw { display: inline-block; width: 14px; height: 10px; border: 1.5px solid; border-radius: 3px; vertical-align: middle; margin-right: 6px; }
+input[type=range] { width: 90px; }
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto 480px auto auto; height: auto; }
+  #outline, #side, #canvasWrap, #bottom { grid-column: 1; grid-row: auto; }
+  #outline, #side { max-height: 260px; }
+  #bottom { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>neofoam ui · DAG stepper <span style="color:var(--muted);font-weight:400">(mockup)</span></h1>
+  <span class="field">case: ~/run/pitzDaily</span>
+  <span class="field">solver: incompressibleFluid ▾</span>
+  <span class="field">graph: Execution ▾</span>
+  <span class="field" style="color:var(--done)">● initialized (mesh 12 225 cells, 4.1 s)</span>
+</header>
+<div class="toolbar">
+  <button id="bRun" class="primary" title="Run until breakpoint or end (F5)">▶ Run</button>
+  <button id="bPause" title="Pause after current operation">⏸ Pause</button>
+  <button id="bStop" title="Terminate session">■ Stop</button>
+  <button id="bReset" title="Re-initialize (restarts solver process)">⟲ Restart</button>
+  <span class="sep"></span>
+  <button id="bInto" title="Step into (F11): execute next op, or enter loop body">⤓ Step into</button>
+  <button id="bOver" title="Step over (F10): execute next op, or whole loop">↷ Step over</button>
+  <button id="bOut" title="Step out (Shift+F11): finish current loop iteration">⤒ Step out</button>
+  <button id="bIter" title="Finish current time step">⏭ Next time step</button>
+  <span class="sep"></span>
+  <label style="color:var(--muted)">animation <input id="speed" type="range" min="40" max="800" value="250"></label>
+  <span class="status" id="status"></span>
+</div>
+<main>
+  <section class="pane" id="outline">
+    <h2>Containment</h2>
+    <div class="tree" id="tree"></div>
+    <h2>Legend</h2>
+    <div class="legend">
+      <div><span class="sw" style="border-color:var(--action-b);background:var(--action)"></span>action (SequentialOp)</div>
+      <div><span class="sw" style="border-color:var(--loop-b);background:var(--loop)"></span>loop node (IterativeOp)</div>
+      <div>◇ loop test / decision</div>
+      <div><span class="sw" style="border-color:var(--active);background:var(--active-bg)"></span>next to execute (token)</div>
+      <div><span class="sw" style="border-color:var(--done);background:var(--done-bg)"></span>executed this time step</div>
+      <div><span style="color:var(--bp)">●</span> breakpoint (click gutter)</div>
+    </div>
+  </section>
+  <section id="canvasWrap"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></section>
+  <section class="pane" id="side">
+    <h2>Inspector</h2>
+    <div id="inspector"></div>
+    <h2>Call stack</h2>
+    <div class="stack" id="stack"></div>
+    <h2>Breakpoints</h2>
+    <div id="bplist"></div>
+  </section>
+  <div id="bottom">
+    <section class="pane"><h2>Simulation console</h2><div id="console"></div></section>
+    <section class="pane"><h2>Variables (ctx)</h2><div id="vars"></div></section>
+  </div>
+</main>
+<script>
+// ---- model: mirrors incompressibleFluid.execution_graph (incompressibleFluid.py:138-206) ----
+const P = {
+  id: "root", kind: "activity", name: "incompressibleFluid", children: [
+    { id: "time_loop", kind: "loop", name: "time_loop", test: "SolutionLoopPredicate()", iters: 3, domain: "solutionLoop", num: "1", children: [
+      { id: "set_time_step", kind: "action", name: "set_time_step", domain: "solutionLoop", num: "1.1", reads: ["deltaT", "U"], writes: ["deltaT"], src: "algorithms/solution_loop/solution_loop.py" },
+      { id: "increment_time", kind: "action", name: "increment_time", domain: "solutionLoop", num: "1.2", reads: ["time"], writes: ["time"], src: "algorithms/solution_loop/solution_loop.py" },
+      { id: "inner_loop", kind: "loop", name: "inner_loop (PIMPLE)", test: "pimple.loop()  nOuterCorrectors=2", iters: 2, domain: "pimple", num: "1.3", children: [
+        { id: "momentum", kind: "action", name: "momentum", domain: "pimple", num: "1.3.1", reads: ["U", "phi", "p", "nuEff"], writes: ["U"], src: "pressure_velocity/pimpleAlgorithm.py:512", doc: "Assemble UEqn and solve the momentum predictor." },
+        { id: "continuity", kind: "action", name: "continuity", domain: "pimple", num: "1.3.2", reads: ["U", "p", "phi"], writes: ["p", "U", "phi"], src: "pressure_velocity/pimpleAlgorithm.py:567", doc: "PISO pressure corrector loop (nCorrectors) and flux update." },
+        { id: "viscosity", kind: "action", name: "viscosity.correct", domain: "viscosity", num: "1.3.3", reads: ["U"], writes: ["nu"], src: "viscosity/…", guard: "turbCorr()" },
+        { id: "turbulence", kind: "action", name: "turbulence.correct", domain: "turbulence", num: "1.3.4", reads: ["U", "phi", "nu", "k", "epsilon"], writes: ["k", "epsilon", "nut", "nuEff"], src: "turbulence/…", guard: "turbCorr()" }
+      ]},
+      { id: "write_output", kind: "action", name: "write_output", domain: "fieldWriter", num: "1.4", reads: ["U", "p", "k", "epsilon", "nut"], writes: [], src: "algorithms/field_writer/…" },
+      { id: "post_process", kind: "action", name: "post_process", domain: "postProcess", num: "1.5", reads: ["U", "p"], writes: [], src: "postprocess/model.py:135", doc: "Last in the loop: a pure reader." }
+    ]}
+  ]
+};
+const DOMAIN_COLOR = { solutionLoop: "#7b8fc7", pimple: "#d08a2e", viscosity: "#3a9e8f", turbulence: "#9b59b6", fieldWriter: "#5b7a99", postProcess: "#6aa84f" };
+
+const byId = {}, parent = {};
+(function index(n, p) { byId[n.id] = n; if (p) parent[n.id] = p.id; (n.children || []).forEach(c => index(c, n)); })(P, null);
+
+// ---- trace: what the solver process would emit (enter / loop-test events) ----
+const trace = [];
+function gen(n, depth, stack) {
+  if (n.kind === "action") { trace.push({ kind: "exec", node: n.id, depth, stack }); return; }
+  for (let i = 1; ; i++) {
+    const ok = i <= n.iters;
+    trace.push({ kind: "test", node: n.id, depth, iter: i, result: ok, stack });
+    if (!ok) break;
+    const s = stack.concat([{ id: n.id, iter: i }]);
+    n.children.forEach(c => gen(c, depth + 1, s));
+  }
+}
+P.children.forEach(c => gen(c, 0, []));
+trace.push({ kind: "end", node: null, depth: -1, stack: [] });
+
+// ---- fake ctx effects so the Variables pane is alive ----
+function stateAt(k) {
+  const s = { time: 0, deltaT: 5e-4, timeIndex: 0, outer: 0,
+    f: { U: [0, 10.0, 4.2, "init"], p: [-3.1, 2.4, 0.1, "init"], phi: [-1e-3, 1e-3, 0, "init"], k: [0.01, 0.38, 0.12, "init"], epsilon: [0.1, 14, 2.3, "init"], nut: [0, 2e-3, 4e-4, "init"], nuEff: [1e-5, 2e-3, 4e-4, "init"], nu: [1e-5, 1e-5, 1e-5, "init"] },
+    res: {}, changed: [] };
+  for (let i = 0; i < k; i++) {
+    const e = trace[i]; if (e.kind === "test") { if (e.node === "inner_loop") s.outer = e.result ? e.iter : 0; continue; }
+    if (e.kind !== "exec") continue;
+    const n = byId[e.node], j = s.timeIndex + s.outer * 0.37;
+    if (n.id === "set_time_step") s.deltaT = +(5e-4 * (1 + 0.1 * s.timeIndex)).toPrecision(3);
+    if (n.id === "increment_time") { s.time = +(s.time + s.deltaT).toPrecision(4); s.timeIndex++; }
+    if (n.id === "momentum") { s.f.U = [0, 10.0, +(4.2 + 0.03 * j).toFixed(3), "momentum"]; s.res.Ux = (2e-3 / (1 + j * 3)).toExponential(2); }
+    if (n.id === "continuity") { s.f.p = [+(-3.1 - .02 * j).toFixed(3), +(2.4 + .01 * j).toFixed(3), +(0.1 + .004 * j).toFixed(4), "continuity"]; s.f.phi[3] = "continuity"; s.f.U[3] = "continuity"; s.res.p = (8e-3 / (1 + j * 4)).toExponential(2); s.res.contErr = (1e-6 / (1 + j)).toExponential(2); }
+    if (n.id === "viscosity") s.f.nu[3] = "viscosity.correct";
+    if (n.id === "turbulence") { s.f.k = [0.01, +(0.38 - .004 * j).toFixed(3), +(0.12 - .001 * j).toFixed(4), "turbulence.correct"]; s.f.epsilon[3] = s.f.nut[3] = s.f.nuEff[3] = "turbulence.correct"; s.res.k = (1e-3 / (1 + j * 2)).toExponential(2); }
+    s.changed = (n.writes || []).slice();
+    s.lastOp = n.name;
+  }
+  return s;
+}
+
+// ---- layout (structured loop nodes stacked vertically) ----
+const W = 200, H = 34, GAP = 26, PAD = 18, HEAD = 88;
+function measure(n) {
+  if (n.kind === "action") { n.w = W; n.h = H; return; }
+  n.children.forEach(measure);
+  const inner = n.children.reduce((a, c) => a + c.h, 0) + GAP * (n.children.length - 1);
+  n.w = Math.max(...n.children.map(c => c.w)) + 2 * PAD + 30;
+  n.h = HEAD + inner + PAD + 10;
+}
+function place(n, x, y) {
+  n.x = x; n.y = y;
+  if (n.kind !== "loop") return;
+  let cy = y + HEAD;
+  n.children.forEach(c => { place(c, x + (n.w - 30 - c.w) / 2, cy); cy += c.h + GAP; });
+}
+
+// ---- view state ----
+let cur = 0, selected = "momentum", timer = null;
+const bps = new Set(["continuity"]);
+const log = [];
+
+const svg = document.getElementById("svg");
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parentEl, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  (parentEl || svg).appendChild(e); return e;
+}
+
+function visitedSet() {
+  // ops executed since the current time step started
+  const v = new Set();
+  for (let i = cur - 1; i >= 0; i--) {
+    const t = trace[i];
+    if (t.kind === "test" && t.node === "time_loop") break;
+    if (t.kind === "exec") v.add(t.node);
+  }
+  return v;
+}
+
+function draw() {
+  svg.innerHTML = "";
+  el("defs", {}).innerHTML = '<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="color:var(--muted)"/></marker>';
+  const root = byId.time_loop;
+  measure(root);
+  const X0 = 40, Y0 = 60;
+  place(root, X0, Y0);
+  const W0 = root.w + 2 * X0, H0 = root.h + Y0 + 90;
+  svg.setAttribute("width", W0); svg.setAttribute("height", H0);
+  const e = trace[cur], visited = visitedSet();
+  const cx = root.x + (root.w - 30) / 2;
+
+  // initial node = solver.initialize() completed
+  el("circle", { cx, cy: 22, r: 9, fill: "var(--ink)" });
+  el("text", { x: cx + 16, y: 26, class: "lbl" }, null, "solver.initialize()  ✓");
+  el("line", { x1: cx, y1: 31, x2: cx, y2: Y0 - 2, class: "edge" });
+
+  drawNode(root, e, visited);
+
+  // final node
+  const fy = root.y + root.h + 40;
+  el("line", { x1: cx, y1: root.y + root.h, x2: cx, y2: fy - 12, class: "edge" });
+  el("text", { x: cx + 8, y: root.y + root.h + 18, class: "lbl" }, null, "[false]");
+  el("circle", { cx, cy: fy, r: 11, fill: "none", stroke: "var(--ink)", "stroke-width": 1.5 });
+  el("circle", { cx, cy: fy, r: 6.5, fill: e.kind === "end" ? "var(--active)" : "var(--ink)" });
+  el("text", { x: cx + 18, y: fy + 4, class: "lbl" }, null, "end of run (endTime reached)");
+}
+
+function gutter(id, cx, cy, g) {
+  const c = bps.has(id)
+    ? el("circle", { class: "bp", cx, cy, r: 5 }, g)
+    : el("circle", { cx, cy, r: 5, fill: "transparent", stroke: "var(--line)", "stroke-dasharray": "2 2" }, g);
+  c.style.cursor = "pointer";
+  c.addEventListener("click", ev => { ev.stopPropagation(); toggleBp(id); });
+}
+
+function drawNode(n, e, visited) {
+  const isCur = e.node === n.id;
+  if (n.kind === "action") {
+    const g = el("g", { class: "node" + (isCur ? " cur" : "") + (visited.has(n.id) && !isCur ? " done" : "") + (selected === n.id ? " sel" : "") });
+    el("rect", { class: "a", x: n.x, y: n.y, width: n.w, height: n.h, rx: 12 }, g);
+    el("rect", { x: n.x + 10, y: n.y + 10, width: 4, height: n.h - 20, rx: 2, fill: DOMAIN_COLOR[n.domain] }, g);
+    el("text", { x: n.x + 22, y: n.y + 21 }, g, n.name);
+    el("text", { x: n.x + n.w - 8, y: n.y + 21, class: "lbl", "text-anchor": "end" }, g, n.guard ? "[" + n.guard + "]" : n.num);
+    gutter(n.id, n.x - 12, n.y + n.h / 2, g);
+    if (isCur) el("circle", { class: "token", cx: n.x + n.w + 12, cy: n.y + n.h / 2, r: 6 }, g);
+    g.addEventListener("click", () => select(n.id));
+    return;
+  }
+  const inScope = trace[cur].stack.find(s => s.id === n.id);
+  el("rect", { class: "frame" + (isCur || inScope ? " cur" : ""), x: n.x, y: n.y, width: n.w - 30, height: n.h, rx: 6 });
+  el("text", { x: n.x + 10, y: n.y + 16, class: "lbl" }, null, "«loop» " + n.name + (inScope ? "   · iteration " + inScope.iter + "/" + n.iters : ""));
+  el("text", { x: n.x + 10, y: n.y + 30, class: "lbl mono" }, null, "test: " + n.test);
+  // decision diamond (loop test)
+  const dx = n.x + (n.w - 30) / 2, dy = n.y + 54;
+  const g = el("g", { class: "node" + (isCur ? " cur" : "") + (selected === n.id ? " sel" : "") });
+  el("polygon", { class: "d", points: `${dx},${dy - 14} ${dx + 18},${dy} ${dx},${dy + 14} ${dx - 18},${dy}` }, g);
+  gutter(n.id, dx - 30, dy, g);
+  if (isCur) el("circle", { class: "token", cx: dx, cy: dy, r: 5 }, g);
+  g.addEventListener("click", () => select(n.id));
+  const first = n.children[0], last = n.children[n.children.length - 1];
+  el("line", { x1: dx, y1: dy + 14, x2: dx, y2: first.y - 2, class: "edge" });
+  el("text", { x: dx + 6, y: dy + 28, class: "lbl" }, null, "[true]");
+  for (let i = 0; i < n.children.length; i++) {
+    const c = n.children[i];
+    drawNode(c, e, visited);
+    if (i < n.children.length - 1) {
+      const nx = n.children[i + 1], ax = c.x + c.w / 2 - (c.kind === "loop" ? 15 : 0);
+      el("line", { x1: ax, y1: c.y + c.h, x2: ax, y2: nx.y - 2, class: "edge" });
+    }
+  }
+  // back edge to the test
+  const lx = last.x + last.w / 2 - (last.kind === "loop" ? 15 : 0), rx = n.x + n.w - 42;
+  el("path", { class: "edge back", d: `M${lx},${last.y + last.h} V${last.y + last.h + 10} H${rx} V${dy} H${dx + 20}` });
+}
+
+// ---- panes ----
+function renderTree() {
+  const t = document.getElementById("tree"); t.innerHTML = "";
+  const e = trace[cur], vis = visitedSet();
+  (function walk(n, d) {
+    if (n.kind !== "activity") {
+      const div = document.createElement("div");
+      div.style.paddingLeft = 12 + d * 14 + "px";
+      div.className = (selected === n.id ? "sel " : "") + (e.node === n.id ? "cur" : vis.has(n.id) ? "vis" : "");
+      div.innerHTML = `<span class="bpdot">${bps.has(n.id) ? "●" : ""}</span><span class="dot" style="background:${DOMAIN_COLOR[n.domain] || "#999"}"></span>${n.kind === "loop" ? "↺ " : ""}${n.name}`;
+      div.onclick = () => select(n.id);
+      t.appendChild(div);
+    }
+    (n.children || []).forEach(c => walk(c, d + (n.kind === "activity" ? 0 : 1)));
+  })(P, 0);
+}
+
+function neighbours(id) {
+  const p = parent[id], sib = byId[p].children, i = sib.findIndex(c => c.id === id);
+  return { prev: i > 0 ? sib[i - 1].id : (p !== "root" ? p : null), next: i < sib.length - 1 ? sib[i + 1].id : (p !== "root" ? p + "" : null), parent: p !== "root" ? p : null };
+}
+function chip(id, label) { return `<span class="chip" onclick="select('${id}')">${label || byId[id].name}</span>`; }
+
+function renderInspector() {
+  const n = byId[selected], nb = neighbours(selected), insp = document.getElementById("inspector");
+  const s = stateAt(cur);
+  const rw = (arr) => (arr || []).map(f => `<span class="chip mono" title="highlight producers/consumers">${f}</span>`).join("") || "<span style='color:var(--muted)'>—</span>";
+  insp.innerHTML = `
+    <div class="sect">
+      <div style="font-size:15px;font-weight:600">${n.name}</div>
+      <div class="kv" style="margin-top:4px">
+        <span>number</span><span class="mono">${n.num}</span>
+        <span>type</span><span>${n.kind === "loop" ? "IterativeOp" : "SequentialOp"}${n.guard ? " (gated by " + n.guard + ")" : ""}</span>
+        <span>domain</span><span><span class="dot" style="background:${DOMAIN_COLOR[n.domain]}"></span> ${n.domain}</span>
+        <span>source</span><span class="mono">${n.src || "—"}</span>
+        ${n.test ? `<span>loop test</span><span class="mono">${n.test}</span>` : ""}
+      </div>
+      ${n.doc ? `<div style="margin-top:6px;color:var(--muted)">${n.doc}</div>` : ""}
+    </div>
+    <div class="sect"><h3>Navigate</h3>
+      ${nb.prev ? "⬅ " + chip(nb.prev) : ""} ${nb.next ? " ➡ " + chip(nb.next, nb.next === nb.parent ? "↺ " + byId[nb.next].name + " (loop test)" : null) : ""}<br>
+      ${nb.parent ? "⬆ " + chip(nb.parent) : ""}
+      ${n.children ? "<br>⬇ " + n.children.map(c => chip(c.id)).join("") : ""}
+    </div>
+    ${n.kind === "action" ? `<div class="sect"><h3>Reads</h3>${rw(n.reads)}<h3 style="margin-top:6px">Writes</h3>${rw(n.writes)}</div>` : ""}
+    <div class="sect"><h3>Session</h3>
+      <div class="kv"><span>calls</span><span>${trace.slice(0, cur).filter(t => t.node === n.id && (t.kind === "exec" || t.result)).length}</span>
+      <span>last time</span><span>${n.kind === "action" ? (3 + n.num.length * 2.7).toFixed(1) + " ms" : "—"}</span></div>
+      <div style="margin-top:6px">
+        <button onclick="toggleBp('${n.id}')">${bps.has(n.id) ? "Remove" : "Add"} breakpoint</button>
+        <button onclick="runTo('${n.id}')">Run to here</button>
+      </div>
+    </div>`;
+}
+
+function renderStack() {
+  const e = trace[cur], st = document.getElementById("stack");
+  if (e.kind === "end") { st.innerHTML = "<div>— finished —</div>"; return; }
+  const rows = [(e.kind === "test" ? "◇ " + byId[e.node].name + " test #" + e.iter : "▶ " + byId[e.node].name)];
+  e.stack.slice().reverse().forEach(s => rows.push("↺ " + byId[s.id].name + "  [" + s.iter + "/" + byId[s.id].iters + "]"));
+  st.innerHTML = rows.map(r => `<div>${r}</div>`).join("");
+}
+
+function renderBps() {
+  const b = document.getElementById("bplist");
+  b.innerHTML = [...bps].map(id => `<div class="tree"><div onclick="select('${id}')"><span class="bpdot">●</span>${byId[id].name}<span style="margin-left:auto;color:var(--muted)">enabled</span></div></div>`).join("")
+    || `<div class="hint">Click the gutter left of a node to add one.</div>`;
+}
+
+function renderVars() {
+  const s = stateAt(cur), v = document.getElementById("vars");
+  const rows = Object.entries(s.f).map(([k, [mn, mx, mean, by]]) =>
+    `<tr class="${s.changed.includes(k) ? "changed" : ""}"><td class="mono">${k}</td><td>${mn}</td><td>${mx}</td><td>${mean}</td><td style="color:var(--muted)">${by}</td></tr>`).join("");
+  const res = Object.entries(s.res).map(([k, x]) => `${k}=${x}`).join("  ") || "—";
+  v.innerHTML = `<div class="hint mono" style="color:var(--ink)">time=${s.time}  deltaT=${s.deltaT}  timeIndex=${s.timeIndex}  outer=${s.outer}<br>residuals: ${res}</div>
+    <table><tr><th>field</th><th>min</th><th>max</th><th>mean</th><th>last written by</th></tr>${rows}</table>`;
+}
+
+function renderConsole() {
+  const c = document.getElementById("console");
+  c.innerHTML = log.slice(-200).map(l => `<div class="${l.cls}">${l.txt}</div>`).join("");
+  c.parentElement.scrollTop = 1e9;
+}
+
+function renderStatus() {
+  const e = trace[cur], st = document.getElementById("status");
+  st.innerHTML = e.kind === "end" ? "<b>finished</b>" :
+    (timer ? "running… " : "paused before ") + "<b>" + (e.kind === "test" ? "◇ " + byId[e.node].name + " test" : byId[e.node].name) + "</b>" + `  · event ${cur}/${trace.length - 1}`;
+  const end = e.kind === "end";
+  ["bInto", "bOver", "bOut", "bIter", "bRun"].forEach(id => document.getElementById(id).disabled = end || !!timer);
+  document.getElementById("bPause").disabled = !timer;
+}
+
+function render() { draw(); renderTree(); renderInspector(); renderStack(); renderBps(); renderVars(); renderConsole(); renderStatus(); }
+
+// ---- stepping semantics ----
+function emit(i) {
+  const e = trace[i]; if (e.kind === "end") { log.push({ cls: "", txt: "■ run finished" }); return; }
+  const scope = e.stack.map(s => byId[s.id].name.split(" ")[0] + "#" + s.iter).join(" › ") || "—";
+  const s = stateAt(i + 1);
+  if (e.kind === "test") log.push({ cls: "ev-test", txt: `[t=${s.time}] ${scope}  ◇ ${byId[e.node].name} test → ${e.result}` });
+  else log.push({ cls: "", txt: `[t=${s.time}] ${scope}  ▶ ${byId[e.node].name}  (${(3 + byId[e.node].num.length * 2.7).toFixed(1)} ms)` });
+}
+function advanceTo(j) { for (let i = cur; i < j; i++) emit(i); cur = Math.min(j, trace.length - 1); selected = trace[cur].node || selected; render(); }
+function stepInto() { advanceTo(cur + 1); }
+function stepOver() {
+  const e = trace[cur];
+  if (e.kind === "test" && e.result) {
+    let j = cur + 1;
+    while (j < trace.length - 1 && !(trace[j].depth <= e.depth && !(trace[j].kind === "test" && trace[j].node === e.node))) j++;
+    advanceTo(j);
+  } else advanceTo(cur + 1);
+}
+function stepOut() {
+  const d = trace[cur].depth; let j = cur + 1;
+  while (j < trace.length - 1 && trace[j].depth >= d) j++;
+  advanceTo(j);
+}
+function nextTimeStep() {
+  let j = cur + 1;
+  while (j < trace.length - 1 && !(trace[j].kind === "test" && trace[j].node === "time_loop")) j++;
+  advanceTo(j);
+}
+function runUntil(pred) {
+  stopTimer();
+  timer = setInterval(() => {
+    if (trace[cur].kind === "end") return stopTimer();
+    emit(cur); cur++; selected = trace[cur].node || selected;
+    const e = trace[cur];
+    if (pred(e)) { if (bps.has(e.node)) log.push({ cls: "ev-bp", txt: `● breakpoint hit: ${byId[e.node].name}` }); stopTimer(); }
+    render();
+  }, +document.getElementById("speed").value);
+  renderStatus();
+}
+function stopTimer() { if (timer) { clearInterval(timer); timer = null; } render(); }
+function runTo(id) { runUntil(e => e.kind === "end" || e.node === id || bps.has(e.node)); }
+function toggleBp(id) { bps.has(id) ? bps.delete(id) : bps.add(id); render(); }
+function select(id) { if (id) selected = id; render(); }
+
+document.getElementById("bInto").onclick = stepInto;
+document.getElementById("bOver").onclick = stepOver;
+document.getElementById("bOut").onclick = stepOut;
+document.getElementById("bIter").onclick = nextTimeStep;
+document.getElementById("bRun").onclick = () => runUntil(e => e.kind === "end" || bps.has(e.node));
+document.getElementById("bPause").onclick = stopTimer;
+document.getElementById("bStop").onclick = () => { stopTimer(); cur = trace.length - 1; log.push({ cls: "ev-bp", txt: "■ session terminated by user" }); render(); };
+document.getElementById("bReset").onclick = () => { stopTimer(); cur = 0; log.length = 0; log.push({ cls: "", txt: "⟲ solver process restarted, initialize() done" }); render(); };
+document.addEventListener("keydown", ev => {
+  if (ev.key === "F10") { ev.preventDefault(); stepOver(); }
+  else if (ev.key === "F11" && ev.shiftKey) { ev.preventDefault(); stepOut(); }
+  else if (ev.key === "F11") { ev.preventDefault(); stepInto(); }
+  else if (ev.key === "F5") { ev.preventDefault(); document.getElementById("bRun").click(); }
+});
+log.push({ cls: "", txt: "session started · solver.initialize() done · paused at first loop test" });
+render();
+// demo/screenshot helper: #steps=N advances N "step into" events on load
+const demo = location.hash.match(/steps=(\d+)/);
+if (demo) advanceTo(+demo[1]);
+</script>
+</body>
+</html>
