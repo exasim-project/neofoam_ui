@@ -254,6 +254,13 @@ per-patch values; a button to "open field in a 3D view" (this links back to the 
 3. A public helper to build the resolved graph for a solver: today it is a four-line recipe
    inside each solver's `run()` (`incompressibleFluid.py:209-244`).
 
+**Status (2026-11-06).** Submitted as stacked draft PRs (stack #464):
+[#461](https://github.com/exasim-project/NeoFOAM/pull/461) plugin entry points ←
+[#462](https://github.com/exasim-project/NeoFOAM/pull/462) empty-argv segfault fix ←
+[#463](https://github.com/exasim-project/NeoFOAM/pull/463) `execution_observer` +
+`SolverRuntime.resolve_operations`. The hooks are `init_steps`, `before/after_init_step`,
+`operations`, `before/after_operation` and `before/after_loop_test`.
+
 ---
 
 ## 9. Milestones
@@ -270,6 +277,17 @@ per-patch values; a button to "open field in a 3D view" (this links back to the 
 3. **M3 ctx summary + "last written by" + timings.**
 4. **M4 upstream observer API**, replacing the monkeypatch.
 
+**Status (2026-11-06).**
+- M1–M3 and M4 are done. The real solver's `run()` executes in a thread (`engine.ThreadedProgram`)
+  and pauses in the observer hooks. Tree interpretation is still available for NeoFOAM without
+  the observer (`NEOFOAM_UI_MODE=tree`).
+- M2b is done, without mpi4py (`neofoam_ui.parallel`):
+  - rank 0 releases the follower ranks over a local socket, one `go` per event;
+  - field min/max/mean are merged over all ranks;
+  - on Stop every rank calls `MPI_Finalize`.
+- Verified on pitzDaily, serial and `mpirun -np 2`: stepping every event gives fields byte-identical
+  to a plain run, Stop exits cleanly, and Restart leaves no ranks behind.
+
 ---
 
 ## 10. Open points
@@ -279,5 +297,6 @@ per-patch values; a button to "open field in a 3D view" (this links back to the 
   decoration of the loop node.
 - **Init graph layout.** Independent init steps make a fork/join. Use a layered layout, reusing
   `tooling/workflow/dag.py` (`layered_layout` or Graphviz).
-- **MPI launcher.** Use plain `mpirun` from the worker spawner, or reuse an existing launcher in
-  `neofoam` (to check).
+- **MPI launcher.** Plain `mpirun` from the worker spawner (`--np`, `--mpirun`). The sync socket is
+  bound to 127.0.0.1, so ranks must run on one node; multi-node needs rank 0's host published to
+  the others.

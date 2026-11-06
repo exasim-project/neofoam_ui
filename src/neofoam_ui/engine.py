@@ -189,6 +189,8 @@ class Session:
         self.last_written_by: dict[str, str] = {}
         self.last_writes: list[str] = []
         self._prints: dict[str, int] = {}
+        #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
+        self.gather: Optional[Callable[[], list[dict[str, dict[str, Any]]]]] = None
         program = getattr(solver, "program", None)
         if program is not None:  # the solver drives itself and fills self.init
             self.init: list[InitStep] = []
@@ -345,26 +347,56 @@ class Session:
 
     # -- reporting -----------------------------------------------------------------
 
-    def summary(self) -> dict[str, Any]:
+    def field_stats(self) -> dict[str, dict[str, Any]]:
+        """Per field: min / max / sum / cell count and who last wrote it (mergeable across ranks)."""
+        stats: dict[str, dict[str, Any]] = {}
         if self.ctx is None:
-            return {"scalars": {}, "fields": [], "init_done": sorted(self.results)}
-        rows = []
+            return stats
         for name, arr in self.solver.fields(self.ctx).items():
             a = np.asarray(arr, dtype=float)
             label = name
             if a.ndim == 2:  # vector/tensor field: summarise the magnitude
                 a = np.linalg.norm(a, axis=1)
                 label = f"|{name}|"
-            rows.append(
-                {
-                    "name": label,
-                    "min": float(a.min()),
-                    "max": float(a.max()),
-                    "mean": float(a.mean()),
-                    "written_by": self.last_written_by.get(name, "init"),
-                    "changed": name in self.last_writes,
-                }
-            )
+            stats[name] = {
+                "label": label,
+                "min": float(a.min()) if a.size else None,
+                "max": float(a.max()) if a.size else None,
+                "sum": float(a.sum()),
+                "n": int(a.size),
+                "written_by": self.last_written_by.get(name, "init"),
+                "changed": name in self.last_writes,
+            }
+        return stats
+
+    def summary(self) -> dict[str, Any]:
+        if self.ctx is None:
+            return {"scalars": {}, "fields": [], "init_done": sorted(self.results)}
+        stats = self.field_stats()
+        for other in self.gather() if self.gather else ():  # the other MPI ranks
+            for name, theirs in other.items():
+                if name not in stats:
+                    stats[name] = dict(theirs)
+                    continue
+                mine = stats[name]
+                values = [v for v in (mine["min"], theirs["min"]) if v is not None]
+                mine["min"] = min(values) if values else None
+                values = [v for v in (mine["max"], theirs["max"]) if v is not None]
+                mine["max"] = max(values) if values else None
+                mine["sum"] += theirs["sum"]
+                mine["n"] += theirs["n"]
+                mine["changed"] = mine["changed"] or theirs["changed"]
+        rows = [
+            {
+                "name": st["label"],
+                "min": st["min"] if st["min"] is not None else float("nan"),
+                "max": st["max"] if st["max"] is not None else float("nan"),
+                "mean": st["sum"] / st["n"] if st["n"] else float("nan"),
+                "written_by": st["written_by"],
+                "changed": st["changed"],
+            }
+            for st in stats.values()
+        ]
         return {"scalars": self.solver.scalars(self.ctx), "fields": rows,
                 "init_done": sorted(self.results)}
 

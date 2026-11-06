@@ -11,6 +11,8 @@ import argparse
 import asyncio
 import json
 import os
+import shlex
+import socket
 import sys
 from typing import Any, Optional
 
@@ -116,11 +118,14 @@ _CSS = r"""
 
 class StepperApp:
     def __init__(self, server: Any, solver_spec: str, case: Optional[str] = None,
-                 python: Optional[str] = None) -> None:
+                 python: Optional[str] = None, np: int = 1, mpirun: str = "mpirun") -> None:
         self.server = server
         self.case = case
         #: Interpreter for the worker, e.g. a NeoFOAM venv; neofoam_ui is put on its PYTHONPATH.
         self.python = python or sys.executable
+        #: MPI ranks; > 1 starts the worker under ``mpirun`` (see neofoam_ui.parallel).
+        self.np = np
+        self.mpirun = shlex.split(mpirun)
         self.state = server.state
         self.ctrl = server.controller
         self.solver_spec = solver_spec
@@ -144,7 +149,7 @@ class StepperApp:
 
     def _reset_state(self) -> None:
         s = self.state
-        s.solver_name = self.solver_spec.rsplit(":", 1)[-1]
+        s.solver_name = self.solver_spec.rsplit(":", 1)[-1] + (f" · np {self.np}" if self.np > 1 else "")
         s.connected = False
         s.running = False
         s.finished = False
@@ -176,8 +181,14 @@ class StepperApp:
         env = dict(os.environ)
         src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
+        cmd = [self.python, "-u", "-m", "neofoam_ui.worker", self.solver_spec]
+        if self.np > 1:
+            from neofoam_ui.parallel import SYNC_ENV  # noqa: PLC0415
+
+            env[SYNC_ENV] = f"127.0.0.1:{_free_port()}"
+            cmd = [*self.mpirun, "-np", str(self.np), *cmd]
         self.proc = await asyncio.create_subprocess_exec(
-            self.python, "-u", "-m", "neofoam_ui.worker", self.solver_spec,
+            *cmd,
             cwd=self.case,
             env=env,
             stdin=asyncio.subprocess.PIPE,
@@ -381,8 +392,13 @@ class StepperApp:
         old = self.proc
         self.proc = None
         if old is not None and old.returncode is None:
-            old.kill()
-            await old.wait()
+            # SIGTERM first: mpirun forwards it to the ranks, SIGKILL would orphan them.
+            old.terminate()
+            try:
+                await asyncio.wait_for(old.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                old.kill()
+                await old.wait()
         with self.state:
             self.init_steps, self.ops, self.index = [], [], {}
             self._reset_state()
@@ -727,17 +743,26 @@ def _short_path(path: Optional[str]) -> str:
     return path
 
 
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--solver", default=DEFAULT_SOLVER, help="module:Factory of the solver")
     parser.add_argument("--case", help="case directory the worker runs in (default: cwd)")
     parser.add_argument("--python", help="interpreter for the worker, e.g. a NeoFOAM venv")
+    parser.add_argument("--np", type=int, default=1, help="MPI ranks (decomposed case)")
+    parser.add_argument("--mpirun", default="mpirun", help="MPI launcher command")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--no-browser", action="store_true")
     args, _ = parser.parse_known_args(argv)
     server = get_server("neofoam_ui", client_type="vue3")
-    StepperApp(server, args.solver, case=args.case, python=args.python)
+    StepperApp(server, args.solver, case=args.case, python=args.python, np=args.np,
+               mpirun=args.mpirun)
     # timeout=0: keep serving when no browser is connected (wslink's default exits after 300 s).
     server.start(port=args.port, host=args.host, open_browser=not args.no_browser, timeout=0)
 

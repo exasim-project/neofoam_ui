@@ -39,6 +39,7 @@ from typing import Any, Callable, Iterator, Optional
 import numpy as np
 
 from neofoam_ui.engine import Event, InitStep, Op, Session, ThreadedProgram
+from neofoam_ui.parallel import rank_info
 
 __all__ = ["NeoFoamSolver", "ObservedNeoFoamSolver", "has_observer", "incompressible_fluid"]
 
@@ -368,6 +369,7 @@ def incompressible_fluid() -> Any:
     # The package re-exports the spec under the submodule's name, so import by path.
     module = importlib.import_module("neofoam.solver.incompressibleFluid.incompressibleFluid")
 
+    argv = ["neofoam", "-parallel"] if rank_info()[1] > 1 else ["neofoam"]
     if _observed():
-        return ObservedNeoFoamSolver("incompressibleFluid", module.run)
-    return NeoFoamSolver(module.incompressibleFluid)
+        return ObservedNeoFoamSolver("incompressibleFluid", module.run, argv)
+    return NeoFoamSolver(module.incompressibleFluid, argv)

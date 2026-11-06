@@ -17,6 +17,8 @@ nor C++ output (OpenFOAM ``Info``) can corrupt the protocol stream, which uses a
 duplicate of the original stdout.
 
 Usage: ``python -m neofoam_ui.worker neofoam_ui.toy.heat1d:Heat1D``
+
+Under ``mpirun`` only rank 0 speaks this protocol; see :mod:`neofoam_ui.parallel`.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import threading
 from typing import Any, Callable, TextIO
 
 from neofoam_ui.engine import Session
+from neofoam_ui.parallel import Hub, finalize_mpi, follow, rank_info, relay
 
 __all__ = ["load_solver", "main"]
 
@@ -105,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
         return 2
+    rank, size = rank_info()
+    if rank > 0:
+        os.dup2(2, 1)  # mpirun merges every rank's stdout into rank 0's protocol stream
+        return follow(load_solver(argv[0]), rank)
+
     out = _Out(os.fdopen(os.dup(1), "w"))
     sync = _capture_fd1(out)
 
@@ -114,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
         out(message)
 
     session = Session(load_solver(argv[0]), emit)
+    hub = None
+    if size > 1:
+        hub = Hub(size - 1)
+        session._gen = relay(session._gen, hub)
+        session.gather = hub.stats
     commands: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def read_commands() -> None:
@@ -140,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     while True:
         cmd = commands.get()
         if cmd["cmd"] == "stop":
+            if hub is not None:
+                hub.stop()
+                finalize_mpi()
             out({"type": "stopped"})
             return 0
         if cmd["cmd"] == "step":

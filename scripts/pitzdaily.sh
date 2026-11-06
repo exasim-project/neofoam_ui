@@ -4,7 +4,8 @@
 #   scripts/pitzdaily.sh [case-dir] [-- extra neofoam-ui args, e.g. --host 0.0.0.0]
 #
 # Env: NEOFOAM_DIR (default ~/libsAndApps/NeoFOAM), OPENFOAM_BASHRC
-# (default ~/OpenFOAM/OpenFOAM-v2406/etc/bashrc), END_TIME (default 0.002).
+# (default ~/OpenFOAM/OpenFOAM-v2406/etc/bashrc), END_TIME (default 0.002),
+# NP (MPI ranks, default 1: > 1 decomposes the case and runs under mpirun).
 # OpenFOAM's bashrc is not strict-mode clean and parses "$@" as overrides:
 # source it first, with the script arguments hidden.
 args=("$@")
@@ -29,6 +30,14 @@ if [[ ! -d "$case_dir/constant/polyMesh" ]]; then
     (cd "$case_dir" && blockMesh > log.blockMesh)
 fi
 
+np="${NP:-1}"
+if [[ "$np" -gt 1 && ! -d "$case_dir/processor$((np - 1))" ]]; then
+    (cd "$case_dir" \
+        && foamDictionary -entry numberOfSubdomains -set "$np" system/decomposeParDict > /dev/null 2>&1 \
+        && foamDictionary -entry method -set scotch system/decomposeParDict > /dev/null 2>&1 \
+        && decomposePar -force > log.decomposePar)
+fi
+
 cd "$here"
 exec pixi run neofoam-ui --solver neofoam_ui.adapters.neofoam:incompressible_fluid \
-    --case "$case_dir" --python "$neofoam/.venv/bin/python" "$@"
+    --case "$case_dir" --python "$neofoam/.venv/bin/python" --np "$np" "$@"
