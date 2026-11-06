@@ -22,6 +22,7 @@ from trame.widgets import client, html
 from trame.widgets import vuetify3 as v3
 from trame_flow.widgets.flow import Background, Controls, CustomNode, Handle, MiniMap, NodeEditor
 
+from neofoam_ui.fieldview import FIELD_CSS, component_items, field_pane
 from neofoam_ui.layout import build_flow, domain_color
 
 __all__ = ["StepperApp", "main"]
@@ -32,7 +33,9 @@ CONSOLE_MAX = 500
 _CSS = r"""
 .nf-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: minmax(0, 1fr) 230px;
   height: calc(100vh - 64px); }
-.nf-canvas { grid-column: 1; grid-row: 1; min-height: 0; position: relative; }
+.nf-canvas { grid-column: 1; grid-row: 1; min-height: 0; display: flex; }
+.nf-diagram { flex: 1 1 0; min-width: 0; position: relative; }
+.nf-field { flex: 1 1 0; }
 .nf-side { grid-column: 2; grid-row: 1 / 3; overflow: auto; border-left: 1px solid rgba(128,128,128,.25); }
 .nf-bottom { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: 1fr 1fr; min-height: 0;
   border-top: 1px solid rgba(128,128,128,.25); }
@@ -44,7 +47,10 @@ _CSS = r"""
 .nf-tools .v-btn { flex: none; }
 @media (max-width: 900px) {
   .nf-grid { grid-template-columns: 1fr; grid-template-rows: 58vh auto auto; height: auto; }
-  .nf-canvas { grid-column: 1; grid-row: 1; }
+  .nf-canvas { grid-column: 1; grid-row: 1; flex-direction: column; }
+  .nf-grid.fv { grid-template-rows: auto auto auto; }
+  .nf-grid.fv .nf-diagram { flex: none; height: 52vh; }
+  .nf-grid.fv .nf-field { flex: none; height: 62vh; border-left: 0; border-top: 1px solid rgba(128,128,128,.25); }
   .nf-bottom { grid-column: 1; grid-row: 2; grid-template-columns: 1fr; }
   .nf-bottom > div { max-height: 34vh; }
   .nf-bottom > div:first-child { border-right: 0; border-bottom: 1px solid rgba(128,128,128,.25); }
@@ -125,7 +131,8 @@ _CSS = r"""
 
 class StepperApp:
     def __init__(self, server: Any, solver_spec: str, case: Optional[str] = None,
-                 python: Optional[str] = None, np: int = 1, mpirun: str = "mpirun") -> None:
+                 python: Optional[str] = None, np: int = 1, mpirun: str = "mpirun",
+                 catalyst: Optional[str] = None) -> None:
         self.server = server
         self.case = case
         #: Interpreter for the worker, e.g. a NeoFOAM venv; neofoam_ui is put on its PYTHONPATH.
@@ -133,6 +140,9 @@ class StepperApp:
         #: MPI ranks; > 1 starts the worker under ``mpirun`` (see neofoam_ui.parallel).
         self.np = np
         self.mpirun = shlex.split(mpirun)
+        #: ParaView Catalyst script: publish the viewed field at every pause (neofoam_ui.insitu).
+        self.catalyst_script = catalyst
+        self.publisher: Any = None
         self.state = server.state
         self.ctrl = server.controller
         self.solver_spec = solver_spec
@@ -145,6 +155,8 @@ class StepperApp:
         self.total_ms: dict[str, float] = {}
         #: Fields each action was observed to change.
         self.writes_seen: dict[str, list[str]] = {}
+        #: Last field-view request sent to the worker (so the worker's own choice is not echoed back).
+        self._view_req: Optional[tuple[Any, ...]] = None
         self._reset_state()
         self.editor: Any = None
         self._build_ui()
@@ -155,6 +167,7 @@ class StepperApp:
         self.server.trigger("nf_key")(self._on_key)
         self.server.trigger("nf_collapse")(self.toggle_collapse)
         self.server.trigger("nf_field")(self.highlight_field)
+        self.state.change("fv_on", "fv_field", "fv_comp")(lambda **_: self._send_view())
         self.state.change("delay_ms")(self._on_delay)
         self.state.change("heat_on")(lambda **_: self._refresh_heat())
 
@@ -193,6 +206,17 @@ class StepperApp:
             s.is_mobile = False
         if s.delay_ms is None:
             s.delay_ms = 150
+        # Field view: the toggle and the choice survive a restart.
+        s.fv_on = bool(s.fv_on)
+        s.fv_lock = bool(s.fv_lock)
+        s.fv_field = s.fv_field or None
+        s.fv_comp = s.fv_comp or "mag"
+        s.fv_fields = []
+        s.fv_comps = []
+        s.fv_mesh = None
+        s.fv_frame = None
+        s.fv_note = ""
+        s.fv_msg = "the field view starts once the solver context exists (after initialization)"
 
     # -- worker -------------------------------------------------------------------------
 
@@ -219,6 +243,8 @@ class StepperApp:
             self.state.connected = True
         self._send({"cmd": "delay", "seconds": self.state.delay_ms / 1000})
         self._send({"cmd": "breakpoints", "ids": list(self.state.bps)})
+        self._view_req = None
+        self._send_view()
         asynchronous.create_task(self._read_stderr(self.proc))
         proc = self.proc
         assert proc.stdout is not None
@@ -272,6 +298,13 @@ class StepperApp:
             self._console(f"✖ error in {self._name(msg.get('node'))}", "err")
             for line in msg["traceback"].rstrip().splitlines():
                 self._console(line, "err")
+        elif kind == "mesh":
+            self._publish("mesh", msg)
+            self.state.fv_note = msg.get("note") or ""
+            self.state.fv_mesh = {k: v for k, v in msg.items() if k != "type"}
+        elif kind == "field":
+            self._on_field(msg)
+            self._publish("field", msg)
         elif kind == "stopped":
             self.state.status = "session stopped"
             self.state.running = False
@@ -322,6 +355,50 @@ class StepperApp:
             self.select(ev["node"], pan=True)
         else:
             self._refresh_inspector()
+
+    def _send_view(self) -> None:
+        """Tell the worker what the field view shows; closed = nothing is sent at pauses."""
+        s = self.state
+        on = bool(s.fv_on or self.catalyst_script)  # Catalyst needs the frames even with the pane closed
+        req = (True, s.fv_field, s.fv_comp) if on else (False,)
+        if req == self._view_req or self.proc is None:
+            return
+        self._view_req = req
+        self._send({"cmd": "view", "on": on, "field": s.fv_field, "component": s.fv_comp})
+
+    def _publish(self, kind: str, msg: dict[str, Any]) -> None:
+        """Hand mesh / field messages to the Catalyst publisher (created on first use)."""
+        if not self.catalyst_script or msg.get("error"):
+            return
+        try:
+            if self.publisher is None:
+                from neofoam_ui.insitu import CatalystPublisher  # noqa: PLC0415
+
+                self.publisher = CatalystPublisher(self.catalyst_script)
+                self._console(f"Catalyst: running {self.catalyst_script}", "init")
+            getattr(self.publisher, kind)(msg)
+        except Exception as exc:  # noqa: BLE001 - in-situ output must not break stepping
+            self._console(f"✖ Catalyst disabled: {exc!r}", "err")
+            self.catalyst_script = None
+
+    def _on_field(self, msg: dict[str, Any]) -> None:
+        s = self.state
+        if msg.get("error"):
+            s.fv_msg = msg["error"]
+            return
+        fields = msg["fields"]
+        s.fv_fields = [{"title": f["name"] + (" (vector)" if f["ncomp"] == 3 else f" ({f['ncomp']} comp.)" if f["ncomp"] > 1 else ""),
+                        "value": f["name"]} for f in fields]
+        ncomp = next((f["ncomp"] for f in fields if f["name"] == msg["field"]), 1)
+        s.fv_comps = component_items(ncomp)
+        # The worker may have picked the field (none chosen yet / not cell-sized): adopt it.
+        s.fv_field, s.fv_comp = msg["field"], msg["component"]
+        self._view_req = (True, msg["field"], msg["component"])
+        s.fv_frame = {k: msg[k] for k in ("field", "component", "label", "values", "min", "max", "n")}
+        t = msg.get("time")
+        parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "",
+                 f"{msg['label']} in [{_fmt(msg['min'])}, {_fmt(msg['max'])}]", s.fv_note]
+        s.fv_msg = " · ".join(p for p in parts if p)
 
     def _set_event(self, ev: dict[str, Any]) -> None:
         s = self.state
@@ -585,7 +662,7 @@ class StepperApp:
         idle = "!connected || running || finished"
         with SinglePageWithDrawerLayout(self.server) as layout:
             layout.title.set_text("DAG stepper")
-            client.Style(_CSS)
+            client.Style(_CSS + FIELD_CSS)
             # Phones: drawer closed and overlaying instead of pushing the content.
             client.ClientTriggers(mounted=(
                 "set('is_mobile', window.innerWidth < 900);"
@@ -618,6 +695,13 @@ class StepperApp:
                     self._button("Next time step", "mdi-skip-next", "time_step", idle)
                     self._button("Skip init", "mdi-fast-forward", "skip_init",
                                  f"{idle} || cur_kind !== 'init'")
+                    v3.VDivider(vertical=True, classes="mx-1")
+                    with v3.VBtn(size="small", classes="mx-1", click="fv_on = !fv_on",
+                                 variant=("fv_on ? 'tonal' : 'text'",),
+                                 color=("fv_on ? 'primary' : undefined",),
+                                 title="show a solver field on the mesh, refreshed at every pause"):
+                        v3.VIcon("mdi-palette", size="small")
+                        html.Span("Field", classes="nf-btxt ml-1")
                     v3.VDivider(vertical=True, classes="mx-1")
                     html.Span("animation", classes="text-caption mx-2 nf-btxt")
                     v3.VSlider(v_model=("delay_ms",), min=0, max=600, step=10, hide_details=True,
@@ -657,9 +741,11 @@ class StepperApp:
                     html.Div("click a field: ops that wrote (orange) / read (blue) it")
 
             with layout.content:
-                with html.Div(classes="nf-grid"):
+                with html.Div(classes=("['nf-grid', { fv: fv_on }]",)):
                     with html.Div(classes="nf-canvas"):
-                        self._canvas()
+                        with html.Div(classes="nf-diagram"):
+                            self._canvas()
+                        field_pane()
                     with html.Div(classes="nf-side"):
                         self._inspector()
                     with html.Div(classes="nf-bottom"):
@@ -708,7 +794,7 @@ class StepperApp:
             self.editor = editor
             Background(gap=16, size=1, pattern_color="#c3c8d2")
             Controls(show_interactive=False)
-            MiniMap(pannable=True, zoomable=True, v_show="!is_mobile")
+            MiniMap(pannable=True, zoomable=True, v_show="!is_mobile && !fv_on")
 
             with CustomNode("action"):
                 with html.Div(classes=(
@@ -884,13 +970,16 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument("--python", help="interpreter for the worker, e.g. a NeoFOAM venv")
     parser.add_argument("--np", type=int, default=1, help="MPI ranks (decomposed case)")
     parser.add_argument("--mpirun", default="mpirun", help="MPI launcher command")
+    parser.add_argument("--catalyst", metavar="SCRIPT",
+                        help="ParaView Catalyst script fed with the viewed field at every pause "
+                             "(needs ParaView's Python modules, e.g. `pixi run -e catalyst`)")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--no-browser", action="store_true")
     args, _ = parser.parse_known_args(argv)
     server = get_server("neofoam_ui", client_type="vue3")
     StepperApp(server, args.solver, case=args.case, python=args.python, np=args.np,
-               mpirun=args.mpirun)
+               mpirun=args.mpirun, catalyst=args.catalyst)
     # timeout=0: keep serving when no browser is connected (wslink's default exits after 300 s).
     server.start(port=args.port, host=args.host, open_browser=not args.no_browser, timeout=0)
 

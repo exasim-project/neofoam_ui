@@ -103,6 +103,9 @@ class Solver(Protocol):
 
     def fields(self, ctx: Any) -> dict[str, np.ndarray]: ...
 
+    # Optional: ``mesh(ctx) -> geometry dict`` (see :mod:`neofoam_ui.geometry`) enables
+    # the field view; it is called once, the first time the view is opened.
+
 
 @dataclass
 class Event:
@@ -163,6 +166,14 @@ def topological_order(steps: list[InitStep]) -> list[InitStep]:
     return order
 
 
+def _cell_count(geom: dict[str, Any]) -> int:
+    if geom["kind"] == "line":
+        return len(geom["x"])
+    if geom["kind"] == "polygons":
+        return len(geom["offsets"]) - 1
+    return len(geom["points"])
+
+
 def _fingerprint(arr: np.ndarray) -> int:
     return zlib.crc32(np.ascontiguousarray(arr).tobytes())
 
@@ -201,6 +212,12 @@ class Session:
         self._prints: dict[str, int] = {}
         #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
         self.gather: Optional[Callable[[], list[dict[str, dict[str, Any]]]]] = None
+        #: Field view: ``(field, component)`` to send at every pause, ``None`` = view closed.
+        self.view: Optional[tuple[Optional[str], str]] = None
+        #: Note shown with the field view (e.g. which MPI subdomain it is).
+        self.view_note = ""
+        self._geometry: Any = None  # None = not built yet, False = solver has no geometry
+        self._view_sent: Optional[tuple[Any, ...]] = None
         program = getattr(solver, "program", None)
         if program is not None:  # the solver drives itself and fills self.init
             self.init: list[InitStep] = []
@@ -416,7 +433,79 @@ class Session:
         return {"scalars": self.solver.scalars(self.ctx), "fields": rows,
                 "init_done": sorted(self.results)}
 
+    # -- field view ------------------------------------------------------------------
+
+    def set_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
+        """Open (``on``) or close the field view; sends the current frame right away."""
+        self.view = (field, component) if on else None
+        self._view_sent = None
+        self.send_view()
+
+    def _cells(self) -> Optional[int]:
+        """Cell count of the solver's geometry (built and sent once); ``None`` = no geometry."""
+        if self._geometry is None:
+            mesh = getattr(self.solver, "mesh", None)
+            geom = None
+            try:
+                geom = mesh(self.ctx) if mesh is not None else None
+            except Exception:  # noqa: BLE001 - no view rather than a dead session
+                self.emit({"type": "stdout", "text": "field view: " + traceback.format_exc()})
+            self._geometry = geom or False
+            if geom:
+                from neofoam_ui.geometry import encode_geometry  # noqa: PLC0415
+
+                note = " · ".join(n for n in (geom.get("note"), self.view_note) if n)
+                self.emit({"type": "mesh", **encode_geometry(geom), "note": note})
+        if not self._geometry:
+            return None
+        return _cell_count(self._geometry)
+
+    def send_view(self) -> None:
+        """Send the viewed field if the view is open and the values changed since the last send."""
+        if self.view is None or self.ctx is None:
+            return
+        n = self._cells()
+        if n is None:
+            if self._view_sent != ("none",):
+                self._view_sent = ("none",)
+                self.emit({"type": "field", "field": None, "fields": [],
+                           "error": f"{self.solver.name} provides no mesh geometry"})
+            return
+        fields = {k: np.asarray(v) for k, v in self.solver.fields(self.ctx).items()}
+        fields = {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
+        name, comp = self.view
+        if name not in fields:
+            name = next((k for k in ("U", "p", "T") if k in fields), next(iter(fields), None))
+        if name is None:
+            return
+        arr = fields[name].astype(float)
+        if arr.ndim == 2:
+            if comp not in [str(i) for i in range(arr.shape[1])]:
+                comp = "mag"
+            values = np.linalg.norm(arr, axis=1) if comp == "mag" else arr[:, int(comp)]
+            label = f"|{name}|" if comp == "mag" else (
+                f"{name}.{'xyz'[int(comp)]}" if arr.shape[1] == 3 else f"{name}[{comp}]")
+        else:
+            comp, values, label = "mag", arr, name
+        key = (name, comp, _fingerprint(values))
+        if key == self._view_sent:
+            return
+        self._view_sent = key
+        from neofoam_ui.geometry import encode_values  # noqa: PLC0415
+
+        finite = values[np.isfinite(values)]
+        self.emit({
+            "type": "field", "field": name, "component": comp, "label": label,
+            "values": encode_values(values), "n": int(n),
+            "min": float(finite.min()) if finite.size else None,
+            "max": float(finite.max()) if finite.size else None,
+            "time": self.solver.scalars(self.ctx).get("time"),
+            "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
+                       for k, v in fields.items()],
+        })
+
     def _paused(self) -> None:
+        self.send_view()
         self.emit(
             {
                 "type": "paused",

@@ -69,6 +69,31 @@ class _FieldsMixin:
                 continue
         return out
 
+    def mesh(self, ctx: Any) -> Optional[dict[str, Any]]:
+        """Field-view geometry of this rank's mesh.
+
+        pybFoam's ``fvMesh`` exposes no points/faces, so a 2D (one cell thick) case
+        is drawn from the polyMesh files (``constant/polyMesh``, or
+        ``processor<rank>/constant/polyMesh`` in an MPI run); anything else falls
+        back to the cell centres ``mesh.C()``. Static meshes only.
+        """
+        from neofoam_ui.geometry import cell_centres_geometry, front_polygons, read_polymesh  # noqa: PLC0415
+
+        mesh = getattr(ctx, "mesh", None)
+        if mesh is None:
+            return None
+        n_cells = int(mesh.nCells())
+        rank, size = rank_info()
+        directory = os.path.join(f"processor{rank}" if size > 1 else "", "constant", "polyMesh")
+        try:
+            geom = front_polygons(read_polymesh(directory), n_cells)
+        except (OSError, ValueError, IndexError):
+            geom = None
+        if geom is not None:
+            return geom
+        centres = np.asarray(mesh.C().internalField())
+        return cell_centres_geometry(centres, note="cell centres (not a one-cell-thick 2D mesh)")
+
 
 class ObservedNeoFoamSolver(_FieldsMixin):
     """Steps an unmodified ``run(argv)`` through NeoFOAM's execution observer."""
