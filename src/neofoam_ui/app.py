@@ -738,7 +738,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     args, _ = parser.parse_known_args(argv)
     server = get_server("neofoam_ui", client_type="vue3")
     StepperApp(server, args.solver, case=args.case, python=args.python)
-    server.start(port=args.port, host=args.host, open_browser=not args.no_browser)
+    # timeout=0: keep serving when no browser is connected (wslink's default exits after 300 s).
+    server.start(port=args.port, host=args.host, open_browser=not args.no_browser, timeout=0)
 
 
 if __name__ == "__main__":
