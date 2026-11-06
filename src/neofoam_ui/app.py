@@ -115,8 +115,12 @@ _CSS = r"""
 
 
 class StepperApp:
-    def __init__(self, server: Any, solver_spec: str) -> None:
+    def __init__(self, server: Any, solver_spec: str, case: Optional[str] = None,
+                 python: Optional[str] = None) -> None:
         self.server = server
+        self.case = case
+        #: Interpreter for the worker, e.g. a NeoFOAM venv; neofoam_ui is put on its PYTHONPATH.
+        self.python = python or sys.executable
         self.state = server.state
         self.ctrl = server.controller
         self.solver_spec = solver_spec
@@ -169,8 +173,13 @@ class StepperApp:
     # -- worker -------------------------------------------------------------------------
 
     async def spawn(self) -> None:
+        env = dict(os.environ)
+        src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
         self.proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-u", "-m", "neofoam_ui.worker", self.solver_spec,
+            self.python, "-u", "-m", "neofoam_ui.worker", self.solver_spec,
+            cwd=self.case,
+            env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -721,12 +730,14 @@ def _short_path(path: Optional[str]) -> str:
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--solver", default=DEFAULT_SOLVER, help="module:Factory of the solver")
+    parser.add_argument("--case", help="case directory the worker runs in (default: cwd)")
+    parser.add_argument("--python", help="interpreter for the worker, e.g. a NeoFOAM venv")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--no-browser", action="store_true")
     args, _ = parser.parse_known_args(argv)
     server = get_server("neofoam_ui", client_type="vue3")
-    StepperApp(server, args.solver)
+    StepperApp(server, args.solver, case=args.case, python=args.python)
     server.start(port=args.port, host=args.host, open_browser=not args.no_browser)
 
 

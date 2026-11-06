@@ -26,6 +26,7 @@ LOOP_RIGHT = 36  # lane for the back edge
 DIAMOND = 34
 ACT_HEAD = 40  # activity frame title
 TOP = 0
+INIT_PER_ROW = 4  # a dependency layer wider than this wraps onto further rows
 
 DOMAIN_COLORS = {
     "solutionLoop": "#5b6fb5",
@@ -150,13 +151,14 @@ def _ops(
 
 
 def _layers(steps: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Rows of init steps: one per dependency layer, wrapped at ``INIT_PER_ROW``."""
     level: dict[str, int] = {}
     for s in steps:  # steps arrive topologically ordered
         level[s["id"]] = 1 + max((level[d] for d in s["depends_on"]), default=-1)
-    out: list[list[dict[str, Any]]] = [[] for _ in range(max(level.values(), default=-1) + 1)]
+    layers: list[list[dict[str, Any]]] = [[] for _ in range(max(level.values(), default=-1) + 1)]
     for s in steps:
-        out[level[s["id"]]].append(s)
-    return out
+        layers[level[s["id"]]].append(s)
+    return [layer[i:i + INIT_PER_ROW] for layer in layers for i in range(0, len(layer), INIT_PER_ROW)]
 
 
 def build_flow(

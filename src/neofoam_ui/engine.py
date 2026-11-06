@@ -58,6 +58,8 @@ class Op:
     reads: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
     doc: str = ""
+    #: ``file:line`` shown in the inspector; derived from ``func`` when empty.
+    source: Optional[str] = None
     id: str = ""
 
 
@@ -70,6 +72,7 @@ class InitStep:
     depends_on: list[str] = field(default_factory=list)
     category: Optional[str] = None
     doc: str = ""
+    source: Optional[str] = None
 
     @property
     def id(self) -> str:
@@ -115,19 +118,25 @@ class Event:
 
 
 def assign_ids(ops: list[Op], prefix: str = "") -> None:
-    """Give every op a path id (``time_loop/inner_loop/solve``)."""
+    """Give every op a path id (``time_loop/inner_loop/solve``); repeated names get ``#2``, ``#3``."""
+    seen: dict[str, int] = {}
     for op in ops:
-        op.id = f"{prefix}{op.name}"
+        seen[op.name] = seen.get(op.name, 0) + 1
+        suffix = f"#{seen[op.name]}" if seen[op.name] > 1 else ""
+        op.id = f"{prefix}{op.name}{suffix}"
         assign_ids(op.children, op.id + "/")
 
 
 def topological_order(steps: list[InitStep]) -> list[InitStep]:
-    """Kahn's algorithm, stable in declaration order."""
+    """Kahn's algorithm, stable in declaration order; an already valid order is kept as is."""
     by_name = {s.name: s for s in steps}
     for s in steps:
         for dep in s.depends_on:
             if dep not in by_name:
                 raise ValueError(f"init step {s.name!r} depends on unknown step {dep!r}")
+    position = {s.name: i for i, s in enumerate(steps)}
+    if all(position[d] < position[s.name] for s in steps for d in s.depends_on):
+        return list(steps)
     done: set[str] = set()
     order: list[InitStep] = []
     pending = list(steps)
@@ -315,9 +324,13 @@ class Session:
         rows = []
         for name, arr in self.solver.fields(self.ctx).items():
             a = np.asarray(arr, dtype=float)
+            label = name
+            if a.ndim == 2:  # vector/tensor field: summarise the magnitude
+                a = np.linalg.norm(a, axis=1)
+                label = f"|{name}|"
             rows.append(
                 {
-                    "name": name,
+                    "name": label,
                     "min": float(a.min()),
                     "max": float(a.max()),
                     "mean": float(a.mean()),
@@ -355,7 +368,7 @@ def op_dict(op: Op) -> dict[str, Any]:
         "reads": op.reads,
         "writes": op.writes,
         "doc": op.doc,
-        "source": _source(op.func),
+        "source": op.source or _source(op.func),
         "children": [op_dict(c) for c in op.children],
     }
 
@@ -367,7 +380,7 @@ def init_dict(step: InitStep) -> dict[str, Any]:
         "depends_on": [f"init:{d}" for d in step.depends_on],
         "category": step.category,
         "doc": step.doc,
-        "source": _source(step.func),
+        "source": step.source or _source(step.func),
     }
 
 

@@ -12,8 +12,9 @@ UI → worker (stdin)::
 
 worker → UI (stdout): the engine messages (``graph``, ``log``, ``paused``,
 ``running``, ``breakpoint``, ``error``) plus ``stdout`` for anything the solver
-prints. The solver's own ``print`` output is captured so it cannot corrupt the
-protocol stream.
+prints. File descriptor 1 is redirected into a pipe, so neither Python ``print``
+nor C++ output (OpenFOAM ``Info``) can corrupt the protocol stream, which uses a
+duplicate of the original stdout.
 
 Usage: ``python -m neofoam_ui.worker neofoam_ui.toy.heat1d:Heat1D``
 """
@@ -21,8 +22,8 @@ Usage: ``python -m neofoam_ui.worker neofoam_ui.toy.heat1d:Heat1D``
 from __future__ import annotations
 
 import importlib
-import io
 import json
+import os
 import queue
 import sys
 import threading
@@ -61,19 +62,19 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
-class _CapturedPrint(io.TextIOBase):
-    """Replacement ``sys.stdout``: each printed line becomes a ``stdout`` message."""
+def _capture_fd1(out: _Out) -> None:
+    """Route everything written to fd 1 into ``stdout`` messages."""
+    read_fd, write_fd = os.pipe()
+    os.dup2(write_fd, 1)
+    os.close(write_fd)
+    sys.stdout = os.fdopen(1, "w", buffering=1, closefd=False)
 
-    def __init__(self, out: _Out) -> None:
-        self._out = out
-        self._buf = ""
+    def pump() -> None:
+        with os.fdopen(read_fd, "r", errors="replace") as pipe:
+            for line in pipe:
+                out({"type": "stdout", "text": line.rstrip("\n")})
 
-    def write(self, text: str) -> int:
-        self._buf += text
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            self._out({"type": "stdout", "text": line})
-        return len(text)
+    threading.Thread(target=pump, daemon=True).start()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,8 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
         return 2
-    out = _Out(sys.stdout)
-    sys.stdout = _CapturedPrint(out)
+    out = _Out(os.fdopen(os.dup(1), "w"))
+    _capture_fd1(out)
 
     session = Session(load_solver(argv[0]), out)
     commands: queue.Queue[dict[str, Any]] = queue.Queue()
