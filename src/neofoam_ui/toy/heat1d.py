@@ -143,6 +143,10 @@ class Heat1D:
     def fields(self, ctx: Heat1DContext) -> dict[str, np.ndarray]:
         return ctx.fields
 
+    def mesh(self, ctx: Heat1DContext) -> dict[str, Any]:
+        """Field-view geometry: the cell centres of the 1D mesh."""
+        return {"kind": "line", "x": ctx.x, "axes": ["x"]}
+
 
 # -- operations ----------------------------------------------------------------------
 

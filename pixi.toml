@@ -16,3 +16,11 @@ neofoam_ui = { path = ".", editable = true }
 [tasks]
 ui = "neofoam-ui"
 test = "pytest -q"
+
+# Optional: ParaView 6.2 for `neofoam-ui --catalyst scripts/catalyst_pipeline.py`
+# (about 2.4 GB; `pixi run -e catalyst ...`). The default environment stays without it.
+[feature.catalyst.dependencies]
+paraview = "6.2.*"
+
+[environments]
+catalyst = ["catalyst"]

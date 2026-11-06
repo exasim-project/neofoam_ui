@@ -8,10 +8,12 @@ UI → worker (stdin)::
     {"cmd": "pause"}                      # honoured between two events
     {"cmd": "breakpoints", "ids": [...]}
     {"cmd": "delay", "seconds": 0.2}      # animation while running
+    {"cmd": "view", "field": "U", "component": "mag|0|1|2", "on": true}   # field view
     {"cmd": "stop"}
 
 worker → UI (stdout): the engine messages (``graph``, ``log``, ``paused``,
-``running``, ``breakpoint``, ``error``) plus ``stdout`` for anything the solver
+``running``, ``breakpoint``, ``error``, and for an open field view ``mesh`` once
+and ``field`` at each pause where the values changed) plus ``stdout`` for anything the solver
 prints. File descriptor 1 is redirected into a pipe, so neither Python ``print``
 nor C++ output (OpenFOAM ``Info``) can corrupt the protocol stream, which uses a
 duplicate of the original stdout.
@@ -130,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         hub = Hub(size - 1)
         session._gen = relay(session._gen, hub)
         session.gather = hub.stats
+        session.view_note = f"rank 0 subdomain only (1 of {size})"
     commands: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def handle(cmd: dict[str, Any]) -> None:
@@ -151,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
             session.delay = float(cmd["seconds"])
         elif kind == "step":
             commands.put({"cmd": "step", "mode": str(cmd["mode"]), "node": cmd.get("node")})
+        elif kind == "view":
+            commands.put(cmd)
         else:
             raise ValueError(f"unknown command {kind!r}")
 
@@ -184,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
                 session.advance(cmd["mode"], cmd.get("node"))
             except ValueError as exc:  # unknown step mode
                 out({"type": "log_error", "text": str(exc)})
+        elif cmd["cmd"] == "view":
+            session.set_view(cmd.get("field"), str(cmd.get("component", "mag")), cmd.get("on", True))
 
 
 if __name__ == "__main__":
