@@ -27,7 +27,7 @@ import os
 import queue
 import sys
 import threading
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
 
 from neofoam_ui.engine import Session
 
@@ -62,19 +62,42 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
-def _capture_fd1(out: _Out) -> None:
-    """Route everything written to fd 1 into ``stdout`` messages."""
+_SYNC = "\x00neofoam_ui-sync\x00"
+
+
+def _capture_fd1(out: _Out) -> Callable[[], None]:
+    """Route everything written to fd 1 into ``stdout`` messages.
+
+    Returns ``sync()``: blocks until everything written to fd 1 so far has been
+    forwarded, so solver output precedes the ``paused`` message that follows it.
+    """
     read_fd, write_fd = os.pipe()
     os.dup2(write_fd, 1)
     os.close(write_fd)
     sys.stdout = os.fdopen(1, "w", buffering=1, closefd=False)
+    synced = threading.Event()
 
     def pump() -> None:
         with os.fdopen(read_fd, "r", errors="replace") as pipe:
             for line in pipe:
-                out({"type": "stdout", "text": line.rstrip("\n")})
+                text = line.rstrip("\n")
+                if text.endswith(_SYNC):  # output without a trailing newline precedes it
+                    text = text[: -len(_SYNC)]
+                    if text:
+                        out({"type": "stdout", "text": text})
+                    synced.set()
+                    continue
+                out({"type": "stdout", "text": text})
 
     threading.Thread(target=pump, daemon=True).start()
+
+    def sync() -> None:
+        synced.clear()
+        sys.stdout.flush()
+        os.write(1, (_SYNC + "\n").encode())
+        synced.wait(timeout=5)
+
+    return sync
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,9 +106,14 @@ def main(argv: list[str] | None = None) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     out = _Out(os.fdopen(os.dup(1), "w"))
-    _capture_fd1(out)
+    sync = _capture_fd1(out)
 
-    session = Session(load_solver(argv[0]), out)
+    def emit(message: dict[str, Any]) -> None:
+        if message["type"] in ("paused", "error"):
+            sync()
+        out(message)
+
+    session = Session(load_solver(argv[0]), emit)
     commands: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def read_commands() -> None:

@@ -33,6 +33,7 @@ __all__ = [
     "Op",
     "Session",
     "Solver",
+    "ThreadedProgram",
     "assign_ids",
     "topological_order",
 ]
@@ -80,7 +81,12 @@ class InitStep:
 
 
 class Solver(Protocol):
-    """What the stepper needs from a solver."""
+    """What the stepper needs from a solver.
+
+    A solver may instead provide ``program(session) -> Iterator[Event]`` and drive
+    itself (see :class:`ThreadedProgram`); then only ``scalars`` and ``fields`` are
+    used, and ``init_steps`` / ``create_context`` / ``execution_graph`` are not.
+    """
 
     name: str
 
@@ -177,14 +183,19 @@ class Session:
         self.stop_requested = False
         self.ctx: Any = None
         self.ops: list[Op] = []
-        self.init: list[InitStep] = topological_order(solver.init_steps())
         self.results: dict[str, Any] = {}
         self.calls: dict[str, int] = {}
         self.last_ms: dict[str, float] = {}
         self.last_written_by: dict[str, str] = {}
         self.last_writes: list[str] = []
         self._prints: dict[str, int] = {}
-        self._gen = self._program()
+        program = getattr(solver, "program", None)
+        if program is not None:  # the solver drives itself and fills self.init
+            self.init: list[InitStep] = []
+            self._gen = program(self)
+        else:
+            self.init = topological_order(solver.init_steps())
+            self._gen = self._program()
         self.event: Event = next(self._gen)
         self.finished = False
         self.failed = False
@@ -196,13 +207,29 @@ class Session:
             yield Event("init", step.id)
             self._timed(step.id, lambda: self.results.__setitem__(step.name, step.func(self.results)))
             self._log("init", step.id, step.name)
-        self.ctx = self.solver.create_context(self.results)
-        self._prints = self._field_prints()
-        self.ops = self.solver.execution_graph(self.ctx)
-        assign_ids(self.ops)
-        self.emit({"type": "graph", "activity": "exec", "ops": [op_dict(o) for o in self.ops]})
+        self.set_context(self.solver.create_context(self.results))
+        self.set_ops(self.solver.execution_graph(self.ctx))
         yield from self._walk(self.ops, 0, ())
         yield Event("end")
+
+    # -- used by self-driving programs too ------------------------------------------
+
+    def set_context(self, ctx: Any) -> None:
+        self.ctx = ctx
+        self._prints = self._field_prints()
+
+    def set_ops(self, ops: list[Op]) -> None:
+        self.ops = ops
+        assign_ids(self.ops)
+        self.emit({"type": "graph", "activity": "exec", "ops": [op_dict(o) for o in self.ops]})
+
+    def record(self, kind: str, node: str, name: str, ms: float, **extra: Any) -> None:
+        """Book-keeping after an event ran: timing, call count, written fields, log line."""
+        self.last_ms[node] = ms
+        self.calls[node] = self.calls.get(node, 0) + 1
+        if kind == "exec":
+            self._track_writes(name)
+        self._log(kind, node, name, **extra)
 
     def _walk(self, ops: list[Op], depth: int, stack: tuple[tuple[str, int], ...]) -> Iterator[Event]:
         for op in ops:
@@ -353,6 +380,64 @@ class Session:
                 "last_ms": {k: round(v, 3) for k, v in self.last_ms.items()},
             }
         )
+
+
+class _Stopped(BaseException):
+    """Unwinds a solver thread whose program was closed."""
+
+
+class ThreadedProgram:
+    """Turns a solver that calls back into the stepper into an event generator.
+
+    ``target()`` runs in a thread; whenever it calls :meth:`pause` with an
+    :class:`Event`, that event is yielded and the thread blocks until the
+    session asks for the next one. An exception in ``target`` is re-raised
+    from the generator; ``target`` returning ends it with an ``end`` event.
+    Closing the generator unwinds the blocked thread.
+    """
+
+    def __init__(self, target: Callable[[], Any]) -> None:
+        import queue  # noqa: PLC0415
+        import threading  # noqa: PLC0415
+
+        self._target = target
+        self._events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+        self._resume: queue.Queue[bool] = queue.Queue(maxsize=1)
+        self._thread = threading.Thread(target=self._main, name="solver", daemon=True)
+        #: What ``target`` returned.
+        self.result: Any = None
+
+    def _main(self) -> None:
+        try:
+            self.result = self._target()
+        except _Stopped:
+            return
+        except BaseException as exc:  # noqa: BLE001 - handed to the session
+            self._events.put(("error", exc))
+            return
+        self._events.put(("done", None))
+
+    def pause(self, event: Event) -> None:
+        """Called from the solver thread: stop here until the session moves on."""
+        self._events.put(("event", event))
+        if not self._resume.get():
+            raise _Stopped
+
+    def __iter__(self) -> Iterator[Event]:
+        self._thread.start()
+        while True:
+            kind, value = self._events.get()
+            if kind == "error":
+                raise value
+            if kind == "done":
+                yield Event("end")
+                return
+            try:
+                yield value
+            except GeneratorExit:
+                self._resume.put(False)
+                raise
+            self._resume.put(True)
 
 
 def op_dict(op: Op) -> dict[str, Any]:

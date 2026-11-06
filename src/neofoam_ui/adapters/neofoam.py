@@ -1,6 +1,17 @@
 """Adapter: a NeoFOAM solver as a stepper :class:`~neofoam_ui.engine.Solver`.
 
-It takes apart what ``Solver.initialize()`` + ``execution_graph`` + ``DAGResolver``
+Two modes:
+
+* **observed** (NeoFOAM with ``neofoam.framework.execution_observer``): the
+  solver's own ``run()`` executes unmodified in a thread; an
+  ``ExecutionObserver`` pauses it before every init step, operation and loop
+  test (:class:`ObservedNeoFoamSolver`);
+* **tree** (older NeoFOAM): the stepper re-assembles the run from its parts
+  (:class:`NeoFoamSolver`, below).
+
+``NEOFOAM_UI_MODE=tree|observed`` forces one; the default is observed when available.
+
+Tree mode takes apart what ``Solver.initialize()`` + ``execution_graph`` + ``DAGResolver``
 do in a solver's ``run()`` so the engine can pause between the pieces:
 
 * **init steps** — the solver's ``StagedInitRunner`` (injected into its
@@ -18,18 +29,173 @@ as the working directory, exactly like ``neofoam solver <name>``.
 
 from __future__ import annotations
 
+import importlib
 import inspect
+import os
+import time
 from functools import partial
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 import numpy as np
 
-from neofoam_ui.engine import InitStep, Op
+from neofoam_ui.engine import Event, InitStep, Op, Session, ThreadedProgram
 
-__all__ = ["NeoFoamSolver", "incompressible_fluid"]
+__all__ = ["NeoFoamSolver", "ObservedNeoFoamSolver", "has_observer", "incompressible_fluid"]
 
 
-class NeoFoamSolver:
+def has_observer() -> bool:
+    try:
+        import neofoam.framework.execution_observer  # noqa: F401, PLC0415
+    except ImportError:
+        return False
+    return True
+
+
+class _FieldsMixin:
+    def scalars(self, ctx: Any) -> dict[str, Any]:
+        t = getattr(ctx, "time", None)
+        if t is None:
+            return {}
+        return {"time": t.value, "deltaT": t.delta_t, "timeIndex": t.index,
+                "writeTime": t.write_time}
+
+    def fields(self, ctx: Any) -> dict[str, np.ndarray]:
+        out: dict[str, np.ndarray] = {}
+        for name, field in (getattr(ctx, "fields", None) or {}).items():
+            try:
+                out[name] = np.asarray(field.internalField())
+            except Exception:  # not a geometric field (or no internalField)
+                continue
+        return out
+
+
+class ObservedNeoFoamSolver(_FieldsMixin):
+    """Steps an unmodified ``run(argv)`` through NeoFOAM's execution observer."""
+
+    def __init__(self, name: str, run: Callable[[list[str]], Any],
+                 argv: Optional[list[str]] = None) -> None:
+        self.name = name
+        self._run = run
+        # argv[0] must be a program name: OpenFOAM's argList crashes on an empty argv.
+        self.argv = argv or ["neofoam"]
+
+    def program(self, session: Session) -> Iterator[Event]:
+        from neofoam.framework.execution_observer import observe  # noqa: PLC0415
+
+        def target() -> Any:
+            with observe(stepper):  # type: ignore[arg-type]  # duck-typed observer
+                return self._run(self.argv)
+
+        thread = ThreadedProgram(target)
+        stepper = _Stepper(session, thread.pause)
+        for event in thread:
+            if event.kind == "end" and thread.result is not None:
+                session.ctx = thread.result
+            yield event
+
+
+class _Stepper:
+    """``ExecutionObserver`` hooks → session events (all hooks implemented, so no base class)."""
+
+    def __init__(self, session: Session, pause: Callable[[Event], None]) -> None:
+        self.s = session
+        self.pause = pause
+        #: Enclosing loops, outermost first, as (loop id, iteration).
+        self.stack: list[tuple[str, int]] = []
+        #: id(Operation) → [(parent loop id or "", node id)]; one op object may sit at several places.
+        self.nodes: dict[int, list[tuple[str, str]]] = {}
+        self.names: dict[str, str] = {}
+        self.t0 = 0.0
+        #: Ops currently between before/after (an untracked op run inside a tracked one is skipped).
+        self.open: list[Optional[str]] = []
+
+    # -- init -----------------------------------------------------------------------------
+
+    def init_steps(self, steps: list[Any]) -> None:
+        names = {s.name for s in steps}
+        self.s.init = [
+            InitStep(st.name, lambda results: None,
+                     [d for d in st.depends_on if d in names],
+                     category=st.category, doc=_doc(st.initializer),
+                     source=_source(st.initializer))
+            for st in steps
+        ]
+
+    def before_init_step(self, step: Any, context: dict[str, Any]) -> None:
+        self.pause(Event("init", f"init:{step.name}"))
+        self.t0 = time.perf_counter()
+
+    def after_init_step(self, step: Any, context: dict[str, Any], value: Any) -> None:
+        ms = (time.perf_counter() - self.t0) * 1e3
+        self.s.results[step.name] = value
+        self.s.record("init", f"init:{step.name}", step.name, ms)
+
+    # -- execution ------------------------------------------------------------------------
+
+    def operations(self, operations: Any) -> None:
+        injected: dict[int, str] = {}
+        ops = [_convert(op, injected) for op in operations.ops]
+        self.s.set_ops(ops)  # assigns the ids
+        self.nodes.clear()
+
+        def index(raw: list[Any], conv: list[Op], parent: str) -> None:
+            for r, c in zip(raw, conv):
+                self.nodes.setdefault(id(r), []).append((parent, c.id))
+                self.names[c.id] = c.name
+                if c.kind == "loop":
+                    index(r.sub_operations, c.children, c.id)
+
+        index(operations.ops, ops, "")
+
+    def _node(self, op: Any) -> Optional[str]:
+        parent = self.stack[-1][0] if self.stack else ""
+        for p, node in self.nodes.get(id(op), ()):
+            if p == parent:
+                return node
+        return None
+
+    def _see(self, ctx: Any) -> None:
+        if self.s.ctx is not ctx:
+            self.s.set_context(ctx)
+
+    def before_operation(self, op: Any, ctx: Any) -> None:
+        node = self._node(op) if not any(self.open) else None
+        self.open.append(node)
+        if node is None:
+            return
+        self._see(ctx)
+        self.pause(Event("exec", node, len(self.stack), stack=tuple(self.stack)))
+        self.t0 = time.perf_counter()
+
+    def after_operation(self, op: Any, ctx: Any) -> None:
+        node = self.open.pop()
+        if node is None:
+            return
+        ms = (time.perf_counter() - self.t0) * 1e3
+        self.s.record("exec", node, self.names[node], ms, stack=tuple(self.stack))
+
+    def before_loop_test(self, op: Any, ctx: Any, iteration: int) -> None:
+        if self.stack and self.stack[-1][0] in {n for _, n in self.nodes.get(id(op), ())}:
+            self.stack.pop()  # the body of the previous iteration is done
+        node = self._node(op)
+        if node is None or any(self.open):
+            return
+        self._see(ctx)
+        self.pause(Event("test", node, len(self.stack), iter=iteration, stack=tuple(self.stack)))
+        self.t0 = time.perf_counter()
+
+    def after_loop_test(self, op: Any, ctx: Any, iteration: int, result: bool) -> None:
+        node = self._node(op)
+        if node is None or any(self.open):
+            return
+        ms = (time.perf_counter() - self.t0) * 1e3
+        self.s.record("test", node, self.names[node], ms, stack=tuple(self.stack),
+                      iter=iteration, result=result)
+        if result:
+            self.stack.append((node, iteration))
+
+
+class NeoFoamSolver(_FieldsMixin):
     def __init__(self, spec: Any, argv: Optional[list[str]] = None) -> None:
         self.spec = spec
         self.name = spec.name
@@ -139,24 +305,6 @@ class NeoFoamSolver:
         resolved = DAGResolver().resolve(builder, model_ops)
         return [_convert(op, injected) for op in resolved.operations.ops]
 
-    # -- state ------------------------------------------------------------------------------
-
-    def scalars(self, ctx: Any) -> dict[str, Any]:
-        t = getattr(ctx, "time", None)
-        if t is None:
-            return {}
-        return {"time": t.value, "deltaT": t.delta_t, "timeIndex": t.index,
-                "writeTime": t.write_time}
-
-    def fields(self, ctx: Any) -> dict[str, np.ndarray]:
-        out: dict[str, np.ndarray] = {}
-        for name, field in (getattr(ctx, "fields", None) or {}).items():
-            try:
-                out[name] = np.asarray(field.internalField())
-            except Exception:  # not a geometric field (or no internalField)
-                continue
-        return out
-
 
 def _convert(op: Any, injected: dict[int, str]) -> Op:
     meta = op.metadata
@@ -206,10 +354,20 @@ def _source(func: Any) -> Optional[str]:
         return None
 
 
-def incompressible_fluid() -> NeoFoamSolver:
-    """``neofoam solver incompressiblefluid`` (pybFoam backend)."""
-    from neofoam.solver.incompressibleFluid.incompressibleFluid import (  # noqa: PLC0415
-        incompressibleFluid,
-    )
+def _observed() -> bool:
+    mode = os.environ.get("NEOFOAM_UI_MODE", "")
+    if mode not in ("", "tree", "observed"):
+        raise ValueError(f"NEOFOAM_UI_MODE must be 'tree' or 'observed', got {mode!r}")
+    if mode == "observed" and not has_observer():
+        raise RuntimeError("NEOFOAM_UI_MODE=observed, but this NeoFOAM has no execution observer")
+    return mode == "observed" or (mode == "" and has_observer())
 
-    return NeoFoamSolver(incompressibleFluid)
+
+def incompressible_fluid() -> Any:
+    """``neofoam solver incompressiblefluid`` (pybFoam backend)."""
+    # The package re-exports the spec under the submodule's name, so import by path.
+    module = importlib.import_module("neofoam.solver.incompressibleFluid.incompressibleFluid")
+
+    if _observed():
+        return ObservedNeoFoamSolver("incompressibleFluid", module.run)
+    return NeoFoamSolver(module.incompressibleFluid)

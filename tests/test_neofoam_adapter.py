@@ -39,16 +39,29 @@ def _pitzdaily(tmp: Path) -> Path:
     return case
 
 
-def _run(case: Path, mode: str, out: Path) -> dict:
-    env = {**os.environ, "PYTHONPATH": str(SRC)}
-    subprocess.run([PYTHON, str(SCRIPT), mode, str(out)], cwd=case, env=env, check=True,
+def _env(**extra: str) -> dict:
+    path = os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")]))
+    return {**os.environ, "PYTHONPATH": path, **extra}
+
+
+def _run(case: Path, mode: str, out: Path, **env: str) -> dict:
+    subprocess.run([PYTHON, str(SCRIPT), mode, str(out)], cwd=case, env=_env(**env), check=True,
                    capture_output=True, timeout=600)
     return dict(np.load(out))
 
 
-def test_stepping_matches_plain_run(tmp_path):
+def _has_observer() -> bool:
+    probe = "import neofoam.framework.execution_observer"
+    return subprocess.run([PYTHON, "-c", probe], env=_env(), capture_output=True).returncode == 0
+
+
+@pytest.mark.parametrize("ui_mode", ["tree", "observed"])
+def test_stepping_matches_plain_run(tmp_path, ui_mode):
+    if ui_mode == "observed" and not _has_observer():
+        pytest.skip("this NeoFOAM has no execution observer")
     plain = _run(_pitzdaily(tmp_path / "a"), "plain", tmp_path / "plain.npz")
-    stepped = _run(_pitzdaily(tmp_path / "b"), "step", tmp_path / "step.npz")
+    stepped = _run(_pitzdaily(tmp_path / "b"), "step", tmp_path / "step.npz",
+                   NEOFOAM_UI_MODE=ui_mode)
     assert set(plain) == {"U", "p", "phi"}
     for name in plain:
         np.testing.assert_array_equal(stepped[name], plain[name], err_msg=name)
