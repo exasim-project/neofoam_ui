@@ -12,6 +12,7 @@ Rank 0 → follower, one JSON object per line::
 
     {"op": "go"}      # resume past the current event
     {"op": "stats"}   # reply with Session.field_stats()
+    {"op": "render", "params": {...}}   # in-situ frame: Session.render (collective)
     {"op": "stop"}
 
 The rank is read from the launcher's environment (Open MPI, MPICH / PMI);
@@ -145,6 +146,10 @@ class Hub:
                 self._drop(peer, "did not answer")
         return replies
 
+    def render(self, params: dict[str, str]) -> None:
+        """Make every follower render the frame rank 0 is about to render."""
+        self._send({"op": "render", "params": params})
+
     def stop(self) -> None:
         try:
             self._send({"op": "stop"})
@@ -190,7 +195,8 @@ def follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
 
     session: Optional[_Follower] = None
     for line in stream:
-        op = json.loads(line)["op"]
+        msg = json.loads(line)
+        op = msg["op"]
         if session is None:  # created on the first message: rank 0 is ready by then
             session = _Follower(solver, emit)
         if op == "go":
@@ -203,8 +209,16 @@ def follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
                 stats = {}
             stream.write(json.dumps(stats) + "\n")
             stream.flush()
+        elif op == "render":
+            session.render(msg["params"])
         elif op == "stop":
-            if session is not None and not finish(session):
-                os._exit(1)  # stuck in a collective: let mpirun clean up
-            return 0
+            finalized = True
+            if session is not None:
+                session.finalize_view()
+                finalized = finish(session)
+            # No static destructors after MPI_Finalize (ParaView's would still call MPI);
+            # 1: stuck in a collective, let mpirun clean up.
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0 if finalized else 1)
     return 1  # rank 0 went away

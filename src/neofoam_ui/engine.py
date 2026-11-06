@@ -166,14 +166,6 @@ def topological_order(steps: list[InitStep]) -> list[InitStep]:
     return order
 
 
-def _cell_count(geom: dict[str, Any]) -> int:
-    if geom["kind"] == "line":
-        return len(geom["x"])
-    if geom["kind"] == "polygons":
-        return len(geom["offsets"]) - 1
-    return len(geom["points"])
-
-
 def _fingerprint(arr: np.ndarray) -> int:
     return zlib.crc32(np.ascontiguousarray(arr).tobytes())
 
@@ -214,10 +206,12 @@ class Session:
         self.program_thread: Optional[ThreadedProgram] = None
         #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
         self.gather: Optional[Callable[[], list[dict[str, dict[str, Any]]]]] = None
-        #: Field view: ``(field, component)`` to send at every pause, ``None`` = view closed.
+        #: Field view: ``(field, component)`` to render at every pause, ``None`` = view closed.
         self.view: Optional[tuple[Optional[str], str]] = None
-        #: Note shown with the field view (e.g. which MPI subdomain it is).
-        self.view_note = ""
+        #: Rank 0 under MPI: makes the other ranks render the same frame (set by the worker).
+        self.on_render: Optional[Callable[[dict[str, str]], None]] = None
+        self.insitu: Any = None  # neofoam_ui.catalyst.InSitu, started on the first frame
+        self._insitu_error: Optional[str] = None
         self._geometry: Any = None  # None = not built yet, False = solver has no geometry
         self._view_sent: Optional[tuple[Any, ...]] = None
         program = getattr(solver, "program", None)
@@ -443,16 +437,16 @@ class Session:
         return {"scalars": self.solver.scalars(self.ctx), "fields": rows,
                 "init_done": sorted(self.results)}
 
-    # -- field view ------------------------------------------------------------------
+    # -- field view (in situ, Catalyst 2) -------------------------------------------------
 
     def set_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
-        """Open (``on``) or close the field view; sends the current frame right away."""
+        """Open (``on``) or close the field view; renders the current frame right away."""
         self.view = (field, component) if on else None
         self._view_sent = None
         self.send_view()
 
-    def _cells(self) -> Optional[int]:
-        """Cell count of the solver's geometry (built and sent once); ``None`` = no geometry."""
+    def _cell_fields(self) -> Optional[tuple[dict[str, Any], dict[str, np.ndarray]]]:
+        """This rank's geometry (built once) and its cell-sized fields; ``None`` = no geometry."""
         if self._geometry is None:
             mesh = getattr(self.solver, "mesh", None)
             geom = None
@@ -461,58 +455,90 @@ class Session:
             except Exception:  # noqa: BLE001 - no view rather than a dead session
                 self.emit({"type": "stdout", "text": "field view: " + traceback.format_exc()})
             self._geometry = geom or False
-            if geom:
-                from neofoam_ui.geometry import encode_geometry  # noqa: PLC0415
-
-                note = " · ".join(n for n in (geom.get("note"), self.view_note) if n)
-                self.emit({"type": "mesh", **encode_geometry(geom), "note": note})
         if not self._geometry:
             return None
-        return _cell_count(self._geometry)
+        from neofoam_ui.geometry import cell_count  # noqa: PLC0415
+
+        n = cell_count(self._geometry)
+        fields = {k: np.asarray(v) for k, v in self.solver.fields(self.ctx).items()}
+        return self._geometry, {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
+
+    def _view_error(self, text: str) -> None:
+        if self._view_sent != ("error", text):
+            self._view_sent = ("error", text)
+            self.emit({"type": "frame", "file": None, "fields": [], "error": text})
 
     def send_view(self) -> None:
-        """Send the viewed field if the view is open and the values changed since the last send."""
+        """Render the viewed field in situ if the view is open and the values changed."""
         if self.view is None or self.ctx is None:
             return
-        n = self._cells()
-        if n is None:
-            if self._view_sent != ("none",):
-                self._view_sent = ("none",)
-                self.emit({"type": "field", "field": None, "fields": [],
-                           "error": f"{self.solver.name} provides no mesh geometry"})
-            return
-        fields = {k: np.asarray(v) for k, v in self.solver.fields(self.ctx).items()}
-        fields = {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
+        from neofoam_ui import catalyst  # noqa: PLC0415
+
+        if self._insitu_error:
+            return self._view_error(self._insitu_error)
+        if not catalyst.configured():
+            return self._view_error(f"in-situ view off: set {catalyst.ENV} to a Catalyst + ParaView install")
+        cells = self._cell_fields()
+        if cells is None:
+            return self._view_error(f"{self.solver.name} provides no mesh geometry")
+        fields = cells[1]
         name, comp = self.view
         if name not in fields:
             name = next((k for k in ("U", "p", "T") if k in fields), next(iter(fields), None))
         if name is None:
             return
-        arr = fields[name].astype(float)
-        if arr.ndim == 2:
-            if comp not in [str(i) for i in range(arr.shape[1])]:
-                comp = "mag"
-            values = np.linalg.norm(arr, axis=1) if comp == "mag" else arr[:, int(comp)]
-            label = f"|{name}|" if comp == "mag" else (
-                f"{name}.{'xyz'[int(comp)]}" if arr.shape[1] == 3 else f"{name}[{comp}]")
-        else:
-            comp, values, label = "mag", arr, name
-        key = (name, comp, _fingerprint(values))
+        arr = fields[name]
+        ncomp = int(arr.shape[1]) if arr.ndim == 2 else 1
+        if ncomp == 1 or comp not in ["mag"] + [str(i) for i in range(ncomp)]:
+            comp = "mag"
+        key = (name, comp, _fingerprint(arr))
         if key == self._view_sent:
             return
         self._view_sent = key
-        from neofoam_ui.geometry import encode_values  # noqa: PLC0415
-
-        finite = values[np.isfinite(values)]
+        params = {"field": name, "component": comp}
+        if self.on_render is not None:
+            self.on_render(params)
+        file = self.render(params)
+        if file is None:
+            return self._view_error(self._insitu_error or "in-situ view failed")
         self.emit({
-            "type": "field", "field": name, "component": comp, "label": label,
-            "values": encode_values(values), "n": int(n),
-            "min": float(finite.min()) if finite.size else None,
-            "max": float(finite.max()) if finite.size else None,
+            "type": "frame", "file": file, "field": name, "component": comp,
             "time": self.solver.scalars(self.ctx).get("time"),
             "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
                        for k, v in fields.items()],
         })
+
+    def render(self, params: dict[str, str]) -> Optional[str]:
+        """Hand this rank's cells and fields to Catalyst (collective); the image file name."""
+        out: list[Optional[str]] = [None]
+
+        def run() -> None:
+            cells = self._cell_fields() if self.ctx is not None else None
+            if cells is None:
+                return
+            from neofoam_ui.catalyst import InSitu  # noqa: PLC0415
+
+            if self.insitu is None:
+                self.insitu = InSitu()
+            time_value = self.solver.scalars(self.ctx).get("time") or 0.0
+            out[0] = self.insitu.execute(cells[0], cells[1], time_value, params)
+
+        def guarded() -> None:
+            try:
+                run()
+            except Exception as exc:  # noqa: BLE001 - the stepper outlives a broken view
+                self._insitu_error = f"in-situ view failed: {exc!r}"
+                self.emit({"type": "stdout", "text": "Catalyst: " + traceback.format_exc()})
+
+        if self._insitu_error is None:
+            self.in_solver_thread(guarded)
+        return out[0]
+
+    def finalize_view(self) -> None:
+        """``catalyst_finalize`` (collective) on the solver thread, if a frame was rendered."""
+        if self.insitu is not None:
+            insitu, self.insitu = self.insitu, None
+            self.in_solver_thread(insitu.finalize)
 
     def _paused(self) -> None:
         self.send_view()

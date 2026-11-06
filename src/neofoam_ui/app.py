@@ -14,6 +14,7 @@ import os
 import shlex
 import socket
 import sys
+import tempfile
 from typing import Any, Optional
 
 from trame.app import asynchronous, get_server
@@ -22,6 +23,8 @@ from trame.widgets import client, html
 from trame.widgets import vuetify3 as v3
 from trame_flow.widgets.flow import Background, Controls, CustomNode, Handle, MiniMap, NodeEditor
 
+from neofoam_ui.catalyst import ENV as CATALYST_ENV
+from neofoam_ui.catalyst import OUT_ENV
 from neofoam_ui.fieldview import FIELD_CSS, component_items, field_pane
 from neofoam_ui.layout import build_flow, domain_color
 
@@ -140,9 +143,15 @@ class StepperApp:
         #: MPI ranks; > 1 starts the worker under ``mpirun`` (see neofoam_ui.parallel).
         self.np = np
         self.mpirun = shlex.split(mpirun)
-        #: ParaView Catalyst script: publish the viewed field at every pause (neofoam_ui.insitu).
-        self.catalyst_script = catalyst
-        self.publisher: Any = None
+        #: Catalyst 2 + ParaView install prefix for the in-situ view (neofoam_ui.catalyst).
+        self.catalyst = catalyst or os.environ.get(CATALYST_ENV)
+        #: Images the solver renders in situ, served as ``insitu/<run>/view_*.png``.
+        self.insitu_dir = tempfile.mkdtemp(prefix="neofoam_ui_insitu_")
+        self.server.enable_module({"serve": {"insitu": self.insitu_dir}})
+        self._runs = 0
+        self._run_dir = ""
+        #: Render at every pause even with the pane closed (a ParaView is attached via Live).
+        self.live = os.environ.get("NEOFOAM_UI_CATALYST_LIVE", "off") != "off"
         self.state = server.state
         self.ctrl = server.controller
         self.solver_spec = solver_spec
@@ -209,14 +218,11 @@ class StepperApp:
             s.delay_ms = 150
         # Field view: the toggle and the choice survive a restart.
         s.fv_on = bool(s.fv_on)
-        s.fv_lock = bool(s.fv_lock)
         s.fv_field = s.fv_field or None
         s.fv_comp = s.fv_comp or "mag"
         s.fv_fields = []
         s.fv_comps = []
-        s.fv_mesh = None
-        s.fv_frame = None
-        s.fv_note = ""
+        s.fv_src = None
         s.fv_msg = "the field view starts once the solver context exists (after initialization)"
 
     # -- worker -------------------------------------------------------------------------
@@ -227,6 +233,11 @@ class StepperApp:
         src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
         cmd = [self.python, "-u", "-m", "neofoam_ui.worker", self.solver_spec]
+        if self.catalyst:
+            self._runs += 1
+            self._run_dir = f"run{self._runs}"
+            env[CATALYST_ENV] = self.catalyst
+            env[OUT_ENV] = os.path.join(self.insitu_dir, self._run_dir)
         if self.np > 1:
             from neofoam_ui.parallel import SYNC_ENV  # noqa: PLC0415
 
@@ -308,13 +319,8 @@ class StepperApp:
             self._console(f"✖ error in {self._name(msg.get('node'))}", "err")
             for line in msg["traceback"].rstrip().splitlines():
                 self._console(line, "err")
-        elif kind == "mesh":
-            self._publish("mesh", msg)
-            self.state.fv_note = msg.get("note") or ""
-            self.state.fv_mesh = {k: v for k, v in msg.items() if k != "type"}
-        elif kind == "field":
-            self._on_field(msg)
-            self._publish("field", msg)
+        elif kind == "frame":
+            self._on_frame(msg)
         elif kind == "stopped":
             self.state.status = "session stopped"
             self.state.running = False
@@ -367,34 +373,20 @@ class StepperApp:
             self._refresh_inspector()
 
     def _send_view(self) -> None:
-        """Tell the worker what the field view shows; closed = nothing is sent at pauses."""
+        """Tell the worker what the field view shows; closed = nothing is rendered at pauses."""
         s = self.state
-        on = bool(s.fv_on or self.catalyst_script)  # Catalyst needs the frames even with the pane closed
+        on = bool(s.fv_on or self.live)
         req = (True, s.fv_field, s.fv_comp) if on else (False,)
         if req == self._view_req or self.proc is None:
             return
         self._view_req = req
         self._send({"cmd": "view", "on": on, "field": s.fv_field, "component": s.fv_comp})
 
-    def _publish(self, kind: str, msg: dict[str, Any]) -> None:
-        """Hand mesh / field messages to the Catalyst publisher (created on first use)."""
-        if not self.catalyst_script or msg.get("error"):
-            return
-        try:
-            if self.publisher is None:
-                from neofoam_ui.insitu import CatalystPublisher  # noqa: PLC0415
-
-                self.publisher = CatalystPublisher(self.catalyst_script)
-                self._console(f"Catalyst: running {self.catalyst_script}", "init")
-            getattr(self.publisher, kind)(msg)
-        except Exception as exc:  # noqa: BLE001 - in-situ output must not break stepping
-            self._console(f"✖ Catalyst disabled: {exc!r}", "err")
-            self.catalyst_script = None
-
-    def _on_field(self, msg: dict[str, Any]) -> None:
+    def _on_frame(self, msg: dict[str, Any]) -> None:
         s = self.state
         if msg.get("error"):
             s.fv_msg = msg["error"]
+            s.fv_src = None
             return
         fields = msg["fields"]
         s.fv_fields = [{"title": f["name"] + (" (vector)" if f["ncomp"] == 3 else f" ({f['ncomp']} comp.)" if f["ncomp"] > 1 else ""),
@@ -404,10 +396,10 @@ class StepperApp:
         # The worker may have picked the field (none chosen yet / not cell-sized): adopt it.
         s.fv_field, s.fv_comp = msg["field"], msg["component"]
         self._view_req = (True, msg["field"], msg["component"])
-        s.fv_frame = {k: msg[k] for k in ("field", "component", "label", "values", "min", "max", "n")}
+        s.fv_src = f"insitu/{self._run_dir}/{msg['file']}"
         t = msg.get("time")
-        parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "",
-                 f"{msg['label']} in [{_fmt(msg['min'])}, {_fmt(msg['max'])}]", s.fv_note]
+        ranks = f"{self.np} ranks" if self.np > 1 else ""
+        parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "", "rendered in situ (Catalyst)", ranks]
         s.fv_msg = " · ".join(p for p in parts if p)
 
     def _set_event(self, ev: dict[str, Any]) -> None:
@@ -989,9 +981,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument("--python", help="interpreter for the worker, e.g. a NeoFOAM venv")
     parser.add_argument("--np", type=int, default=1, help="MPI ranks (decomposed case)")
     parser.add_argument("--mpirun", default="mpirun", help="MPI launcher command")
-    parser.add_argument("--catalyst", metavar="SCRIPT",
-                        help="ParaView Catalyst script fed with the viewed field at every pause "
-                             "(needs ParaView's Python modules, e.g. `pixi run -e catalyst`)")
+    parser.add_argument("--catalyst", metavar="PREFIX",
+                        help=f"Catalyst 2 + ParaView install for the in-situ field view "
+                             f"(default ${CATALYST_ENV}); ParaView must be built for the worker's Python")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--no-browser", action="store_true")

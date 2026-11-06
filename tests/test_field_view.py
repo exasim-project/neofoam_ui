@@ -1,32 +1,50 @@
-import base64
+"""In-situ field view: the view protocol (Catalyst faked), geometry, and — where a
+Catalyst + ParaView install is configured — a real frame rendered through Catalyst 2."""
+
 import gzip
 import json
+import os
 import subprocess
 import sys
 
 import numpy as np
 import pytest
 
+from neofoam_ui import catalyst
 from neofoam_ui.engine import Session
-from neofoam_ui.geometry import (
-    cell_centres_geometry,
-    encode_geometry,
-    front_polygons,
-    read_polymesh,
-)
+from neofoam_ui.geometry import cell_centres_geometry, polyhedral, read_polymesh
 from neofoam_ui.toy.heat1d import Heat1D
-
-
-def decode(b64, dtype="<f4"):
-    return np.frombuffer(base64.b64decode(b64), dtype=dtype)
-
 
 # -- engine: the view protocol ------------------------------------------------------------
 
 
-def session_after_init():
+class FakeInSitu:
+    calls: list = []
+
+    def __init__(self):
+        self.step = 0
+
+    def execute(self, geom, fields, time, params):
+        FakeInSitu.calls.append({"geom": geom, "fields": fields, "time": time, "params": params})
+        self.step += 1
+        return f"view_{self.step - 1:06d}.png"
+
+    def finalize(self):
+        FakeInSitu.calls.append("finalize")
+
+
+@pytest.fixture(autouse=True)
+def fake_catalyst(monkeypatch, tmp_path):
+    FakeInSitu.calls = []
+    monkeypatch.setenv(catalyst.ENV, "/nowhere")
+    monkeypatch.setenv(catalyst.OUT_ENV, str(tmp_path))
+    monkeypatch.setattr(catalyst, "InSitu", FakeInSitu)
+    return FakeInSitu.calls
+
+
+def session_after_init(solver=None):
     messages = []
-    session = Session(Heat1D(), messages.append)
+    session = Session(solver or Heat1D(), messages.append)
     session.start()
     session.advance("skip_init")
     return session, messages
@@ -36,40 +54,39 @@ def of(messages, kind):
     return [m for m in messages if m["type"] == kind]
 
 
-def test_closed_view_sends_nothing():
+def test_closed_view_renders_nothing(fake_catalyst):
     session, messages = session_after_init()
     session.advance("time_step")
-    assert not of(messages, "mesh") and not of(messages, "field")
+    assert not of(messages, "frame") and not fake_catalyst
 
 
-def test_view_before_context_waits_for_initialization():
+def test_view_before_context_waits_for_initialization(fake_catalyst):
     messages = []
     session = Session(Heat1D(), messages.append)
     session.start()
     session.set_view("T")
-    assert not of(messages, "field")  # no ctx during init
+    assert not of(messages, "frame")  # no ctx during init
     session.advance("skip_init")
-    assert len(of(messages, "mesh")) == 1 and len(of(messages, "field")) == 1
+    assert len(of(messages, "frame")) == 1 and len(fake_catalyst) == 1
 
 
-def test_mesh_once_then_field_values_when_changed():
+def test_frames_only_when_values_change(fake_catalyst):
     session, messages = session_after_init()
     session.set_view("T")
-    (mesh,) = of(messages, "mesh")
-    assert mesh["kind"] == "line" and mesh["n"] == 40
-    assert np.allclose(decode(mesh["x"]), session.ctx.x)
-    (frame,) = of(messages, "field")
-    assert frame["field"] == "T" and frame["label"] == "T"
-    assert np.allclose(decode(frame["values"]), session.ctx.fields["T"])
-    # only cell-sized fields are offered (flux lives on the 41 faces)
+    (frame,) = of(messages, "frame")
+    assert frame["field"] == "T" and frame["file"] == "view_000000.png"
+    call = fake_catalyst[0]
+    assert call["params"] == {"field": "T", "component": "mag"}
+    assert call["geom"]["kind"] == "line"
+    # every cell-sized field goes to Catalyst (flux lives on the 41 faces)
+    assert set(call["fields"]) == {"T", "T_old", "kappa", "source_mask"}
     assert {f["name"] for f in frame["fields"]} == {"T", "T_old", "kappa", "source_mask"}
 
     session.advance("into")  # set_time_step: T unchanged -> no new frame
-    assert len(of(messages, "field")) == 1
+    assert len(of(messages, "frame")) == 1
     session.advance("time_step")  # T changed
-    frames = of(messages, "field")
-    assert len(frames) == 2 and np.allclose(decode(frames[-1]["values"]), session.ctx.fields["T"])
-    assert len(of(messages, "mesh")) == 1
+    frames = of(messages, "frame")
+    assert len(frames) == 2 and frames[-1]["file"] == "view_000001.png"
     # each frame precedes the pause it belongs to
     assert messages[-1]["type"] == "paused" and messages[-2] is frames[-1]
 
@@ -78,21 +95,21 @@ def test_switching_field_and_closing():
     session, messages = session_after_init()
     session.set_view("T")
     session.set_view("kappa")
-    assert of(messages, "field")[-1]["field"] == "kappa"
+    assert of(messages, "frame")[-1]["field"] == "kappa"
     session.set_view(None, on=False)
-    n = len(of(messages, "field"))
+    n = len(of(messages, "frame"))
     session.advance("time_step")
-    assert len(of(messages, "field")) == n
+    assert len(of(messages, "frame")) == n
 
 
 def test_unknown_field_falls_back_to_a_default():
     session, messages = session_after_init()
     session.set_view("flux")  # not cell-sized
-    assert of(messages, "field")[-1]["field"] == "T"
+    assert of(messages, "frame")[-1]["field"] == "T"
 
 
 class Vec(Heat1D):
-    """Heat1D with a vector field and a 2D point geometry."""
+    """Heat1D with a vector field and a point geometry."""
 
     def fields(self, ctx):
         n = len(ctx.x)
@@ -102,21 +119,15 @@ class Vec(Heat1D):
         return cell_centres_geometry(np.stack([ctx.x, 0.1 * ctx.x, np.zeros_like(ctx.x)], axis=1))
 
 
-def test_vector_components_and_magnitude():
-    messages = []
-    session = Session(Vec(), messages.append)
-    session.start()
-    session.advance("skip_init")
-    session.set_view("U", "mag")
-    frame = of(messages, "field")[-1]
-    u = Vec().fields(session.ctx)["U"]
-    assert frame["label"] == "|U|" and np.allclose(decode(frame["values"]), np.linalg.norm(u, axis=1))
+def test_vector_components(fake_catalyst):
+    session, messages = session_after_init(Vec())
     session.set_view("U", "1")
-    frame = of(messages, "field")[-1]
-    assert frame["label"] == "U.y" and np.allclose(decode(frame["values"]), 1.0)
-    assert {"name": "U", "ncomp": 3} in frame["fields"]
-    mesh = of(messages, "mesh")[0]
-    assert mesh["kind"] == "points" and mesh["axes"] == ["x", "y"]
+    assert of(messages, "frame")[-1]["component"] == "1"
+    assert fake_catalyst[-1]["params"] == {"field": "U", "component": "1"}
+    session.set_view("U", "7")  # no such component
+    assert of(messages, "frame")[-1]["component"] == "mag"
+    assert {"name": "U", "ncomp": 3} in of(messages, "frame")[-1]["fields"]
+    assert fake_catalyst[-1]["geom"]["kind"] == "points"
 
 
 class NoMesh(Heat1D):
@@ -124,19 +135,47 @@ class NoMesh(Heat1D):
 
 
 def test_solver_without_geometry_reports_it_once():
-    messages = []
-    session = Session(NoMesh(), messages.append)
-    session.start()
-    session.advance("skip_init")
+    session, messages = session_after_init(NoMesh())
     session.set_view("T")
     session.advance("time_step")
-    frames = of(messages, "field")
-    assert len(frames) == 1 and frames[0]["field"] is None and "no mesh" in frames[0]["error"]
+    frames = of(messages, "frame")
+    assert len(frames) == 1 and frames[0]["file"] is None and "no mesh" in frames[0]["error"]
 
 
-def test_worker_view_command():
+def test_unconfigured_catalyst_says_so(monkeypatch):
+    monkeypatch.delenv(catalyst.ENV)
+    session, messages = session_after_init()
+    session.set_view("T")
+    (frame,) = of(messages, "frame")
+    assert frame["file"] is None and catalyst.ENV in frame["error"]
+
+
+def test_a_failing_catalyst_disables_the_view_not_the_session(monkeypatch):
+    def boom(self, *a):
+        raise RuntimeError("no GPU")
+
+    monkeypatch.setattr(FakeInSitu, "execute", boom)
+    session, messages = session_after_init()
+    session.set_view("T")
+    session.advance("time_step")
+    assert "no GPU" in of(messages, "frame")[-1]["error"]
+    assert not session.failed and messages[-1]["type"] == "paused"
+
+
+def test_other_ranks_render_the_same_frame(fake_catalyst):
+    session, _ = session_after_init()
+    told = []
+    session.on_render = told.append
+    session.set_view("kappa")
+    assert told == [{"field": "kappa", "component": "mag"}]
+    session.finalize_view()
+    assert fake_catalyst[-1] == "finalize"
+
+
+def test_worker_reports_unconfigured_view():
+    env = {k: v for k, v in os.environ.items() if k != catalyst.ENV}
     proc = subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "neofoam_ui.toy.heat1d:Heat1D"],
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
 
     def send(cmd):
         proc.stdin.write(json.dumps(cmd) + "\n")
@@ -155,8 +194,8 @@ def test_worker_view_command():
         send({"cmd": "view", "on": True, "field": None, "component": "mag"})
         send({"cmd": "step", "mode": "skip_init"})
         seen = until("paused")
-        assert [m["type"] for m in seen if m["type"] in ("mesh", "field")] == ["mesh", "field"]
-        assert seen[-2]["field"] == "T"
+        (frame,) = [m for m in seen if m["type"] == "frame"]
+        assert frame["file"] is None and catalyst.ENV in frame["error"]
         send({"cmd": "stop"})
         until("stopped")
     finally:
@@ -164,7 +203,7 @@ def test_worker_view_command():
         proc.wait()
 
 
-# -- geometry: polyMesh files → polygons ------------------------------------------------------
+# -- geometry: polyMesh files → polyhedra ------------------------------------------------------
 
 _HEADER = """FoamFile
 {{
@@ -236,32 +275,76 @@ def write_binary(d):
 
 
 @pytest.mark.parametrize("fmt", ["ascii", "gz", "binary"])
-def test_read_polymesh_and_front_polygons(tmp_path, fmt):
+def test_read_polymesh_and_polyhedra(tmp_path, fmt):
     if fmt == "binary":
         write_binary(tmp_path)
     else:
         write_ascii(tmp_path, gz=fmt == "gz")
     mesh = read_polymesh(str(tmp_path))
-    assert mesh["points"].shape == (12, 3) and len(mesh["offsets"]) == 12 and int(mesh["n_internal"]) == 1
-    geom = front_polygons(mesh, 2)
-    assert geom is not None and geom["kind"] == "polygons" and geom["axes"] == ["x", "y"]
-    cells = [geom["points"][geom["conn"][geom["offsets"][i]:geom["offsets"][i + 1]]] for i in range(2)]
-    assert np.allclose(cells[0].mean(axis=0), [0.5, 0.5])  # cell order, not face order
-    assert np.allclose(cells[1].mean(axis=0), [1.5, 0.5])
-    enc = encode_geometry(geom)
-    assert enc["n"] == 2 and enc["bounds"] == [0.0, 2.0, 0.0, 1.0]
-    assert np.array_equal(decode(enc["offsets"], "<i4"), [0, 4, 8])
+    assert mesh["points"].shape == (12, 3) and len(mesh["offsets"]) == 12 and list(mesh["neighbour"]) == [1]
+    geom = polyhedral(mesh, 2)
+    assert geom["kind"] == "polyhedral" and list(geom["cell_offsets"]) == [0, 6, 12]
+    for cell, centre in ((0, [0.5, 0.5, 0.05]), (1, [1.5, 0.5, 0.05])):
+        faces = geom["cell_faces"][geom["cell_offsets"][cell]:geom["cell_offsets"][cell + 1]]
+        assert 0 in faces  # the internal face belongs to both cells
+        pts = np.concatenate([mesh["conn"][mesh["offsets"][f]:mesh["offsets"][f + 1]] for f in faces])
+        assert np.allclose(mesh["points"][np.unique(pts)].mean(axis=0), centre)
 
 
-def test_front_polygons_rejects_3d(tmp_path):
+def test_polyhedral_rejects_a_cell_count_mismatch(tmp_path):
     write_ascii(tmp_path)
-    mesh = read_polymesh(str(tmp_path))
-    mesh["points"] = mesh["points"].copy()
-    mesh["points"][0, 2] = 0.05  # no longer one cell thick
-    assert front_polygons(mesh, 2) is None
+    with pytest.raises(ValueError):
+        polyhedral(read_polymesh(str(tmp_path)), 3)
 
 
-def test_cell_centres_geometry_picks_widest_axes():
-    c = np.array([[0.0, 5.0, 1.0], [1.0, 5.0, 3.0], [2.0, 5.0, 2.0]])
+def test_cell_centres_geometry():
+    c = np.array([[0.0, 5.0], [1.0, 5.0]])
     g = cell_centres_geometry(c)
-    assert g["axes"] == ["x", "z"] and np.allclose(g["points"], c[:, [0, 2]])
+    assert g["kind"] == "points" and g["points"].shape == (2, 3)
+    assert cell_centres_geometry(np.array([0.0, 1.0]))["kind"] == "line"
+
+
+# -- the real thing: conduit Blueprint + ParaView through Catalyst 2 ---------------------------
+
+PREFIX = os.environ.get(catalyst.ENV)
+needs_catalyst = pytest.mark.skipif(not PREFIX, reason=f"set {catalyst.ENV} to a Catalyst + ParaView install")
+
+
+@needs_catalyst
+def test_blueprint_of_the_polymesh_verifies(tmp_path):
+    _, conduit = catalyst._import(PREFIX)
+    from catalyst_conduit import blueprint  # noqa: F401  (registers conduit.blueprint)
+
+    write_ascii(tmp_path)
+    geom = polyhedral(read_polymesh(str(tmp_path)), 2)
+    node, keep = conduit.Node(), []
+    catalyst.blueprint(node, geom, {"p": np.array([1.0, 2.0]), "U": np.ones((2, 3))}, keep)
+    info = conduit.Node()
+    assert conduit.blueprint.mesh.verify(node, info), info
+
+
+@needs_catalyst
+@pytest.mark.parametrize("kind", ["polyhedral", "line"])
+def test_paraview_renders_a_frame(tmp_path, kind):
+    """Runs in a fresh interpreter: Catalyst stays initialised for the life of a process."""
+    write_ascii(tmp_path)
+    code = f"""
+import numpy as np
+from neofoam_ui import catalyst
+from neofoam_ui.geometry import polyhedral, read_polymesh
+if {kind!r} == "line":
+    geom, fields = {{"kind": "line", "x": np.linspace(0, 1, 10)}}, {{"T": np.arange(10.0)}}
+else:
+    geom, fields = polyhedral(read_polymesh({str(tmp_path)!r}), 2), {{"p": np.array([1.0, 2.0])}}
+insitu = catalyst.InSitu({PREFIX!r}, {str(tmp_path / "out")!r})
+print("FILE", insitu.execute(geom, fields, 0.5, {{"field": next(iter(fields)), "component": "mag"}}))
+insitu.finalize()
+"""
+    python = os.environ.get("NEOFOAM_PYTHON", sys.executable)
+    src = os.path.join(os.path.dirname(__file__), "..", "src")
+    res = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=300,
+                         env={**os.environ, "PYTHONPATH": src})
+    assert res.returncode == 0, res.stderr[-3000:]
+    name = res.stdout.split("FILE ")[1].split()[0]
+    png = tmp_path / "out" / name
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

@@ -12,8 +12,9 @@ UI → worker (stdin)::
     {"cmd": "stop"}
 
 worker → UI (stdout): the engine messages (``graph``, ``log``, ``paused``,
-``running``, ``breakpoint``, ``error``, and for an open field view ``mesh`` once
-and ``field`` at each pause where the values changed) plus ``stdout`` for anything the solver
+``running``, ``breakpoint``, ``error``, and for an open field view a ``frame`` —
+the name of the image Catalyst rendered in situ — at each pause where the values
+changed) plus ``stdout`` for anything the solver
 prints. File descriptor 1 is redirected into a pipe, so neither Python ``print``
 nor C++ output (OpenFOAM ``Info``) can corrupt the protocol stream, which uses a
 duplicate of the original stdout.
@@ -108,6 +109,13 @@ def _capture_fd1(out: _Out) -> Callable[[], None]:
     return sync
 
 
+def _exit(code: int) -> None:
+    """Leave without static destructors: after MPI_Finalize, ParaView's would still call MPI."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:
@@ -132,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         hub = Hub(size - 1)
         session._gen = relay(session._gen, hub)
         session.gather = hub.stats
-        session.view_note = f"rank 0 subdomain only (1 of {size})"
+        session.on_render = hub.render
     commands: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def handle(cmd: dict[str, Any]) -> None:
@@ -176,14 +184,12 @@ def main(argv: list[str] | None = None) -> int:
     while True:
         cmd = commands.get()
         if cmd["cmd"] == "stop":
-            finalized = True
             if hub is not None:
-                hub.stop()
-                finalized = finish(session)
+                hub.stop()  # first: the followers finalize together with this rank
+            session.finalize_view()
+            finalized = finish(session)  # also when ParaView started MPI in a serial run
             out({"type": "stopped"})
-            if not finalized:
-                os._exit(1)  # stuck in a collective: let mpirun clean up
-            return 0
+            _exit(0 if finalized else 1)  # 1: stuck in a collective, let mpirun clean up
         if cmd["cmd"] == "step":
             try:
                 session.advance(cmd["mode"], cmd.get("node"))
