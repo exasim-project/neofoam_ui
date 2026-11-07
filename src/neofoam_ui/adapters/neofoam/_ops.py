@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from typing import Any, Callable, Optional
 
-from neofoam_ui.engine import Exchange, Op
+from neofoam_ui.engine import Exchange, Op, PointMapping
 
 __all__ = ()
 
@@ -52,8 +52,42 @@ def _exchange(func: Any) -> Optional[Exchange]:
     source = getattr(partner, "op", None)
     if not source:
         return None
-    return Exchange(str(source), tuple(str(name) for name in getattr(side, "kinds", {}) or ()),
-                    getattr(partner, "region", None))
+    kinds = getattr(side, "kinds", {}) or {}
+    return Exchange(str(source), tuple(str(name) for name in kinds), getattr(partner, "region", None),
+                    _mapping(func.coupling, side, partner, kinds))
+
+
+#: The mapping kind of NeoFOAM's own transfers (``CouplingOp.transfer``), by their name.
+_TRANSFERS = {"identity_transfer": "identity", "MappedTransfer": "nearest-neighbor"}
+
+
+def _mapping(coupling: Any, side: Any, partner: Any, kinds: dict[str, str]) -> Optional[PointMapping]:
+    """How a coupling node maps its partner's data onto its side's points, as far as NeoFOAM tells.
+
+    The kind from the coupling's ``transfer`` (a transfer of its own: its name), the mapped
+    fields from the kinds (``Array`` fields go through the transfer, the others are handed over
+    as they are), the points from each side's ``coordinates`` (``None``: the side gives none).
+    """
+    transfer = getattr(coupling, "transfer", None)
+    kind = None
+    if transfer is not None:
+        name = getattr(transfer, "__name__", None) or type(transfer).__name__
+        kind = _TRANSFERS.get(name, name)
+    mapped = tuple(str(name) for name, k in kinds.items() if k == "Array") if kinds else None
+    mapping = PointMapping(kind, mapped, _points(partner), _points(side))
+    return None if mapping == PointMapping() else mapping
+
+
+def _points(attached: Any) -> Optional[int]:
+    """The number of interface points of a coupled side (rows of its ``coordinates``), if it has any."""
+    coordinates = getattr(getattr(attached, "side", None), "coordinates", None)
+    shape = getattr(coordinates, "shape", None)
+    if shape:
+        return int(shape[0])
+    try:
+        return len(coordinates) if coordinates is not None else None
+    except TypeError:
+        return None
 
 
 def _turb_corr_gate(func: Any) -> Optional[tuple[Any, str]]:

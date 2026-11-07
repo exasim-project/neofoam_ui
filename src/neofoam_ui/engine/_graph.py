@@ -9,6 +9,26 @@ __all__ = ()
 
 
 @dataclass(frozen=True)
+class PointMapping:
+    """How a coupling node's data reaches its side's interface points (preCICE's "mapping").
+
+    The partner's data lives on the partner's interface points; the node hands it over on its
+    own side's points. Point fields (one value per point) are mapped, the others (one value for
+    the whole interface) are handed over as they are. Every field is optional: ``None`` means
+    the solver does not tell.
+    """
+
+    #: How point data is mapped, e.g. ``"identity"`` or ``"nearest-neighbor"`` (a custom
+    #: mapping: its own name).
+    kind: Optional[str] = None
+    #: Names of :attr:`Exchange.data` mapped point by point; the others are handed over unmapped.
+    mapped: Optional[tuple[str, ...]] = None
+    #: Interface points of the partner's side (mapped from) and of this side (mapped onto).
+    source_points: Optional[int] = None
+    target_points: Optional[int] = None
+
+
+@dataclass(frozen=True)
 class Exchange:
     """A coupling node's data exchange: the data of an op of the partner region, for the op after it.
 
@@ -22,6 +42,8 @@ class Exchange:
     data: tuple[str, ...] = ()
     #: The partner's region.
     partner: Optional[str] = None
+    #: How the data is mapped onto this side's interface points (``None``: not known).
+    mapping: Optional[PointMapping] = None
 
 
 @dataclass

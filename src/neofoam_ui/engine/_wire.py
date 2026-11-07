@@ -31,6 +31,14 @@ def _op_dict(op: Op) -> dict[str, Any]:
     if op.exchange is not None:  # optional: only coupling nodes
         out["exchange"] = {"source": op.exchange.source, "data": list(op.exchange.data),
                            "partner": op.exchange.partner}
+        mapping = op.exchange.mapping
+        if mapping is not None:  # optional: a solver that tells how it maps the data
+            out["exchange"]["mapping"] = {
+                "kind": mapping.kind,
+                "mapped": None if mapping.mapped is None else list(mapping.mapped),
+                "source_points": mapping.source_points,
+                "target_points": mapping.target_points,
+            }
     return out
 
 

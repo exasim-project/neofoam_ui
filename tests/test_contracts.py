@@ -154,7 +154,7 @@ PUBLIC = {
     "neofoam_ui": ["Event", "FieldSource", "GraphSolver", "InitStep", "Op", "SelfDrivingSolver", "Session",
                    "Solver", "ThreadedProgram", "assign_ids", "topological_order"],
     "neofoam_ui.engine": ["DEFAULT_REGION", "Event", "Exchange", "FieldSource", "GraphSolver", "InitStep",
-                          "MeshProvider", "Mode", "Op", "Peers", "ProgramContext", "Region", "RegionProvider", "RenderBackend",
+                          "MeshProvider", "Mode", "Op", "Peers", "PointMapping", "ProgramContext", "Region", "RegionProvider", "RenderBackend",
                           "Renderer", "ResultObserver", "SelfDrivingSolver", "Session", "Solver",
                           "ThreadedProgram", "UNTRACKED", "ViewFieldProvider", "assign_ids", "topological_order"],
     "neofoam_ui.protocol": ["CATALYST_ENV", "CATALYST_LIVE_ENV", "CATALYST_OUT_ENV", "CATALYST_SCRIPT_ENV",
