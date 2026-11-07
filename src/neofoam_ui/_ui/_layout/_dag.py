@@ -131,6 +131,8 @@ def _ops(
                 "guard": op.get("guard"),
                 "injected_by": op.get("injected_by"),
                 "test": op.get("test"),
+                # a coupling loop: the regions it couples (shown while collapsed)
+                "badge": " ↔ ".join(_regions_in(op)) if op.get("couples") else None,
             },
             "width": op["_w"],
             "height": op["_h"],
@@ -208,11 +210,26 @@ def _lane_body(op: dict[str, Any], dec_id: str, nodes: list[dict[str, Any]], edg
     # (a nested coupling loop's exchange edges arrive in ``flow`` too: they stay as they are)
     edges += [e if e.get("class") == "nf-couple"
               else {**e, **_SECONDARY, "style": {**e.get("style", {}), **_SECONDARY["style"]}} for e in flow]
-    edges += _exchange(op, lane_of)
+    edges += _exchange(op, lane_of, nodes)
 
 
-def _exchange(op: dict[str, Any], lane_of: dict[str, int]) -> list[dict[str, Any]]:
-    """The loop's ``couples`` as dashed edges in the sending region's colour, send → receive."""
+def _exchange(op: dict[str, Any], lane_of: dict[str, int], nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The loop's ``couples`` as dashed edges in the sending region's colour, send → receive.
+
+    Each label sits at about 70 % of its edge, towards the receiver, so the two labels of
+    one exchange (edges that cross halfway) do not cover each other.
+    """
+    placed = {n["id"]: n for n in nodes}
+
+    def at(node_id: str) -> tuple[float, float]:
+        """Top-left corner of a node on the canvas (positions are relative to the parent)."""
+        x = y = 0.0
+        cur: Optional[dict[str, Any]] = placed.get(node_id)
+        while cur is not None:
+            x, y = x + cur["position"]["x"], y + cur["position"]["y"]
+            cur = placed.get(cur.get("parentNode", ""))
+        return x, y
+
     def find(name: str) -> Optional[dict[str, Any]]:
         # the loop's own ops first: a nested loop may hold an op of the same name
         for child in op["children"]:
@@ -237,11 +254,15 @@ def _exchange(op: dict[str, Any], lane_of: dict[str, int]) -> list[dict[str, Any
             continue
         color = _REGION.color(send.get("region"))
         rightwards = lane(send) <= lane(receive)
-        out.append(_edge(send["id"], receive["id"], type="default", label=data,
+        (sx, sy), (tx, ty) = at(send["id"]), at(receive["id"])
+        dx = (tx - sx) + (-_AW if rightwards else _AW)  # right handle → left handle, or back
+        shift = f"translate({0.2 * dx:.0f}px, {0.2 * (ty - sy):.0f}px)"
+        out.append(_edge(send["id"], receive["id"], type="default", label=data, labelShowBg=False,
                          sourceHandle="r" if rightwards else "ls",
                          targetHandle="lt" if rightwards else "rt",
                          style={"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
-                         labelStyle={"fill": color, "fontWeight": 600},
+                         labelStyle={"fill": color, "fontWeight": 600, "transform": shift,
+                                     "paintOrder": "stroke", "stroke": "white", "strokeWidth": 4},
                          markerEnd={"type": "arrowclosed", "color": color},
                          **{"class": "nf-couple"}))
     return out

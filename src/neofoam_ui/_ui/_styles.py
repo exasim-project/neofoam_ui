@@ -102,6 +102,9 @@ _CSS = r"""
 .nf-vars tr.hl td { outline: 1px solid #f08c00; background: rgba(240,140,0,.12); }
 .nf-loop-title { position: absolute; left: 10px; top: 6px; font-size: 12px; opacity: .8; }
 .nf-loop-pass { font-weight: 600; color: #e0362c; }
+.nf-loop-res { font-family: monospace; font-size: 11px; opacity: .85; }
+.nf-loop-badge { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 11px;
+  background: rgba(103,65,217,.12); font-weight: 600; }
 .nf-lane { width: 100%; height: 100%; border: 1.5px dashed; border-radius: 10px; opacity: .9;
   background: rgba(255,255,255,.35); pointer-events: none; }
 .nf-lane-head { position: absolute; left: 10px; top: 4px; font-size: 12px; font-weight: 600;

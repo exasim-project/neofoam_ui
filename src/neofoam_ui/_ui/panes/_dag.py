@@ -35,6 +35,10 @@ class _DagPane(BasePane):
         #: Visited nodes, applied to the state at the next push.
         self._visited: list[str] = []
         self._visited_dirty = False
+        #: Default-collapsed loops (nested coupling loops) the user opened, and the loops drawn
+        #: collapsed now (the user's ``collapsed`` plus the default ones, see :meth:`_collapsed`).
+        self._opened: set[str] = set()
+        self._shown: frozenset[str] = frozenset()
         #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
         self.viewers = 0
         self._watching: Optional[bool] = None
@@ -52,6 +56,8 @@ class _DagPane(BasePane):
         self._visited, self._visited_dirty = [], False
         s.bps = s.bps if isinstance(s.bps, list) else []
         s.collapsed = s.collapsed if isinstance(s.collapsed, list) else []
+        s.loop_res = {}
+        self._opened, self._shown = set(), frozenset()
         s.heat_on = bool(s.heat_on)
         s.heat = {}
         s.heat_ms = {}
@@ -129,7 +135,13 @@ class _DagPane(BasePane):
             console(f"{prefix}{scope}  ▶ {msg['name']}  ({msg['ms']:.2f} ms)", "")
             visited.append(msg["node"])
         else:
-            console(f"{prefix}{scope}  ◇ {msg['name']} test #{msg['iter']} → {msg['result']}", "test")
+            res = msg.get("residuals")
+            note = ("  res " + " ".join(f"{k} {v:.2e}" for k, v in res.items())) if res else ""
+            console(f"{prefix}{scope}  ◇ {msg['name']} test #{msg['iter']} → {msg['result']}{note}", "test")
+            if res:
+                self.model.residuals[msg["node"]] = res
+                self.app.state.loop_res = {**self.app.state.loop_res,
+                                           msg["node"]: "res " + " ".join(f"{v:.1e}" for v in res.values())}
             if not msg["stack"]:  # new time step: forget what ran in the previous one
                 self._visited = [v for v in visited if v.startswith("init:")]
         self._visited_dirty = True
@@ -141,6 +153,8 @@ class _DagPane(BasePane):
 
     def _on_paused(self, msg: dict[str, Any]) -> None:
         s, ev = self.app.state, msg["event"]
+        if self._collapsed() != self._shown:  # the token entered or left a default-collapsed loop
+            self.rebuild(fit=False)
         self._refresh_heat()
         self._refresh_highlight()
         if s.follow and ev["node"]:
@@ -154,7 +168,7 @@ class _DagPane(BasePane):
         s = self.app.state
         s.tree = self.model.reindex(s.solver_name)
         s.regions = self.model.regions()
-        collapsed = frozenset(s.collapsed or ())
+        collapsed = self._shown = self._collapsed()
         self.editor.graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed)
         if fit:
             self.editor.fit_view()
@@ -169,6 +183,8 @@ class _DagPane(BasePane):
             bps.append(node_id)
         self.app.state.bps = bps
         self.app.send({"cmd": "breakpoints", "ids": bps})
+        if self._collapsed() != self._shown:  # a breakpoint inside a default-collapsed loop opens it
+            self.rebuild(fit=False)
         self._refresh_bp_list()
         self._refresh_inspector()
 
@@ -182,17 +198,32 @@ class _DagPane(BasePane):
         s.selected = node_id
         self._refresh_inspector()
         if pan and node_id in index:
-            shown = self.model.shown(node_id, s.collapsed)
+            shown = self.model.shown(node_id, self._shown)
             target = (f"{shown}::test" if index[shown]["kind"] == "loop"
-                      and shown not in s.collapsed else shown)
+                      and shown not in self._shown else shown)
             self.app.server.js_call(getattr(self.editor, "_NodeEditor__ref"), "fitView",
                                     {"nodes": [target], "duration": 250, "maxZoom": 1.0, "minZoom": 0.5,
                                      "padding": 1.2})
 
+    def _collapsed(self) -> frozenset[str]:
+        """The loops drawn collapsed: the user's, plus the nested coupling loops (collapsed by
+        default) unless the user opened one or the token or a breakpoint is inside it."""
+        s, m = self.app.state, self.model
+        inside = set(m.ancestors(s.cur_node))
+        for bp in s.bps or ():
+            inside.update(m.ancestors(bp))
+        default = m.nested_couplings() - self._opened - inside
+        return frozenset(s.collapsed or ()) | default
+
     def toggle_collapse(self, loop_id: str) -> None:
         collapsed = list(self.app.state.collapsed)
+        default = loop_id in self.model.nested_couplings()
         if loop_id in collapsed:
             collapsed.remove(loop_id)
+        elif default and loop_id in self._shown:
+            self._opened.add(loop_id)
+        elif default and loop_id in self._opened:
+            self._opened.discard(loop_id)
         else:
             collapsed.append(loop_id)
         self.app.state.collapsed = collapsed
@@ -207,7 +238,7 @@ class _DagPane(BasePane):
             return
         times = {k: v for k, v in m.total_ms.items()
                  if k in m.index and m.index[k]["kind"] in ("action", "init")}
-        times.update({lid: m.subtree_ms(lid) for lid in s.collapsed if lid in m.index})
+        times.update({lid: m.subtree_ms(lid) for lid in self._shown if lid in m.index})
         top = max(times.values(), default=0.0) or 1.0
         s.heat = {k: f"hsl(28, 95%, {96 - 42 * (v / top):.0f}%)" for k, v in times.items()}
         s.heat_ms = {k: _fmt_ms(v) for k, v in times.items()}
@@ -230,7 +261,7 @@ class _DagPane(BasePane):
                 elif field in (info.get("reads") or ()):
                     hl[op_id] = "r"
             for op_id in list(hl):  # a collapsed loop stands in for its body
-                shown = m.shown(op_id, s.collapsed)
+                shown = m.shown(op_id, self._shown)
                 if shown != op_id and hl.get(shown) != "w":
                     hl[shown] = hl[op_id]
         s.hl = hl

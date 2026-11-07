@@ -24,6 +24,8 @@ class _RunModel:
         self.total_ms: dict[str, float] = {}
         #: Fields each action was observed to change.
         self.writes_seen: dict[str, list[str]] = {}
+        #: A coupling loop's residuals after its last pass (relative change per field).
+        self.residuals: dict[str, dict[str, float]] = {}
 
     def graph(self, msg: dict[str, Any]) -> None:
         """A ``graph`` message: the init DAG or the execution tree."""
@@ -80,6 +82,19 @@ class _RunModel:
                 seen.setdefault(s["region"], None)
         walk(self.ops)
         return [{"name": r, "color": _REGION.color(r)} for r in seen]
+
+    def ancestors(self, node_id: Optional[str]) -> list[str]:
+        """The loops around ``node_id``, innermost first."""
+        out, cur = [], self.index.get(node_id or "", {}).get("parent")
+        while cur:
+            out.append(cur)
+            cur = self.index[cur]["parent"]
+        return out
+
+    def nested_couplings(self) -> set[str]:
+        """Coupling loops (ops with ``couples``) inside another coupling loop."""
+        return {i for i, info in self.index.items() if info.get("couples")
+                and any(self.index[a].get("couples") for a in self.ancestors(i))}
 
     def name(self, node_id: Optional[str]) -> str:
         if not node_id:

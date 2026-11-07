@@ -83,6 +83,10 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                     html.Span("«loop» {{ props.data.number }} {{ props.data.label }}")
                     html.Span(" · pass {{ loop_iter[props.id] }}", classes="nf-loop-pass",
                               v_if="loop_iter[props.id]")
+                    html.Span(" · {{ loop_res[props.id] }}", classes="nf-loop-res",
+                              v_if="loop_res[props.id]")
+                    html.Span("{{ props.data.badge }}", classes="nf-loop-badge",
+                              v_if="props.data.collapsed && props.data.badge")
                 html.Div("test: {{ props.data.test }}", classes="nf-loop-test")
                 html.Div("{{ heat_ms[props.id] ? heat_ms[props.id] + ' · ' : '' }}"
                          "{{ props.data.size }} actions", classes="nf-loop-size",

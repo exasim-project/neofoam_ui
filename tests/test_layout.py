@@ -145,3 +145,51 @@ def test_a_nested_coupling_loop_sits_in_the_lane_it_continues():
     # the outer loop's own b ops, not the inner loop's of the same name
     assert ("outer/send_b.x", "outer/receive_c.x") in exchange
     assert ("outer/inner/send_a.x", "outer/inner/receive_b.x") in exchange
+
+
+def _chain_model():
+    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
+    from neofoam_ui.engine import Op  # noqa: PLC0415
+
+    inner = _coupled("inner", ["a", "b"], [("send_a.x", "receive_b.x", "x"), ("send_b.x", "receive_a.x", "x")])
+    outer = Op("outer", "loop", lambda ctx: False, [
+        Op("receive_b.x", "action", lambda ctx: None, region="b"), inner,
+        Op("send_b.x", "action", lambda ctx: None, region="b"),
+        Op("receive_c.x", "action", lambda ctx: None, region="c"),
+        Op("c.solve", "action", lambda ctx: None, region="c"),
+        Op("send_c.x", "action", lambda ctx: None, region="c"),
+    ], couples=[("send_b.x", "receive_c.x", "x"), ("send_c.x", "receive_b.x", "x")])
+    ops = [outer]
+    assign_ids(ops)
+    model = _RunModel()
+    model.graph({"activity": "exec", "ops": [op_dict(o) for o in ops]})
+    model.reindex("probe")
+    return model
+
+
+def test_a_nested_coupling_loop_is_collapsed_unless_the_token_or_a_breakpoint_is_inside():
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
+
+    model = _chain_model()
+    assert model.nested_couplings() == {"outer/inner"}
+    pane = SimpleNamespace(model=model, _opened=set(),
+                           app=SimpleNamespace(state=SimpleNamespace(cur_node="outer/c.solve", bps=[], collapsed=[])))
+    collapsed = lambda: _DagPane._collapsed(pane)  # noqa: E731
+    assert collapsed() == {"outer/inner"}
+    pane.app.state.cur_node = "outer/inner/a.solve"
+    assert collapsed() == set()
+    pane.app.state.cur_node, pane.app.state.bps = "outer/c.solve", ["outer/inner/b.solve"]
+    assert collapsed() == set()
+    pane.app.state.bps, pane._opened = [], {"outer/inner"}
+    assert collapsed() == set()
+
+
+def test_a_collapsed_coupling_loop_names_its_regions_and_labels_do_not_overlap():
+    model = _chain_model()
+    flow = build_flow([], model.ops, collapsed=frozenset({"outer/inner"}))
+    nodes = {n["id"]: n for n in flow["nodes"]}
+    assert nodes["outer/inner"]["data"]["badge"] == "a ↔ b"
+    labels = [e["labelStyle"]["transform"] for e in flow["edges"] if e.get("class") == "nf-couple"]
+    assert len(labels) == 2 and labels[0] != labels[1]

@@ -47,6 +47,8 @@ def _inspector_model(model: _RunModel, sel: Optional[str], bps: Iterable[str]) -
         if info["parent"]:
             nav.append({"dir": "⬆", **chip(info["parent"])})
         nav += [{"dir": "⬇", **chip(c)} for c in info["child_ids"]]
+    if sel in model.residuals:
+        rows.append({"k": "residuals", "v": "  ".join(f"{k} {v:.2e}" for k, v in model.residuals[sel].items())})
     rows.append({"k": "source", "v": _short_path(info.get("source"))})
     rows.append({"k": "calls", "v": str(model.calls.get(sel, 0))})
     if sel in model.last_ms:
