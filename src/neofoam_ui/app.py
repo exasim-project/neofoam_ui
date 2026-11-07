@@ -33,10 +33,13 @@ from trame_flow.widgets.flow import Background, Controls, CustomNode, Handle, Mi
 
 from neofoam_ui.catalyst import ENV as CATALYST_ENV
 from neofoam_ui.catalyst import OUT_ENV
-from neofoam_ui.fieldview import FIELD_CSS, component_items, field_pane
-from neofoam_ui.layout import build_flow, build_pipeline_flow, domain_color
-from neofoam_ui.pipelineview import PIPELINE_CSS, pipeline_pane
-from neofoam_ui.plotview import PLOT_CSS, TableHistory, plot_pane
+from neofoam_ui._ui._layout._dag import _build_flow
+from neofoam_ui._ui._layout._palette import _DOMAIN
+from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow
+from neofoam_ui._ui.panes._field import _FIELD_CSS, _component_items, _field_pane
+from neofoam_ui._ui.panes._pipeline import _PIPELINE_CSS, _pipeline_pane
+from neofoam_ui._ui.panes._plots import _PLOT_CSS, _plot_pane
+from neofoam_ui._ui.panes._table_history import _TableHistory
 from neofoam_ui.protocol import CATALYST_LIVE_ENV, DELAY_ENV, UI_URGENT, WAIT_ENV
 
 __all__ = ["StepperApp", "main"]
@@ -212,7 +215,7 @@ class StepperApp:
         self._pp_desc: Optional[dict[str, Any]] = None
         self._pp_tables: list[dict[str, Any]] = []
         #: Rows of NeoFOAM's post-processing tables (``pptable``), for the Plots pane.
-        self.history = TableHistory()
+        self.history = _TableHistory()
         self._plotted = 0.0
         #: Compute time per table since the last flush (shown on its diagram frame).
         self._table_ms: dict[str, float] = {}
@@ -550,7 +553,7 @@ class StepperApp:
         s.fv_fields = [{"title": f["name"] + (" (vector)" if f["ncomp"] == 3 else f" ({f['ncomp']} comp.)" if f["ncomp"] > 1 else ""),
                         "value": f["name"]} for f in fields]
         ncomp = next((f["ncomp"] for f in fields if f["name"] == msg["field"]), 1)
-        s.fv_comps = component_items(ncomp)
+        s.fv_comps = _component_items(ncomp)
         # The worker may have picked the field (none chosen yet / not cell-sized): adopt it.
         # Echoing it back is harmless (the same frame is not rendered twice).
         s.fv_field, s.fv_comp = msg["field"], msg["component"]
@@ -596,7 +599,7 @@ class StepperApp:
     def _draw_pipeline(self) -> None:
         """Both kinds of post-processing in the Pipeline pane; refit when the topology changed."""
         s = self.state
-        flow = build_pipeline_flow(self._pp_desc, self._pp_tables)
+        flow = _build_pipeline_flow(self._pp_desc, self._pp_tables)
         self.pp_editor.graph = flow
         topology = (tuple(n["id"] for n in flow["nodes"]),
                     tuple((e["source"], e["target"]) for e in flow["edges"]))
@@ -694,7 +697,7 @@ class StepperApp:
                                    "preds": s["depends_on"],
                                    "succs": [t["id"] for t in self.init_steps if s["id"] in t["depends_on"]]}
             tree.append({"id": s["id"], "name": s["name"], "depth": 1, "kind": "init",
-                         "color": domain_color(s.get("category"))})
+                         "color": _DOMAIN.color(s.get("category"))})
         tree.append({"id": "act:exec", "name": f"Execution · {self.state.solver_name}", "depth": 0,
                      "color": "#8a94a6", "kind": "activity"})
 
@@ -705,13 +708,13 @@ class StepperApp:
                 self.index[op["id"]] = {**op, "parent": parent, "prev": prev, "next": nxt,
                                         "child_ids": [c["id"] for c in op["children"]]}
                 tree.append({"id": op["id"], "name": op["name"], "depth": depth, "kind": op["kind"],
-                             "color": domain_color(op.get("domain"))})
+                             "color": _DOMAIN.color(op.get("domain"))})
                 walk(op["children"], op["id"], depth + 1)
 
         walk(self.ops, None, 1)
         self.state.tree = tree
         collapsed = frozenset(self.state.collapsed or ())
-        flow = build_flow(self.init_steps, self.ops or None, self.state.solver_name, collapsed)
+        flow = _build_flow(self.init_steps, self.ops or None, self.state.solver_name, collapsed)
         self.editor.graph = flow
         if fit:
             self.editor.fit_view()
@@ -911,7 +914,7 @@ class StepperApp:
             "id": sel,
             "name": info["name"],
             "type": kind_label,
-            "color": domain_color(info.get("domain") or info.get("category")),
+            "color": _DOMAIN.color(info.get("domain") or info.get("category")),
             "rows": rows,
             "doc": info.get("doc") or "",
             "nav": nav,
@@ -928,7 +931,7 @@ class StepperApp:
         idle = "!connected || running || finished"
         with SinglePageWithDrawerLayout(self.server) as layout:
             layout.title.set_text("DAG stepper")
-            client.Style(_CSS + FIELD_CSS + PIPELINE_CSS + PLOT_CSS)
+            client.Style(_CSS + _FIELD_CSS + _PIPELINE_CSS + _PLOT_CSS)
             # Phones: drawer closed and overlaying instead of pushing the content.
             # Who watches: a visible tab counts (closed or hidden, a run reports no events).
             client.ClientTriggers(mounted=(
@@ -1048,9 +1051,9 @@ class StepperApp:
                         html.Div("All panes are closed: the solver runs as it would without the UI "
                                  "(breakpoints and Pause still work).", classes="nf-idle",
                                  v_show="!dag_on && !fv_on && !pp_on && !pt_on")
-                        field_pane()
-                        self.pp_editor = pipeline_pane()
-                        plot_pane()
+                        _field_pane()
+                        self.pp_editor = _pipeline_pane()
+                        _plot_pane()
                     with html.Div(classes="nf-side"):
                         self._inspector()
                     with html.Div(classes="nf-bottom"):

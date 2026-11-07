@@ -11,8 +11,8 @@ import math
 from typing import Any, NamedTuple
 
 from neofoam_ui.engine import Session
-from neofoam_ui.layout import build_pipeline_flow
-from neofoam_ui.plotview import TableHistory
+from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow as build_pipeline_flow
+from neofoam_ui._ui.panes._table_history import _TableHistory as TableHistory
 from neofoam_ui.pptables import describe_table, observe, rows_message
 from neofoam_ui.toy.heat1d import Heat1D
 

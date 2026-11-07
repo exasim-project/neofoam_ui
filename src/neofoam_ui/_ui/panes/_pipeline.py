@@ -17,9 +17,9 @@ from trame.widgets import html
 from trame.widgets import vuetify3 as v3
 from trame_flow.widgets.flow import Background, Controls, CustomNode, Handle, NodeEditor
 
-__all__ = ["PIPELINE_CSS", "pipeline_pane"]
+__all__ = ()
 
-PIPELINE_CSS = r"""
+_PIPELINE_CSS = r"""
 .nf-pp { flex: 1 1 0; }
 .nf-pp-flow { flex: 1 1 auto; min-height: 0; position: relative; }
 .nf-pp-node { border: 1.4px solid #8a94a6; background: #f7f8fb; border-radius: 10px; display: flex;
@@ -36,7 +36,7 @@ PIPELINE_CSS = r"""
 """
 
 
-def pipeline_pane() -> Any:
+def _pipeline_pane() -> Any:
     """The pane (header + diagram); shown while ``pp_on``. Returns its node editor."""
     with html.Div(classes="nf-field nf-pp", v_show="pp_on"):
         with html.Div(classes="nf-field-bar"):

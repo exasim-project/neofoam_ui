@@ -298,7 +298,7 @@ def test_a_failing_description_keeps_the_frames(monkeypatch):
 
 
 def test_pipeline_layout_layers_by_data_flow():
-    from neofoam_ui.layout import build_pipeline_flow
+    from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow as build_pipeline_flow
 
     desc = {"script": "x.py", "edges": [{"source": "a", "target": "b"}, {"source": "b", "target": "c"},
                                         {"source": "a", "target": "e"}, {"source": "c", "target": "gone"}],

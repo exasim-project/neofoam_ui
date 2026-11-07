@@ -12,9 +12,9 @@ from typing import Any
 from trame.widgets import html
 from trame.widgets import vuetify3 as v3
 
-__all__ = ["FIELD_CSS", "component_items", "field_pane"]
+__all__ = ()
 
-FIELD_CSS = r"""
+_FIELD_CSS = r"""
 .nf-field { display: flex; flex-direction: column; min-width: 0; min-height: 0;
   border-left: 1px solid rgba(128,128,128,.25); background: rgb(var(--v-theme-surface)); }
 .nf-field-bar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; flex-wrap: wrap;
@@ -29,7 +29,7 @@ FIELD_CSS = r"""
 """
 
 
-def component_items(ncomp: int) -> list[dict[str, Any]]:
+def _component_items(ncomp: int) -> list[dict[str, Any]]:
     if ncomp <= 1:
         return []
     names = "xyz" if ncomp == 3 else [str(i) for i in range(ncomp)]
@@ -37,7 +37,7 @@ def component_items(ncomp: int) -> list[dict[str, Any]]:
         {"title": n, "value": str(i)} for i, n in enumerate(names)]
 
 
-def field_pane() -> None:
+def _field_pane() -> None:
     """The pane (header + rendered image); shown while ``fv_on``."""
     with html.Div(classes="nf-field", v_show="fv_on"):
         with html.Div(classes="nf-field-bar"):
