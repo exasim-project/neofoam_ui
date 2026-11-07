@@ -65,3 +65,56 @@ def test_stepping_matches_plain_run(tmp_path, ui_mode):
     assert set(plain) == {"U", "p", "phi"}
     for name in plain:
         np.testing.assert_array_equal(stepped[name], plain[name], err_msg=name)
+
+
+def _has_postprocess() -> bool:
+    probe = "import neofoam.postprocess.model"
+    return subprocess.run([PYTHON, "-c", probe], env=_env(), capture_output=True).returncode == 0
+
+
+@pytest.mark.parametrize("ui_mode", ["tree", "observed"])
+def test_post_processing_tables_reach_the_ui(tmp_path, ui_mode):
+    """The example tables (examples/pitzDaily): a diagram each, and rows equal to the CSVs."""
+    import csv  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    if not _has_postprocess():
+        pytest.skip("this NeoFOAM has no post-processing tables")
+    if ui_mode == "observed" and not _has_observer():
+        pytest.skip("this NeoFOAM has no execution observer")
+    case = _pitzdaily(tmp_path)
+    examples = Path(__file__).resolve().parents[1] / "examples" / "pitzDaily" / "system"
+    for spec in examples.glob("postProcess.*"):
+        shutil.copy(spec, case / "system")
+    commands = json.dumps({"cmd": "step", "mode": "run"}) + "\n"
+    proc = subprocess.Popen([PYTHON, "-u", "-m", "neofoam_ui.worker",
+                             "neofoam_ui.adapters.neofoam:incompressible_fluid"],
+                            cwd=case, env=_env(NEOFOAM_UI_MODE=ui_mode), stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    proc.stdin.write(commands)
+    proc.stdin.flush()
+    messages = []
+    for line in proc.stdout:
+        msg = json.loads(line)
+        messages.append(msg)
+        if msg["type"] == "paused" and msg["finished"]:
+            break
+    proc.stdin.write(json.dumps({"cmd": "stop"}) + "\n")
+    proc.stdin.flush()
+    proc.wait(timeout=60)
+
+    declared = [m for m in messages if m["type"] == "pptables"]
+    assert len(declared) == 1
+    names = {t["name"] for t in declared[0]["tables"]}
+    assert {"p_mean", "recirculation_Ux", "magU_along_x", "pressure_force_lowerWall"} <= names
+    rows = [m for m in messages if m["type"] == "pptable"]
+    for name in names:
+        mine = [m for m in rows if m["name"] == name]
+        with open(case / "postProcessing" / f"{name}.csv") as handle:
+            lines = list(csv.reader(handle))[1:]
+        last = mine[-1]
+        n_rows = len(last["values"])
+        assert len(lines) == len(mine) * n_rows, name
+        # the CSV puts the group labels first; the values follow
+        for row, labels, line in zip(last["values"], last["groups"], lines[-n_rows:]):
+            assert [float(v) for v in line[1 + len(labels):]] == pytest.approx(row, rel=1e-12), name

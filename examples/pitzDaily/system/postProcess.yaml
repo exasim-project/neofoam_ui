@@ -1,0 +1,50 @@
+# In-situ post-processing tables for pitzDaily — the declarative front door.
+#
+# Each table becomes postProcessing/<name>.csv (time first) and, in the DAG
+# stepper, a chart in the Plots pane and a frame in the Pipeline pane.
+# system/postProcess.py next to this file adds the wall pressure forces.
+# scripts/pitzdaily.sh copies both into a case that has none.
+tables:
+  # Extremes and mean of the (kinematic) pressure over all cells.
+  - name: p_min
+    source: {type: internal, field: p}
+    pipeline: [{type: min, name: p_min}]
+  - name: p_mean
+    source: {type: internal, field: p}
+    pipeline: [{type: mean, name: p_mean}]
+  - name: p_max
+    source: {type: internal, field: p}
+    pipeline: [{type: max, name: p_max}]
+
+  # The speed |U|: a field function before the aggregator.
+  - name: magU_mean
+    source: {type: internal, field: U}
+    pipeline: [{type: mag}, {type: mean, name: magU_mean}]
+  - name: magU_max
+    source: {type: internal, field: U}
+    pipeline: [{type: mag}, {type: max, name: magU_max}]
+
+  # Area-integrated pressure on the two walls (a patch source, SurfIntegrate).
+  - name: lowerWall_p
+    source: {type: patch, field: p, patch: lowerWall}
+    pipeline: [{type: surfIntegrate, name: lowerWall_p}]
+  - name: upperWall_p
+    source: {type: patch, field: p, patch: upperWall}
+    pipeline: [{type: surfIntegrate, name: upperWall_p}]
+
+  # Mean streamwise velocity in the box behind the step (a selector): negative
+  # once the recirculation zone has formed.
+  - name: recirculation_Ux
+    source: {type: internal, field: U}
+    pipeline:
+      - {type: box, min: [0.0, -0.0254, -1.0], max: [0.05, 0.0, 1.0]}
+      - {type: component, index: 0}
+      - {type: mean, name: recirculation_Ux}
+
+  # Mean |U| in slabs along the channel (binning): one row per bin.
+  - name: magU_along_x
+    source: {type: internal, field: U}
+    pipeline:
+      - {type: mag}
+      - {type: directional, bins: [0.0, 0.05, 0.1, 0.15, 0.2], direction: [1.0, 0.0, 0.0]}
+      - {type: mean, name: magU}

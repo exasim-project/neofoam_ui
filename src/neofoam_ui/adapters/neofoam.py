@@ -97,6 +97,26 @@ class _FieldsMixin:
                     continue
         return out
 
+    def observe(self, value: Any, emit: Callable[[dict[str, Any]], None]) -> None:
+        """Hook NeoFOAM's ``PostProcessor`` (init step ``post_processor``) when it is built.
+
+        Every table the case declares then reports its rows after each ``post_process``
+        (:func:`neofoam_ui.pptables.observe`); the CSV files are written as before.
+        """
+        try:
+            from neofoam.postprocess.model import PostProcessor  # noqa: PLC0415
+        except ImportError:  # a NeoFOAM without post-processing
+            return
+        if isinstance(value, PostProcessor):
+            from neofoam_ui.pptables import observe  # noqa: PLC0415
+
+            if getattr(value, "_tables", None):
+                _ensure_neon()
+
+            if not observe(value, emit):
+                emit({"type": "stdout", "text": "post-processing tables: this NeoFOAM's "
+                                                "PostProcessor cannot be observed"})
+
     def mesh(self, ctx: Any) -> Optional[dict[str, Any]]:
         """This rank's cells for the in-situ view: the polyMesh as polyhedra.
 
@@ -118,6 +138,20 @@ class _FieldsMixin:
         except (OSError, ValueError, IndexError):
             centres = np.asarray(mesh.C().internalField())
             return cell_centres_geometry(centres, note="cell centres (no polyMesh files)")
+
+
+def _ensure_neon() -> None:
+    """Bring up NeoN/Kokkos for the post-processing kernels (idempotent).
+
+    The tables reduce with NeoN kernels, which allocate NeoN vectors even for host
+    numpy input; the pybFoam ``incompressibleFluid`` never initializes Kokkos, so its
+    first ``min``/``max``/``mean`` aborts the process (also in a plain ``run()``).
+    """
+    try:
+        from neofoam.solver.neon_runtime import ensure_neon_initialized  # noqa: PLC0415
+    except ImportError:
+        return
+    ensure_neon_initialized(["neofoam"])
 
 
 #: Registry names of old-time and previous-iteration copies of a field.
@@ -188,6 +222,7 @@ class _Stepper:
     def after_init_step(self, step: Any, context: dict[str, Any], value: Any) -> None:
         ms = (time.perf_counter() - self.t0) * 1e3
         self.s.results[step.name] = value
+        self.s.observe_result(value)
         self.s.record("init", f"init:{step.name}", step.name, ms)
 
     # -- execution ------------------------------------------------------------------------

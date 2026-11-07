@@ -10,15 +10,17 @@ Two activities are stacked vertically inside one canvas:
 Positions of children are relative to their parent group (VueFlow ``parentNode``).
 A *collapsed* loop is drawn as a single node without its body.
 
-:func:`build_pipeline_flow` lays out the post-processing (Catalyst/ParaView)
-pipeline the same way: one activity frame, nodes layered by data flow.
+:func:`build_pipeline_flow` lays out the post-processing pipelines the same way — the
+Catalyst/ParaView one and each NeoFOAM table: one activity frame each, nodes layered by
+data flow.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-__all__ = ["DOMAIN_COLORS", "PIPELINE_COLORS", "build_flow", "build_pipeline_flow", "domain_color"]
+__all__ = ["DOMAIN_COLORS", "PIPELINE_COLORS", "build_flow", "build_pipeline_flow", "domain_color",
+           "pipeline_color"]
 
 # Sizes in px.
 AW, AH = 240, 44  # action
@@ -274,13 +276,30 @@ PW = 260  # pipeline node width
 PH_HEAD, PH_ROW = 42, 15  # its name + type lines, one settings row
 PIPE_PER_ROW = 3
 
+FRAMES_ROW_W = 1700  # pipeline frames wrap onto a new row beyond this width
+
 PIPELINE_COLORS = {
+    # Catalyst / ParaView
     "source": "#2e86c1",
     "filter": "#6aa84f",
     "display": "#d08a2e",
     "view": "#8e5bb5",
     "extractor": "#c0504d",
+    # NeoFOAM post-processing (neofoam_ui.pptables: the module a node is filed in)
+    "selector": "#e0a030",
+    "field function": "#16a085",
+    "binning": "#8e44ad",
+    "aggregator": "#b5475b",
+    "writer": "#5b7a99",
+    "custom": "#7f8c8d",
 }
+
+
+def pipeline_color(kind: str) -> str:
+    """Colour of a pipeline node kind; an unknown kind gets the next fallback colour, kept."""
+    if kind not in PIPELINE_COLORS:
+        PIPELINE_COLORS[kind] = _FALLBACK[len(PIPELINE_COLORS) % len(_FALLBACK)]
+    return PIPELINE_COLORS[kind]
 
 
 def _pipe_layers(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -303,8 +322,38 @@ def _pipe_layers(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> li
     return [layer[i:i + PIPE_PER_ROW] for layer in layers for i in range(0, len(layer), PIPE_PER_ROW)]
 
 
-def build_pipeline_flow(desc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """The pipeline :func:`neofoam_ui.catalyst.describe_pipeline` found, as a VueFlow graph."""
+def build_pipeline_flow(desc: Optional[dict[str, Any]] = None,
+                        tables: Any = ()) -> dict[str, list[dict[str, Any]]]:
+    """The post-processing pipelines as one VueFlow graph, one activity frame each.
+
+    ``desc``: the ParaView pipeline :func:`neofoam_ui.catalyst.describe_pipeline` found
+    (frame ``pp:act``); ``tables``: NeoFOAM's tables as :func:`neofoam_ui.pptables.describe_table`
+    describes them (frames ``pp:act:<table>``). Frames sit side by side, wrapping onto
+    further rows beyond ``FRAMES_ROW_W``.
+    """
+    frames: list[tuple[str, str, dict[str, Any]]] = []
+    if desc is not None:
+        script = desc.get("script")
+        frames.append(("pp:act", "ParaView (Catalyst)" + (f" · {script}" if script else ""), desc))
+    for table in tables:
+        frames.append((f"pp:act:{table['name']}", f"NeoFOAM post-processing · {table['name']}", table))
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    x = y = row_h = 0.0
+    for act, title, frame in frames:
+        frame_nodes, frame_edges, w, h = _pipeline_frame(act, frame)
+        if x > 0 and x + w > FRAMES_ROW_W:
+            x, y, row_h = 0.0, y + row_h + GAP, 0.0
+        nodes.append(_activity(act, title, x, y, w, h))
+        nodes += frame_nodes
+        edges += frame_edges
+        x += w + GAP
+        row_h = max(row_h, h)
+    return {"nodes": nodes, "edges": edges}
+
+
+def _pipeline_frame(act: str, desc: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float, float]:
+    """One pipeline's nodes (inside frame ``act``) and edges, and the frame's size."""
     known = {n["id"] for n in desc["nodes"]}
     edges_in = [e for e in desc["edges"] if e["source"] in known and e["target"] in known]
     layers = _pipe_layers(desc["nodes"], edges_in)
@@ -313,20 +362,21 @@ def build_pipeline_flow(desc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
     widest = max((len(row) for row in layers), default=1)
     w = widest * PW + (widest - 1) * 24 + 2 * PAD
     h = ACT_HEAD + sum(heights) + GAP * max(len(layers) - 1, 0) + PAD
-    script = desc.get("script")
-    nodes = [_activity("pp:act", "Post-processing" + (f" · {script}" if script else ""), 0, 0, w, h)]
+    nodes = []
     y = ACT_HEAD
     for row, row_h in zip(layers, heights):
         row_w = len(row) * PW + (len(row) - 1) * 24
         for i, n in enumerate(row):
             nh = PH_HEAD + PH_ROW * len(n["settings"]) + 8
             nodes.append({
-                "id": n["id"], "type": "pp", "parentNode": "pp:act",
+                "id": n["id"], "type": "pp", "parentNode": act,
                 "position": {"x": (w - row_w) / 2 + i * (PW + 24), "y": y + (row_h - nh) / 2},
                 "data": {"label": n["name"], "type": n["type"], "kind": n["kind"],
-                         "settings": n["settings"], "color": PIPELINE_COLORS.get(n["kind"], "#9aa3ad")},
+                         "settings": n["settings"], "color": pipeline_color(n["kind"])},
                 "width": PW, "height": nh, "style": {"width": f"{PW}px", "height": f"{nh}px"},
                 "draggable": False, "selectable": False, "connectable": False,
             })
         y += row_h + GAP
-    return {"nodes": nodes, "edges": [_edge(e["source"], e["target"]) for e in edges_in]}
+    edges = [_edge(e["source"], e["target"], **({"label": e["label"]} if e.get("label") else {}))
+             for e in edges_in]
+    return nodes, edges, w, h

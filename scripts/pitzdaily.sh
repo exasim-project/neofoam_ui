@@ -6,6 +6,7 @@
 # Env: NEOFOAM_DIR (default ~/libsAndApps/NeoFOAM), OPENFOAM_BASHRC
 # (default ~/OpenFOAM/OpenFOAM-v2406/etc/bashrc), END_TIME (default 0.002),
 # NP (MPI ranks, default 1: > 1 decomposes the case and runs under mpirun).
+# The tables in examples/pitzDaily/system are copied into a case without its own.
 # OpenFOAM's bashrc is not strict-mode clean and parses "$@" as overrides:
 # source it first, with the script arguments hidden.
 args=("$@")
@@ -28,6 +29,11 @@ if [[ ! -d "$case_dir/constant/polyMesh" ]]; then
     cp -r "$case_dir/0.orig" "$case_dir/0"
     sed -i "s/^endTime .*/endTime         ${END_TIME:-0.002};/" "$case_dir/system/controlDict"
     (cd "$case_dir" && blockMesh > log.blockMesh)
+fi
+
+# The example post-processing tables (examples/pitzDaily), unless the case has its own.
+if ! compgen -G "$case_dir/system/postProcess.*" > /dev/null; then
+    cp "$here"/examples/pitzDaily/system/postProcess.* "$case_dir/system/"
 fi
 
 np="${NP:-1}"

@@ -15,6 +15,7 @@ import shlex
 import socket
 import sys
 import tempfile
+import time
 from typing import Any, Optional
 
 from trame.app import asynchronous, get_server
@@ -28,11 +29,14 @@ from neofoam_ui.catalyst import OUT_ENV
 from neofoam_ui.fieldview import FIELD_CSS, component_items, field_pane
 from neofoam_ui.layout import build_flow, build_pipeline_flow, domain_color
 from neofoam_ui.pipelineview import PIPELINE_CSS, pipeline_pane
+from neofoam_ui.plotview import PLOT_CSS, TableHistory, plot_pane
 
 __all__ = ["StepperApp", "main"]
 
 DEFAULT_SOLVER = "neofoam_ui.toy.heat1d:Heat1D"
 CONSOLE_MAX = 500
+#: Seconds between chart updates while running (each step brings a row per table).
+PLOT_EVERY = 0.5
 
 _CSS = r"""
 .nf-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: minmax(0, 1fr) 230px;
@@ -56,6 +60,8 @@ _CSS = r"""
   .nf-grid.fv .nf-diagram { flex: none; height: 52vh; }
   .nf-grid.fv .nf-field { flex: none; height: 62vh; border-left: 0; border-top: 1px solid rgba(128,128,128,.25); }
   .nf-grid.fv .nf-pp { height: 70vh; }
+  .nf-grid.fv .nf-pt { height: auto; }
+  .nf-grid.fv .nf-pt .nf-pt-list { overflow: visible; }
   .nf-bottom { grid-column: 1; grid-row: 2; grid-template-columns: 1fr; }
   .nf-bottom > div { max-height: 34vh; }
   .nf-bottom > div:first-child { border-right: 0; border-bottom: 1px solid rgba(128,128,128,.25); }
@@ -66,6 +72,7 @@ _CSS = r"""
   .nf-tools > * { order: 2; }
   .nf-tools > :nth-child(-n+4) { order: 0; }
   .nf-tools > .nf-view { order: 1; }
+  .nf-tools .v-btn { min-width: 0; padding: 0 8px; }  /* Run…Restart and the three panes fit 390 px */
   /* the field image at its own aspect, not letterboxed into a fixed height */
   .nf-grid.fv .nf-field:not(.nf-pp) { height: auto; }
   .nf-grid.fv .nf-field-img { flex: none; height: auto; }
@@ -180,6 +187,14 @@ class StepperApp:
         self._view_req: Optional[tuple[Any, ...]] = None
         #: Nodes and edges of the pipeline diagram drawn last (refit only when they change).
         self._pp_topology: Optional[tuple[Any, ...]] = None
+        #: The ParaView pipeline of the last frame and NeoFOAM's tables (``pptables``), drawn together.
+        self._pp_desc: Optional[dict[str, Any]] = None
+        self._pp_tables: list[dict[str, Any]] = []
+        #: Rows of NeoFOAM's post-processing tables (``pptable``), for the Plots pane.
+        self.history = TableHistory()
+        self._plotted = 0.0
+        #: Compute time per table since the last flush (shown on its diagram frame).
+        self._table_ms: dict[str, float] = {}
         self._reset_state()
         self.editor: Any = None
         self.pp_editor: Any = None
@@ -192,7 +207,8 @@ class StepperApp:
         self.server.trigger("nf_collapse")(self.toggle_collapse)
         self.server.trigger("nf_field")(self.highlight_field)
         self.state.change("fv_on", "fv_field", "fv_comp", "pp_on")(lambda **_: self._send_view())
-        self.state.change("fv_on", "pp_on")(lambda **_: self._fit_pipeline())
+        self.state.change("fv_on", "pp_on", "pt_on")(lambda **_: self._fit_pipeline())
+        self.state.change("pt_on")(lambda **_: self._plot(force=True))
         self.state.change("fv_live")(lambda fv_live, **_: self._send({"cmd": "live", "on": bool(fv_live)}))
         self.state.change("delay_ms")(self._on_delay)
         self.state.change("heat_on")(lambda **_: self._refresh_heat())
@@ -245,8 +261,15 @@ class StepperApp:
         s.pp_on = bool(s.pp_on)
         s.pp_graph = False
         s.pp_ms = {}
-        s.pp_msg = "the pipeline appears with the first in-situ frame (after initialization)"
+        s.pp_msg = "the pipelines appear after initialization (ParaView's with the first in-situ frame)"
+        s.pp_cat_msg = ""
         self._pp_topology = None
+        self._pp_desc, self._pp_tables = None, []
+        # Plots of the post-processing tables: the toggle survives a restart, the history not.
+        s.pt_on = bool(s.pt_on)
+        s.pt_charts = []
+        s.pt_msg = "the tables' rows appear after the first post_process (once initialized)"
+        self.history.clear()
 
     # -- worker -------------------------------------------------------------------------
 
@@ -345,6 +368,13 @@ class StepperApp:
                 self._console(line, "err")
         elif kind == "frame":
             self._on_frame(msg)
+        elif kind == "pptables":
+            self._on_tables(msg)
+        elif kind == "pptable":
+            self.history.add(msg)
+            if msg.get("ms") is not None:
+                self._table_ms[msg["name"]] = msg["ms"]
+            self._plot()
         elif kind == "stopped":
             self.state.status = "session stopped"
             self.state.running = False
@@ -384,6 +414,7 @@ class StepperApp:
         ]
         self._refresh_heat()
         self._refresh_highlight()
+        self._plot(force=True)
         if s.failed:
             s.status = "✖ failed — see console; Restart to try again"
         elif s.finished:
@@ -412,9 +443,12 @@ class StepperApp:
     def _on_frame(self, msg: dict[str, Any]) -> None:
         s = self.state
         if msg.get("error"):
-            s.fv_msg = s.pp_msg = msg["error"]
+            s.fv_msg = msg["error"]
             s.fv_src = None
-            s.pp_graph = False
+            if self._pp_desc is not None:
+                self._pp_desc = None
+                self._draw_pipeline()
+            self._pp_status(msg["error"])
             return
         self._on_pipeline(msg)
         if self._view_req != (True, *msg.get("view", (msg["field"], msg["component"]))):
@@ -438,24 +472,71 @@ class StepperApp:
         s = self.state
         desc = msg.get("pipeline")
         if desc is not None:
-            self.pp_editor.graph = build_pipeline_flow(desc)
-            topology = (tuple(n["id"] for n in desc["nodes"]),
-                        tuple((e["source"], e["target"]) for e in desc["edges"]))
-            if topology != self._pp_topology:
-                self._pp_topology = topology
-                self.pp_editor.fit_view()
-            s.pp_graph = True
+            self._pp_desc = desc
+            self._draw_pipeline()
         ms = msg.get("pipeline_ms")
         if ms is None:
-            if not s.pp_graph:
-                s.pp_msg = "this Catalyst implementation does not describe its pipeline"
+            if self._pp_desc is None:
+                self._pp_status("this Catalyst implementation does not describe its pipeline")
             return
-        s.pp_ms = {k: _fmt_ms(v) for k, v in ms.items() if k != "total"}
+        tables = {k: v for k, v in s.pp_ms.items() if k.startswith("pp:act:")}
+        s.pp_ms = {**tables, **{k: _fmt_ms(v) for k, v in ms.items() if k != "total"}}
         t = msg.get("time")
         parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "",
                  f"last execute {_fmt_ms(ms['total'])}" if "total" in ms else "",
                  "times of rank 0" if self.np > 1 else ""]
-        s.pp_msg = " · ".join(p for p in parts if p)
+        self._pp_status("ParaView " + " · ".join(p for p in parts if p))
+
+    def _on_tables(self, msg: dict[str, Any]) -> None:
+        """NeoFOAM's post-processing tables, declared: their diagrams, and a chart each."""
+        self._pp_tables = msg["tables"]
+        self._draw_pipeline()
+        self._pp_status()
+        self.history.declare([t["name"] for t in self._pp_tables])
+        self.state.pt_msg = (f"{len(self._pp_tables)} tables declared · rows after each post_process"
+                             if self._pp_tables else
+                             "this case declares no post-processing tables "
+                             "(system/postProcess.py / postProcess.yaml)")
+        self._plot(force=True)
+
+    def _draw_pipeline(self) -> None:
+        """Both kinds of post-processing in the Pipeline pane; refit when the topology changed."""
+        s = self.state
+        flow = build_pipeline_flow(self._pp_desc, self._pp_tables)
+        self.pp_editor.graph = flow
+        topology = (tuple(n["id"] for n in flow["nodes"]),
+                    tuple((e["source"], e["target"]) for e in flow["edges"]))
+        if topology != self._pp_topology:
+            self._pp_topology = topology
+            self.pp_editor.fit_view()
+        s.pp_graph = bool(flow["nodes"])
+
+    def _pp_status(self, catalyst: Optional[str] = None) -> None:
+        """The Pipeline pane's message: what ParaView did last, and how many NeoFOAM tables."""
+        s = self.state
+        if catalyst is not None:
+            s.pp_cat_msg = catalyst
+        n = len(self._pp_tables)
+        tables = f"NeoFOAM: {n} table{'s' if n != 1 else ''}" if n else ""
+        s.pp_msg = " · ".join(p for p in (tables, s.pp_cat_msg) if p) or s.pp_msg
+
+    def _plot(self, force: bool = False) -> None:
+        """Hand the tables' history to the charts: at pauses, at most every ``PLOT_EVERY`` s running."""
+        s = self.state
+        now = time.monotonic()
+        if not force and now - self._plotted < PLOT_EVERY:
+            return
+        self._plotted = now
+        if self._table_ms:
+            s.pp_ms = {**s.pp_ms, **{f"pp:act:{k}": _fmt_ms(v) for k, v in self._table_ms.items()}}
+            self._table_ms = {}
+        if not s.pt_on or not self.history.names():
+            return
+        s.pt_charts = self.history.charts()
+        t = self.history.time
+        ranks = f"reduced over {self.np} ranks" if self.np > 1 else ""
+        parts = [f"{len(s.pt_charts)} tables", f"t = {t:.6g}" if t is not None else "no rows yet", ranks]
+        s.pt_msg = " · ".join(p for p in parts if p)
 
     def _fit_pipeline(self) -> None:
         """Refit the diagram when its pane opens or the field pane next to it changes its width."""
@@ -734,7 +815,7 @@ class StepperApp:
         idle = "!connected || running || finished"
         with SinglePageWithDrawerLayout(self.server) as layout:
             layout.title.set_text("DAG stepper")
-            client.Style(_CSS + FIELD_CSS + PIPELINE_CSS)
+            client.Style(_CSS + FIELD_CSS + PIPELINE_CSS + PLOT_CSS)
             # Phones: drawer closed and overlaying instead of pushing the content.
             client.ClientTriggers(mounted=(
                 "set('is_mobile', window.innerWidth < 900);"
@@ -777,9 +858,15 @@ class StepperApp:
                     with v3.VBtn(size="small", classes="mx-1 nf-view", click="pp_on = !pp_on",
                                  variant=("pp_on ? 'tonal' : 'text'",),
                                  color=("pp_on ? 'primary' : undefined",),
-                                 title="show the post-processing (Catalyst/ParaView) pipeline as a diagram"):
+                                 title="show the post-processing pipelines (NeoFOAM tables, Catalyst/ParaView) as diagrams"):
                         v3.VIcon("mdi-graph-outline", size="small")
                         html.Span("Pipeline", classes="nf-btxt ml-1")
+                    with v3.VBtn(size="small", classes="mx-1 nf-view", click="pt_on = !pt_on",
+                                 variant=("pt_on ? 'tonal' : 'text'",),
+                                 color=("pt_on ? 'primary' : undefined",),
+                                 title="plot NeoFOAM's post-processing tables over time"):
+                        v3.VIcon("mdi-chart-line", size="small")
+                        html.Span("Plots", classes="nf-btxt ml-1")
                     v3.VDivider(vertical=True, classes="mx-1")
                     html.Span("animation", classes="text-caption mx-2 nf-btxt")
                     v3.VSlider(v_model=("delay_ms",), min=0, max=600, step=10, hide_details=True,
@@ -819,12 +906,13 @@ class StepperApp:
                     html.Div("click a field: ops that wrote (orange) / read (blue) it")
 
             with layout.content:
-                with html.Div(classes=("['nf-grid', { fv: fv_on || pp_on }]",)):
+                with html.Div(classes=("['nf-grid', { fv: fv_on || pp_on || pt_on }]",)):
                     with html.Div(classes="nf-canvas"):
                         with html.Div(classes="nf-diagram"):
                             self._canvas()
                         field_pane()
                         self.pp_editor = pipeline_pane()
+                        plot_pane()
                     with html.Div(classes="nf-side"):
                         self._inspector()
                     with html.Div(classes="nf-bottom"):
@@ -873,7 +961,7 @@ class StepperApp:
             self.editor = editor
             Background(gap=16, size=1, pattern_color="#c3c8d2")
             Controls(show_interactive=False)
-            MiniMap(pannable=True, zoomable=True, v_show="!is_mobile && !fv_on && !pp_on")
+            MiniMap(pannable=True, zoomable=True, v_show="!is_mobile && !fv_on && !pp_on && !pt_on")
 
             with CustomNode("action"):
                 with html.Div(classes=(

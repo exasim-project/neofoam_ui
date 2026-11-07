@@ -108,6 +108,8 @@ class Solver(Protocol):
     # the field view; it is called once, the first time the view is opened.
     # Optional: ``view_fields(ctx)`` — the fields the view offers, if more than ``fields``
     # (e.g. model fields that the stats table leaves out).
+    # Optional: ``observe(value, emit)`` — offered every init-step result, e.g. to hook the
+    # post-processing tables (``pptable`` messages, see :mod:`neofoam_ui.pptables`).
 
 
 @dataclass
@@ -243,6 +245,7 @@ class Session:
         for step in self.init:
             yield Event("init", step.id)
             self._timed(step.id, lambda: self.results.__setitem__(step.name, step.func(self.results)))
+            self.observe_result(self.results[step.name])
             self._log("init", step.id, step.name)
         self.set_context(self.solver.create_context(self.results))
         self.set_ops(self.solver.execution_graph(self.ctx))
@@ -259,6 +262,16 @@ class Session:
         self.ops = ops
         assign_ids(self.ops)
         self.emit({"type": "graph", "activity": "exec", "ops": [op_dict(o) for o in self.ops]})
+
+    def observe_result(self, value: Any) -> None:
+        """Offer an init-step result to the solver's optional ``observe(value, emit)``."""
+        hook = getattr(self.solver, "observe", None)
+        if hook is None:
+            return
+        try:
+            hook(value, self.emit)
+        except Exception:  # noqa: BLE001 - an observer must not stop the run
+            self.emit({"type": "stdout", "text": "observe: " + traceback.format_exc()})
 
     def in_solver_thread(self, fn: Callable[[], Any], timeout: Optional[float] = None) -> bool:
         """Run ``fn`` on the thread the solver runs on; False if that timed out."""

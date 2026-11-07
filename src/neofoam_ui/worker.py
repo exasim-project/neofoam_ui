@@ -15,7 +15,9 @@ UI → worker (stdin)::
 worker → UI (stdout): the engine messages (``graph``, ``log``, ``paused``,
 ``running``, ``breakpoint``, ``error``, and for an open field view a ``frame`` —
 the name of the image Catalyst rendered in situ — at each pause where the values
-changed; with ``pipeline_ms`` and, when it changed, the ``pipeline`` diagram) plus ``stdout`` for anything the solver
+changed; with ``pipeline_ms`` and, when it changed, the ``pipeline`` diagram; for NeoFOAM's
+post-processing tables ``pptables`` once and a ``pptable`` row set per table and step, see
+:mod:`neofoam_ui.pptables`) plus ``stdout`` for anything the solver
 prints. File descriptor 1 is redirected into a pipe, so neither Python ``print``
 nor C++ output (OpenFOAM ``Info``) can corrupt the protocol stream, which uses a
 duplicate of the original stdout.

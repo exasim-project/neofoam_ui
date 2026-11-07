@@ -275,7 +275,7 @@ def test_pipeline_layout_layers_by_data_flow():
     pos = {n["id"]: n["position"]["y"] for n in flow["nodes"] if n["type"] == "pp"}
     assert pos["a"] < pos["b"] < pos["c"]
     assert pos["a"] < pos["e"] < pos["c"]  # e is fed by a only: the row below it
-    assert flow["nodes"][0]["data"]["label"] == "Post-processing · x.py"
+    assert flow["nodes"][0]["data"]["label"] == "ParaView (Catalyst) · x.py"
     assert {(e["source"], e["target"]) for e in flow["edges"]} == {("a", "b"), ("b", "c"), ("a", "e")}
 
 

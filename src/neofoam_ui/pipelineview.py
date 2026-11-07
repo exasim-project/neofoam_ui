@@ -1,9 +1,12 @@
-"""Post-processing pane: the Catalyst/ParaView pipeline as a diagram, beside the field view.
+"""Post-processing pane: the pipelines as diagrams, beside the field view.
 
-Rank 0 reads the live pipeline back after each in-situ execute
-(:meth:`neofoam_ui.catalyst.InSitu.describe`) — sources, filters, displays, views
-and extractors with a few settings and the time each took — and the worker sends
-it with the frame. Another script (``NEOFOAM_UI_CATALYST_SCRIPT``) shows as itself.
+* **Catalyst/ParaView**: rank 0 reads the live pipeline back after each in-situ execute
+  (:meth:`neofoam_ui.catalyst.InSitu.describe`) — sources, filters, displays, views
+  and extractors with a few settings and the time each took — and the worker sends
+  it with the frame. Another script (``NEOFOAM_UI_CATALYST_SCRIPT``) shows as itself.
+* **NeoFOAM post-processing**: one frame per table the case declares (``pptables``,
+  read off the node objects by :func:`neofoam_ui.pptables.describe_table`), its title
+  carrying the table's last compute time; drawn also without Catalyst.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ PIPELINE_CSS = r"""
 .nf-pp-body { flex: 1; min-width: 0; padding-top: 5px; }
 .nf-pp-head { display: flex; gap: 6px; align-items: baseline; font-size: 13px; font-weight: 600; }
 .nf-pp-type { font-size: 11px; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-pp-flow .nf-activity-title { right: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nf-pp-kv { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; margin-top: 3px; line-height: 15px; }
 .nf-pp-kv > span:nth-child(odd) { opacity: .6; }
 .nf-pp-kv > span:nth-child(even) { font-family: ui-monospace, Menlo, monospace; font-size: 11px;
@@ -60,7 +64,10 @@ def pipeline_pane() -> Any:
                                     html.Span("{{ r[1] }}", title=("r[1]",))
                 with CustomNode("activity"):
                     with html.Div(classes="nf-node nf-activity"):
-                        html.Div("{{ props.data.label }}", classes="nf-activity-title")
+                        with html.Div(classes="nf-activity-title", title=("props.data.label",)):
+                            html.Span("{{ props.data.label }}")
+                            html.Span(" · {{ pp_ms[props.id] }}", classes="nf-meta", v_if="pp_ms[props.id]",
+                                      title="time of the table's last compute (rank 0)")
             editor._attributes["min_zoom"] = ':min-zoom="0.1"'
         html.Div("{{ pp_msg }}", classes="nf-field-empty", v_show="!pp_graph")
     return editor

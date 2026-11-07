@@ -13,6 +13,7 @@ dependencies = [
     "trame>=3.12,<4",
     "trame-vuetify>=3.0",
     "trame-flow>=2.2.2",
+    "trame-plotly>=3.0",
 ]
 
 [project.optional-dependencies]
