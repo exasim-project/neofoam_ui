@@ -146,3 +146,52 @@ def test_session_message_trace_unchanged():
     text = json.dumps(_trace(), indent=0, sort_keys=True, default=str) + "\n"
     text = re.sub(r'"source": "[^"]*"', '"source": "…"', text)
     assert text == _golden("session_trace.json", text)
+
+
+# -- the public API ------------------------------------------------------------------------------
+
+PUBLIC = {
+    "neofoam_ui": ["Event", "FieldSource", "GraphSolver", "InitStep", "Op", "SelfDrivingSolver", "Session",
+                   "Solver", "ThreadedProgram", "assign_ids", "topological_order"],
+    "neofoam_ui.engine": ["DEFAULT_REGION", "Event", "FieldSource", "GraphSolver", "InitStep", "MeshProvider",
+                          "Mode", "Op", "Peers", "ProgramContext", "Region", "RegionProvider", "RenderBackend",
+                          "Renderer", "ResultObserver", "SelfDrivingSolver", "Session", "Solver",
+                          "ThreadedProgram", "UNTRACKED", "ViewFieldProvider", "assign_ids", "topological_order"],
+    "neofoam_ui.protocol": ["CATALYST_ENV", "CATALYST_LIVE_ENV", "CATALYST_OUT_ENV", "CATALYST_SCRIPT_ENV",
+                            "COMMANDS", "DELAY_ENV", "LOSSY", "MESSAGES", "MODE_ENV", "RANK_OPS", "SYNC_ENV",
+                            "UI_URGENT", "WAIT_ENV", "WORKER_URGENT"],
+    "neofoam_ui.app": ["StepperApp", "main", "parse_args"],
+    "neofoam_ui.extensions": ["ENTRY_POINT_GROUP", "BasePane", "ExtensionRegistry", "Pane", "PaneContext",
+                              "PaneToggle"],
+    "neofoam_ui.worker": ["load_solver", "main"],
+    "neofoam_ui.parallel": ["SYNC_ENV", "rank_info"],
+    "neofoam_ui.catalyst": ["ENV", "LIVE_ENV", "OUT_ENV", "SCRIPT_ENV", "InSitu", "configured", "custom_script"],
+    "neofoam_ui.geometry": ["cell_centres_geometry", "cell_count", "polyhedral", "read_polymesh"],
+    "neofoam_ui.pptables": ["NodeDescriber", "describe_table", "observe", "register_describer", "rows_message"],
+    "neofoam_ui.adapters": [],
+    "neofoam_ui.adapters.neofoam": ["NeoFoamSolver", "ObservedNeoFoamSolver", "has_observer",
+                                    "incompressible_fluid", "neofoam_solver"],
+    "neofoam_ui.toy": [],
+    "neofoam_ui.toy.heat1d": ["Heat1D", "Heat1DContext", "run_plain"],
+}
+
+
+@pytest.mark.parametrize("module", sorted(PUBLIC))
+def test_public_api(module):
+    mod = importlib.import_module(module)
+    assert sorted(mod.__all__) == sorted(PUBLIC[module])
+    assert all(hasattr(mod, name) for name in mod.__all__)
+
+
+def test_every_other_module_is_private():
+    """Every module outside ``PUBLIC`` has a ``_`` in its path and exports nothing itself."""
+    root = SRC / "neofoam_ui"
+    for path in sorted(root.rglob("*.py")):
+        parts = list(path.relative_to(SRC).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        name = ".".join(parts)
+        if name in PUBLIC or name == "neofoam_ui.pipelines.view":  # the Catalyst script, loaded by path
+            continue
+        assert any(p.startswith("_") for p in parts), f"{name}: a public module not in the API"
+        assert "__all__ = ()" in path.read_text(), f"{name}: a private module exports names"
