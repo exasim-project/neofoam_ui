@@ -326,7 +326,7 @@ def build_pipeline_flow(desc: Optional[dict[str, Any]] = None,
                         tables: Any = ()) -> dict[str, list[dict[str, Any]]]:
     """The post-processing pipelines as one VueFlow graph, one activity frame each.
 
-    ``desc``: the ParaView pipeline :func:`neofoam_ui.catalyst.describe_pipeline` found
+    ``desc``: the ParaView pipeline :meth:`neofoam_ui.catalyst.InSitu.describe` found
     (frame ``pp:act``); ``tables``: NeoFOAM's tables as :func:`neofoam_ui.pptables.describe_table`
     describes them (frames ``pp:act:<table>``). Frames sit side by side, wrapping onto
     further rows beyond ``FRAMES_ROW_W``.

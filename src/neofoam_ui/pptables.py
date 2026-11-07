@@ -152,7 +152,7 @@ def _label(value: Any) -> Any:
 
 
 def describe_table(table: Any) -> dict[str, Any]:
-    """One table's pipeline in the diagram format of :func:`neofoam_ui.catalyst.describe_pipeline`.
+    """One table's pipeline in the diagram format of :meth:`neofoam_ui.catalyst.InSitu.describe`.
 
     ``{"name", "nodes": [{"id", "kind", "name", "type", "settings"}], "edges": [{"source",
     "target", "label"?}]}``: the source, each step, then the writer with its write control.

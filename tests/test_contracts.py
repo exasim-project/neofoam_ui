@@ -44,9 +44,9 @@ def test_the_catalyst_script_stays_at_its_path():
 
     root = Path(neofoam_ui.__file__).parent
     assert (root / "pipelines" / "view.py").is_file()
-    from neofoam_ui import catalyst  # noqa: PLC0415
+    from neofoam_ui.catalyst._config import _PIPELINE  # noqa: PLC0415
 
-    assert Path(catalyst.PIPELINE).resolve() == (root / "pipelines" / "view.py").resolve()
+    assert Path(_PIPELINE).resolve() == (root / "pipelines" / "view.py").resolve()
 
 
 def test_the_catalyst_script_is_packaged():

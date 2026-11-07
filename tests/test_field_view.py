@@ -537,13 +537,16 @@ needs_catalyst = pytest.mark.skipif(not PREFIX, reason=f"set {catalyst.ENV} to a
 
 @needs_catalyst
 def test_blueprint_of_the_polymesh_verifies(tmp_path):
-    _, conduit = catalyst._import(PREFIX)
+    from neofoam_ui.catalyst._blueprint import _blueprint  # noqa: PLC0415
+    from neofoam_ui.catalyst._native import _import  # noqa: PLC0415
+
+    _, conduit = _import(PREFIX)
     from catalyst_conduit import blueprint  # noqa: F401  (registers conduit.blueprint)
 
     write_ascii(tmp_path)
     geom = polyhedral(read_polymesh(str(tmp_path)), 2)
     node, keep = conduit.Node(), []
-    catalyst.blueprint(node, geom, {"p": np.array([1.0, 2.0]), "U": np.ones((2, 3))}, keep)
+    _blueprint(node, geom, {"p": np.array([1.0, 2.0]), "U": np.ones((2, 3))}, keep)
     info = conduit.Node()
     assert conduit.blueprint.mesh.verify(node, info), info
 
