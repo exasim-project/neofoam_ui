@@ -33,12 +33,12 @@ import socket
 import sys
 import time
 import traceback
-from typing import Any, Iterator, Optional
+from typing import Any, Optional
 
-from neofoam_ui.engine import Event, Session
+from neofoam_ui.engine import Session
 from neofoam_ui.protocol import SYNC_ENV
 
-__all__ = ["SYNC_ENV", "Hub", "finalize_mpi", "finish", "follow", "rank_info", "relay"]
+__all__ = ["SYNC_ENV", "Hub", "finalize_mpi", "finish", "follow", "rank_info"]
 
 
 _RANK_ENV = (
@@ -102,7 +102,7 @@ def finish(session: Session) -> bool:
 
 
 class Hub:
-    """Rank 0's end: the connections to all followers."""
+    """Rank 0's end: the connections to all followers (the session's :class:`~neofoam_ui.engine.Peers`)."""
 
     def __init__(self, followers: int, timeout: float = 300.0) -> None:
         server = socket.create_server(_address())
@@ -131,6 +131,8 @@ class Hub:
     def _drop(self, peer: tuple[int, Any], why: str) -> None:
         print(f"neofoam_ui: rank {peer[0]} {why}; no longer followed", file=sys.stderr, flush=True)
         self._peers.remove(peer)
+
+    # -- engine.Peers ----------------------------------------------------------------
 
     def go(self, track: bool = True) -> None:
         self._send({"op": "go", "track": track})
@@ -165,31 +167,6 @@ class Hub:
             pass
 
 
-def relay(events: Iterator[Event], hub: Hub, session: Optional[Session] = None) -> Iterator[Event]:
-    """Rank 0's event generator: release the followers before each resume.
-
-    The followers track writes when rank 0 does (``session.stepping``): a free run costs
-    them no checksums either.
-    """
-    while True:
-        hub.go(session.stepping if session is not None else True)
-        try:
-            yield next(events)
-        except StopIteration:
-            return
-
-
-class _Follower(Session):
-    def _paused(self) -> None:  # nobody is listening
-        pass
-
-    def _log(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-    def _arm(self, *args: Any) -> None:  # rank 0 sets the free run (``free``), not each ``go``
-        pass
-
-
 def follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
     """Run ``solver`` as follower ``rank`` until rank 0 says stop."""
     address = _address()
@@ -211,12 +188,12 @@ def follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
         if msg["type"] == "error":
             print(f"[rank {rank}] {msg['traceback']}", file=sys.stderr, flush=True)
 
-    session: Optional[_Follower] = None
+    session: Optional[Session] = None
     for line in stream:
         msg = json.loads(line)
         op = msg["op"]
         if session is None:  # created on the first message: rank 0 is ready by then
-            session = _Follower(solver, emit)
+            session = Session(solver, emit, follower=True)
             session.watch = False
         if op == "go":
             session.advance("into", track=bool(msg.get("track", True)))

@@ -52,7 +52,7 @@ import time
 from typing import Any, Callable, Optional, TextIO
 
 from neofoam_ui.engine import Session
-from neofoam_ui.parallel import Hub, finish, follow, rank_info, relay
+from neofoam_ui.parallel import Hub, finish, follow, rank_info
 from neofoam_ui.protocol import LOSSY, WORKER_URGENT
 
 #: Seconds after a ``stop`` before the worker exits even if the solver is stuck.
@@ -284,10 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     hub = None
     if size > 1:
         hub = Hub(size - 1)
-        session._gen = relay(session._gen, hub, session)
-        session.gather = hub.stats
-        session.on_render = hub.render
-        session.on_resume = hub.free
+        session.set_peers(hub)
     commands: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def handle(cmd: dict[str, Any]) -> None:

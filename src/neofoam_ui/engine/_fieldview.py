@@ -158,8 +158,8 @@ class _FieldView:
         self._sent = key
         self._frame_at = time.monotonic()
         params = {"field": name, "component": comp}
-        if s.on_render is not None:
-            s.on_render(params)
+        if s.peers is not None:
+            s.peers.render(params)
         file = self.render(params, describe=True)
         if file is None:
             return self._fail(self._error or "in-situ view failed")

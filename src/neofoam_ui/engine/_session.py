@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterator, Literal, Optional
 
 from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
 from neofoam_ui.engine._fieldview import _FieldView
-from neofoam_ui.engine._protocols import RenderBackend, ResultObserver, SelfDrivingSolver, Solver
+from neofoam_ui.engine._protocols import Peers, RenderBackend, ResultObserver, SelfDrivingSolver, Solver
 from neofoam_ui.engine._stats import _field_stats, _merge, _rows
 from neofoam_ui.engine._threaded import ThreadedProgram
 from neofoam_ui.engine._tracking import _Tracker
@@ -58,7 +58,7 @@ class Session:
     """
 
     def __init__(self, solver: Solver, emit: Callable[[dict[str, Any]], None],
-                 renderer: Optional[RenderBackend] = None) -> None:
+                 renderer: Optional[RenderBackend] = None, follower: bool = False) -> None:
         self.solver = solver
         self.emit = emit
         self.breakpoints: set[str] = set()
@@ -74,8 +74,11 @@ class Session:
         #: The current advance is a single step (tracks writes, logs every event).
         self.stepping = True
         self._running_at = 0.0
-        #: MPI rank 0: hands the free-run parameters (:meth:`set_free`) to the other ranks.
-        self.on_resume: Optional[Callable[[Optional[dict[str, Any]]], None]] = None
+        #: Under MPI, rank 0's view of the other ranks (:meth:`set_peers`); ``None`` = alone.
+        self.peers: Optional[Peers] = None
+        self._go: Optional[Callable[[bool], None]] = None
+        #: Another rank than 0: rank 0 drives it (``go``, ``free``); it reports nothing itself.
+        self.follower = follower
         self._free: Optional[dict[str, Any]] = None
         self.pause_requested = False
         self.stop_requested = False
@@ -87,10 +90,6 @@ class Session:
         self._observe = solver.observe if isinstance(solver, ResultObserver) else None
         #: The thread a self-driving solver runs on (set by its program), see :meth:`in_solver_thread`.
         self.program_thread: Optional[ThreadedProgram] = None
-        #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
-        self.gather: Optional[Callable[[], list[dict[str, dict[str, Any]]]]] = None
-        #: Rank 0 under MPI: makes the other ranks render the same frame (set by the worker).
-        self.on_render: Optional[Callable[[dict[str, str]], None]] = None
         #: Field view: also render at time steps while running (not only at pauses), at most
         #: every :attr:`frame_every` time steps and :attr:`frame_seconds` seconds apart.
         self.live_view = True
@@ -108,6 +107,14 @@ class Session:
         self.event: Event = next(self._gen)
         self.finished = False
         self.failed = False
+
+    def set_peers(self, peers: Peers) -> None:
+        """Rank 0 of an MPI run: keep ``peers`` in step from the next resume on.
+
+        Before every resume of the program they ``go`` too, a free run hands them its
+        parameters, a frame makes them render, and the stats are merged over them."""
+        self.peers = peers
+        self._go = peers.go
 
     # -- the program ---------------------------------------------------------------
 
@@ -185,7 +192,7 @@ class Session:
             self.tracker.track_writes(self.ctx, node, op_name)
 
     def _log(self, kind: str, node: str, name: str, **extra: Any) -> None:
-        if not (self.stepping or self.watch):  # a free run nobody watches
+        if not (self.stepping or self.watch) or self.follower:  # a free run nobody watches
             return
         stack = extra.pop("stack", ())
         self.emit(
@@ -228,6 +235,8 @@ class Session:
         steps = 0
         while True:
             try:
+                if self._go is not None:  # the followers resume past the same event
+                    self._go(self.stepping)
                 self.event = next(self._gen)
             except Exception:  # the solver raised inside an op
                 self.failed = self.finished = True
@@ -266,12 +275,14 @@ class Session:
 
         Not while animating (delay with the DAG pane open): then every event comes here.
         """
+        if self.follower:  # rank 0 sets a follower's free run (``free``), not each ``go``
+            return
         params = None
         if mode is not None and not (self.watch and self.delay > 0):
             params = {"mode": mode, "target": target, "bps": sorted(self.breakpoints)}
         if params != self._free:
-            if self.on_resume is not None:
-                self.on_resume(params)
+            if self.peers is not None:
+                self.peers.free(params)
             self.set_free(params)
 
     def set_free(self, params: Optional[dict[str, Any]]) -> None:
@@ -292,7 +303,7 @@ class Session:
             return
         until = self._until(params["mode"], self.event, params.get("target"))
         bps = frozenset(params["bps"])
-        alone = self.on_resume is None and self.gather is None  # no other ranks to keep in step
+        alone = self.peers is None and not self.follower  # no other ranks to keep in step
 
         def skip(ev: Event) -> bool:
             if (ev.kind == "test" and not ev.stack) or until(ev) or ev.node in bps:
@@ -364,7 +375,7 @@ class Session:
         if self.ctx is None:
             return {"scalars": {}, "fields": [], "init_done": sorted(self.results)}
         # The other MPI ranks; not after a failure, they may be stuck in a collective.
-        others = self.gather() if self.gather and not self.failed else ()
+        others = self.peers.stats() if self.peers is not None and not self.failed else ()
         return {"scalars": self.solver.scalars(self.ctx), "fields": _rows(_merge(self.field_stats(), others)),
                 "init_done": sorted(self.results)}
 
@@ -395,6 +406,8 @@ class Session:
         self._view.finalize()
 
     def _paused(self) -> None:
+        if self.follower:  # nobody is listening
+            return
         self.send_view()
         t = self.tracker
         self.emit(

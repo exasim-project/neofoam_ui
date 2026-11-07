@@ -8,7 +8,8 @@ Small protocols, each one capability (checked with ``isinstance``, decided once 
 * optional: :class:`MeshProvider` and :class:`ViewFieldProvider` (the field view),
   :class:`RegionProvider` (several mesh regions), :class:`ResultObserver` (sees every
   init-step result, e.g. to hook post-processing);
-* :class:`Renderer` / :class:`RenderBackend`: what draws the field view (default: Catalyst).
+* :class:`Renderer` / :class:`RenderBackend`: what draws the field view (default: Catalyst);
+* :class:`Peers`: the other MPI ranks, as rank 0 keeps them in step.
 """
 
 from __future__ import annotations
@@ -144,3 +145,24 @@ class RenderBackend(Protocol):
         """Hand every cell field to the renderer, not only the viewed one."""
 
     def create(self) -> Renderer: ...
+
+
+class Peers(Protocol):
+    """The other ranks of an MPI run, seen from rank 0 (see :mod:`neofoam_ui.parallel`).
+
+    Lockstep: rank 0 calls :meth:`go` before it resumes its own program, :meth:`free` with
+    the same parameters it passes itself, :meth:`render` before its own (collective) render."""
+
+    def go(self, track: bool) -> None:
+        """Resume past the current event (tracking writes or not), as rank 0 is about to."""
+
+    def free(self, params: Optional[dict[str, Any]]) -> None:
+        """The free-run parameters of rank 0 (``Session.set_free``)."""
+
+    def render(self, params: dict[str, str]) -> None:
+        """Render the frame rank 0 is about to render."""
+
+    def stats(self) -> list[dict[str, dict[str, Any]]]:
+        """Each other rank's field stats (``Session.field_stats``)."""
+
+    def stop(self) -> None: ...

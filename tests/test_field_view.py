@@ -195,7 +195,24 @@ def test_a_failing_catalyst_disables_the_view_not_the_session(monkeypatch):
 def test_other_ranks_render_the_same_frame(fake_catalyst):
     session, _ = session_after_init()
     told = []
-    session.on_render = told.append
+
+    class Peers:
+        def go(self, track):
+            pass
+
+        def free(self, params):
+            pass
+
+        def render(self, params):
+            told.append(params)
+
+        def stats(self):
+            return []
+
+        def stop(self):
+            pass
+
+    session.set_peers(Peers())
     session.set_view("kappa")
     assert told == [{"field": "kappa", "component": "mag"}]
     session.finalize_view()
