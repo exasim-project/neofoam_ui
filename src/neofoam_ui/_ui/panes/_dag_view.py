@@ -42,6 +42,10 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
                 Handle(position="right", type="source", id="r")
+                # the data exchange of a coupling loop, between lanes
+                Handle(position="left", type="source", id="ls")
+                Handle(position="left", type="target", id="lt")
+                Handle(position="right", type="target", id="rt")
                 html.Span(classes=("['nf-bp', { on: bps.includes(props.id) }]",),
                           raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.id])"'])
                 html.Span(classes="nf-stripe", style=("`background:${props.data.color}`",))
@@ -98,6 +102,12 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 html.Div(classes="d")
                 html.Span(classes=("['nf-bp', { on: bps.includes(props.data.loop) }]",),
                           raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.loop])"'])
+
+        with CustomNode("lane"):
+            with html.Div(classes="nf-lane", style=("`border-color:${props.data.color}`",)):
+                with html.Div(classes="nf-lane-head", style=("`color:${props.data.color}`",)):
+                    html.Span(classes="nf-dot", style=("`background:${props.data.color}`",))
+                    html.Span("{{ props.data.label }}")
 
         with CustomNode("activity"):
             with html.Div(classes="nf-node nf-activity"):
@@ -203,3 +213,5 @@ def _drawer(drawer: Any) -> None:
         html.Div("▾ / ▸ on a loop: collapse / expand its body")
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
         html.Div("stripe colour: the op's region (multi-region), else its model", v_if="regions.length")
+        html.Div("coupling loop: a lane per region; dashed = data sent to the other region",
+                 v_if="regions.length")

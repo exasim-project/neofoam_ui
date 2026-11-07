@@ -3,7 +3,9 @@
 * **Initialization** — the init DAG, layered by longest dependency path;
 * **Execution** — the operation tree: loops are VueFlow group nodes (structured
   loop nodes) with a decision diamond at the top, children stacked below,
-  and a back edge from the last child to the diamond.
+  and a back edge from the last child to the diamond. A *coupling loop* (an op with
+  ``couples``) puts each region's ops in a lane of their own, side by side, and draws the
+  data exchange as dashed edges in the sending region's colour between the lanes.
 
 Positions of children are relative to their parent group (VueFlow ``parentNode``).
 A *collapsed* loop is drawn as a single node without its body.
@@ -30,7 +32,7 @@ from neofoam_ui._ui._layout._common import (
     _activity,
     _edge,
 )
-from neofoam_ui._ui._layout._palette import _node_color
+from neofoam_ui._ui._layout._palette import _REGION, _node_color
 
 __all__ = ()
 
@@ -38,11 +40,60 @@ __all__ = ()
 # -- execution activity --------------------------------------------------------------
 
 
+#: Height of a lane's header (its region) and the gap between two lanes (room for the
+#: exchange edges and their labels).
+_LANE_HEAD, _LANE_GAP = 30, 90
+
+
+def _regions_in(op: dict[str, Any]) -> list[str]:
+    """The regions of ``op`` and its body, in order of appearance."""
+    seen = [op["region"]] if op.get("region") else []
+    for child in op.get("children", []):
+        seen += [r for r in _regions_in(child) if r not in seen]
+    return seen
+
+
+def _lanes(op: dict[str, Any]) -> Optional[list[dict[str, Any]]]:
+    """A coupling loop's body as lanes, one per region, in order of first appearance.
+
+    An op goes to its region's lane; a nested loop (no region of its own) to the lane it
+    continues, or else to the lane of its first region. ``None``: not a coupling loop, or a
+    body op of no region at all (then the loop is drawn as usual).
+    """
+    if not op.get("couples"):
+        return None
+    lanes: list[dict[str, Any]] = []
+    for child in op["children"]:
+        regions = _regions_in(child)
+        if not regions:
+            return None
+        if lanes and lanes[-1]["region"] in regions and not child.get("region"):
+            lane = lanes[-1]
+        else:
+            key = child.get("region") or regions[0]
+            lane = next((ln for ln in lanes if ln["region"] == key), None)
+            if lane is None:
+                lane = {"region": key, "regions": [], "ops": []}
+                lanes.append(lane)
+        lane["ops"].append(child)
+        lane["regions"] += [r for r in regions if r not in lane["regions"]]
+    return lanes if len(lanes) > 1 else None
+
+
 def _measure(op: dict[str, Any], collapsed: frozenset[str] = frozenset()) -> tuple[float, float]:
+    op["_lanes"] = None
     if op["kind"] == "action":
         op["_w"], op["_h"] = _AW, _AH
     elif op["id"] in collapsed:
         op["_w"], op["_h"] = _AW + 2 * _PAD, _COLLAPSED_H
+    elif (lanes := _lanes(op)) is not None:
+        for lane in lanes:
+            sizes = [_measure(c, collapsed) for c in lane["ops"]]
+            lane["w"] = max(w for w, _ in sizes)
+            lane["h"] = _LANE_HEAD + sum(h for _, h in sizes) + _GAP * (len(sizes) - 1) + _PAD / 2
+        op["_lanes"] = lanes
+        op["_w"] = sum(ln["w"] for ln in lanes) + _LANE_GAP * (len(lanes) - 1) + 2 * _PAD + _LOOP_RIGHT
+        op["_h"] = _LOOP_HEAD + max(ln["h"] for ln in lanes) + _PAD
     else:
         sizes = [_measure(c, collapsed) for c in op["children"]]
         inner_w = max((w for w, _ in sizes), default=_AW)
@@ -108,7 +159,9 @@ def _ops(
                     "connectable": False,
                 }
             )
-            if op["children"]:
+            if op["_lanes"]:
+                _lane_body(op, dec_id, nodes, edges, collapsed)
+            elif op["children"]:
                 first, last = _ops(op["children"], op["id"], _PAD, _LOOP_HEAD, inner_w, nodes, edges,
                                    collapsed)
                 edges.append(_edge(dec_id, first, label="[true]"))
@@ -122,6 +175,80 @@ def _ops(
         prev = op
         y += op["_h"] + _GAP
     return ops[0]["id"], ops[-1]["id"]
+
+
+#: Control flow inside a coupling loop: kept, but behind the data exchange.
+_SECONDARY = {"class": "nf-secondary", "style": {"opacity": 0.45}}
+
+
+def _lane_body(op: dict[str, Any], dec_id: str, nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
+               collapsed: frozenset[str]) -> None:
+    """A coupling loop's lanes side by side, the control flow through them, the exchange between them."""
+    flow: list[dict[str, Any]] = []
+    x, ends, lane_of = _PAD, [], {}
+    for i, lane in enumerate(op["_lanes"]):
+        color = _REGION.color(lane["region"])
+        nodes.append({
+            "id": f"{op['id']}::lane{i}", "type": "lane", "parentNode": op["id"],
+            "position": {"x": x - 8, "y": _LOOP_HEAD - 6},
+            "data": {"label": ", ".join(lane["regions"]), "color": color},
+            "width": lane["w"] + 16, "height": lane["h"] + 6,
+            "style": {"width": f"{lane['w'] + 16}px", "height": f"{lane['h'] + 6}px"},
+            "draggable": False, "selectable": False, "connectable": False,
+        })
+        ends.append(_ops(lane["ops"], op["id"], x, _LOOP_HEAD + _LANE_HEAD, lane["w"], nodes, flow, collapsed))
+        for child in lane["ops"]:
+            lane_of[child["id"]] = i
+        x += lane["w"] + _LANE_GAP
+    flow.append(_edge(dec_id, ends[0][0], label="[true]"))
+    for (_, last), (first, _) in zip(ends, ends[1:]):  # lane i, then lane i + 1
+        flow.append(_edge(last, first, sourceHandle="b", targetHandle="t"))
+    flow.append(_edge(ends[-1][1], dec_id, sourceHandle="r", targetHandle="r",
+                      **{"class": "nf-back", "style": {"strokeDasharray": "5 4"}}))
+    # (a nested coupling loop's exchange edges arrive in ``flow`` too: they stay as they are)
+    edges += [e if e.get("class") == "nf-couple"
+              else {**e, **_SECONDARY, "style": {**e.get("style", {}), **_SECONDARY["style"]}} for e in flow]
+    edges += _exchange(op, lane_of)
+
+
+def _exchange(op: dict[str, Any], lane_of: dict[str, int]) -> list[dict[str, Any]]:
+    """The loop's ``couples`` as dashed edges in the sending region's colour, send → receive."""
+    def find(name: str) -> Optional[dict[str, Any]]:
+        # the loop's own ops first: a nested loop may hold an op of the same name
+        for child in op["children"]:
+            if child["name"] == name:
+                return child
+        stack = list(op["children"])
+        while stack:
+            node = stack.pop(0)
+            if node["name"] == name:
+                return node
+            stack += node.get("children", [])
+        return None
+
+    def lane(node: dict[str, Any]) -> int:
+        top = next((c for c in op["children"] if c is node or _contains(c, node)), None)
+        return lane_of.get(top["id"], 0) if top else 0
+
+    out = []
+    for send_name, receive_name, data in op.get("couples", []):
+        send, receive = find(send_name), find(receive_name)
+        if send is None or receive is None:
+            continue
+        color = _REGION.color(send.get("region"))
+        rightwards = lane(send) <= lane(receive)
+        out.append(_edge(send["id"], receive["id"], type="default", label=data,
+                         sourceHandle="r" if rightwards else "ls",
+                         targetHandle="lt" if rightwards else "rt",
+                         style={"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
+                         labelStyle={"fill": color, "fontWeight": 600},
+                         markerEnd={"type": "arrowclosed", "color": color},
+                         **{"class": "nf-couple"}))
+    return out
+
+
+def _contains(op: dict[str, Any], node: dict[str, Any]) -> bool:
+    return any(c is node or _contains(c, node) for c in op.get("children", []))
 
 
 def _count(op: dict[str, Any]) -> int:

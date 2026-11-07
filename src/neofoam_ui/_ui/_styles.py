@@ -102,6 +102,12 @@ _CSS = r"""
 .nf-vars tr.hl td { outline: 1px solid #f08c00; background: rgba(240,140,0,.12); }
 .nf-loop-title { position: absolute; left: 10px; top: 6px; font-size: 12px; opacity: .8; }
 .nf-loop-pass { font-weight: 600; color: #e0362c; }
+.nf-lane { width: 100%; height: 100%; border: 1.5px dashed; border-radius: 10px; opacity: .9;
+  background: rgba(255,255,255,.35); pointer-events: none; }
+.nf-lane-head { position: absolute; left: 10px; top: 4px; font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 5px; }
+.vue-flow__node-lane { z-index: 0 !important; pointer-events: none; }
+.vue-flow__edge.nf-couple { z-index: 5; }
 .nf-regions { position: absolute; right: 10px; top: 8px; z-index: 5; font-size: 12px; padding: 2px 8px;
   display: flex; gap: 10px; background: rgba(128,128,128,.08); border-radius: 10px; }
 .nf-region { display: inline-flex; align-items: center; gap: 4px; }
