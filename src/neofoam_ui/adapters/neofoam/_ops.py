@@ -24,8 +24,12 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
     )
     if op.operation_type == "iterative":
         predicate = op.func.func
-        test = (type(predicate).__name__ + "()") if not inspect.isfunction(predicate) \
-            else f"{predicate.__name__}()"
+        if inspect.ismethod(predicate):  # e.g. a CouplingOp's own pass predicate
+            test = f"{type(predicate.__self__).__name__}()"
+        elif inspect.isfunction(predicate):
+            test = f"{predicate.__name__}()"
+        else:
+            test = type(predicate).__name__ + "()"
         return Op(name, "loop", op.func, [_convert(c, injected) for c in op.sub_operations],
                   test=test, **common)
     return Op(name, "action", op.run, guard=guard, **common)

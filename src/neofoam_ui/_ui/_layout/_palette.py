@@ -41,15 +41,17 @@ _PIPELINE_COLORS = {
 class _Palette:
     """Colours by key; an unknown key gets the next fallback colour, kept for the next time."""
 
-    def __init__(self, colors: dict[str, str], none: str = "#9aa3ad") -> None:
+    def __init__(self, colors: dict[str, str], none: str = "#9aa3ad",
+                 fallback: Optional[list[str]] = None) -> None:
         self._colors = dict(colors)
         self._none = none
+        self._fallback = fallback or _FALLBACK
 
     def color(self, key: Optional[str]) -> str:
         if not key:
             return self._none
         if key not in self._colors:
-            self._colors[key] = _FALLBACK[len(self._colors) % len(_FALLBACK)]
+            self._colors[key] = self._fallback[len(self._colors) % len(self._fallback)]
         return self._colors[key]
 
 
@@ -58,7 +60,7 @@ _DOMAIN = _Palette(_DOMAIN_COLORS)
 #: Post-processing pipeline nodes by their kind.
 _PIPELINE = _Palette(_PIPELINE_COLORS)
 #: The regions of a multi-region solver (multiRun), in the order they first appear.
-_REGION = _Palette({})
+_REGION = _Palette({}, fallback=["#d6336c", "#0b8fb3", "#9c6b00", "#6741d9", "#2b8a3e", "#e8590c"])
 
 
 def _node_color(node: dict[str, Any], key: str) -> str:

@@ -172,3 +172,15 @@ def test_multi_region_fields_are_named_by_region():
     assert {k: v.tolist() for k, v in access.fields(driver).items()} == {"a.x": [2.0], "b.x": [1.0]}
     assert [(r.name, r.mesh(driver)) for r in access.regions(driver)] == [("a", None), ("b", None)]
     assert [r.name for r in access.regions(SimpleNamespace(fields={}, models={}))] == ["region0"]
+
+
+def test_a_loop_driven_by_a_bound_method_shows_its_class():
+    from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
+
+    class CouplingOp:
+        def _next_pass(self, ctx):
+            return False
+
+    loop = FakeOp("loop", [])
+    loop.func = SimpleNamespace(func=CouplingOp()._next_pass)
+    assert _convert(loop, {}).test == "CouplingOp()"
