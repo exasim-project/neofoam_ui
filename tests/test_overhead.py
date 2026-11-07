@@ -239,7 +239,8 @@ def test_post_processing_rows_are_converted_on_rank_0_only(monkeypatch, rank):
 
 
 def test_thinning_keeps_every_critical_message_in_order():
-    from neofoam_ui.worker import LOSSY, thin
+    from neofoam_ui.protocol import LOSSY
+    from neofoam_ui.worker._out import _thin as thin
 
     batch = []
     for i in range(300):
@@ -274,7 +275,7 @@ class SlowStream:
 
 
 def test_a_slow_ui_does_not_block_the_solver():
-    from neofoam_ui.worker import _Out
+    from neofoam_ui.worker._out import _Out
 
     stream = SlowStream()
     out = _Out(stream)
