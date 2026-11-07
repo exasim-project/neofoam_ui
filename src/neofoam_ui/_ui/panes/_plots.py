@@ -123,6 +123,9 @@ class _PlotsPane(BasePane):
     def _table_names(self) -> None:
         """The select box's tables; keeps the choice that still exists, else the first table."""
         s = self.ctx.state
+        before = set(s.pt_names or ())
         s.pt_names = self.history.names()
         kept = [n for n in s.pt_sel if n in s.pt_names]
-        s.pt_sel = kept or s.pt_names[:1]
+        # a region's fields table is shown as soon as it appears, next to the regions' others
+        regions = [n for n in s.pt_names if n.startswith("fields · ") and n not in before and n not in kept]
+        s.pt_sel = (kept + regions) or s.pt_names[:1]

@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Iterator, Optional
 
+import numpy as np
+
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase
 from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source
 from neofoam_ui.engine import Event, InitStep, Op, ProgramContext, ThreadedProgram
@@ -59,6 +61,8 @@ class _Stepper:
         self.test_node: Optional[str] = None
         #: Finished runs of each coupling loop (by its label), the x of its outcome table.
         self.coupling_runs: dict[str, int] = {}
+        #: Coupling loop tests so far (all loops): the x of the region field tables.
+        self.passes = 0
 
     # -- init -----------------------------------------------------------------------------
 
@@ -176,10 +180,31 @@ class _Stepper:
             extra["residuals"] = {str(k): float(v) for k, v in residuals.items()}
         self.s.record("test", node, self.names[node], ms, stack=tuple(self.stack),
                       iter=iteration, result=result, **extra)
+        if "residuals" in extra or hasattr(op.func, "residuals"):
+            self._region_fields(ctx)
         if result:
             self.stack.append((node, iteration))
 
     # -- coupling -------------------------------------------------------------------------
+
+    def _region_fields(self, ctx: Any) -> None:
+        """At a coupling loop's test: each region's fields (their mean) as one row of a table
+        ``fields · <region>`` (Plots pane), x = the coupling passes so far (all loops)."""
+        from neofoam_ui.adapters.neofoam._fields import _FieldAccess, _region_contexts  # noqa: PLC0415
+
+        emit = getattr(self.s, "emit", None)
+        contexts = _region_contexts(ctx)
+        if emit is None or not contexts:
+            return
+        self.passes += 1
+        for region, region_ctx in contexts.items():
+            fields = _FieldAccess()._own_fields(region_ctx)
+            if not fields:
+                continue
+            emit({"type": "pptable", "name": f"fields · {region}", "time": float(self.passes),
+                  "columns": list(fields), "group_columns": [], "groups": [[]],
+                  "values": [[float(np.mean(v)) if np.size(v) else None for v in fields.values()]],
+                  "region": region, "x": "coupling pass"})
 
     def coupling_finished(self, coupling: Any, outcome: Any) -> None:
         """A coupling loop ended: its outcome as one row of a ``pptable`` (Plots pane).

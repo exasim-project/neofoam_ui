@@ -229,10 +229,10 @@ class StepperApp:
         s.failed = msg["failed"]
         summary = msg["summary"]
         s.scalars = [{"k": k, "v": _fmt(v)} for k, v in summary["scalars"].items()]
-        s.fields_rows = [
+        s.fields_rows = _by_region([
             {**r, "min": _fmt(r["min"]), "max": _fmt(r["max"]), "mean": _fmt(r["mean"])}
             for r in summary["fields"]
-        ]
+        ], self.dag.region_order())
         if s.failed:
             s.status = "✖ failed — see console; Restart to try again"
         elif s.finished:
@@ -301,3 +301,16 @@ class StepperApp:
 
     def _on_delay(self, delay_ms: float, **_: Any) -> None:
         self.send({"cmd": "delay", "seconds": float(delay_ms) / 1000})
+
+
+def _by_region(rows: list[dict[str, Any]], regions: list[str]) -> list[dict[str, Any]]:
+    """Field rows of a multi-region solver (``<region>.<field>``) grouped per region, in the
+    regions' order, each with its region and colour; other rows first, as they came."""
+    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
+
+    def region(row: dict[str, Any]) -> Optional[str]:
+        head = str(row["name"]).split(".", 1)[0]
+        return head if "." in str(row["name"]) and head in regions else None
+
+    out = [{**r, "region": region(r), "color": _REGION.color(region(r)) if region(r) else None} for r in rows]
+    return sorted(out, key=lambda r: -1 if r["region"] is None else regions.index(r["region"]))

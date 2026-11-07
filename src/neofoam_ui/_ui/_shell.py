@@ -143,7 +143,11 @@ def _build(app: StepperApp) -> None:
                                              click="trigger('nf_field', [f.field])",
                                              style="cursor: pointer;",
                                              title="highlight the ops that write / read this field"):
-                                    html.Td("{{ f.name }}", classes="nf-mono")
+                                    with html.Td(classes="nf-mono",
+                                                 style=("f.color ? `color:${f.color}` : ''",)):
+                                        html.Span(classes="nf-dot mr-1", v_if="f.color",
+                                                  style=("`background:${f.color}`",))
+                                        html.Span("{{ f.name }}")
                                     html.Td("{{ f.min }}")
                                     html.Td("{{ f.max }}")
                                     html.Td("{{ f.mean }}")

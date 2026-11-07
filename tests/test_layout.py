@@ -349,3 +349,25 @@ def test_a_box_holding_the_token_or_a_breakpoint_opens():
     assert shut() == {"a"}
     state.bps = ["c/a.solve"]
     assert shut() == set()
+
+
+def test_field_rows_are_grouped_per_region_in_the_boxes_order():
+    from neofoam_ui._ui._app import _by_region  # noqa: PLC0415
+    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
+
+    rows = [{"name": n} for n in ("c.x", "a.x", "time", "b.x", "a.T")]
+    out = _by_region(rows, ["a", "b", "c"])
+    assert [r["name"] for r in out] == ["time", "a.x", "a.T", "b.x", "c.x"]
+    assert out[1]["region"] == "a" and out[1]["color"] == _REGION.color("a") and out[0]["color"] is None
+
+
+def test_a_region_fields_table_is_drawn_in_the_region_s_colour():
+    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
+    from neofoam_ui._ui.panes._table_history import _TableHistory  # noqa: PLC0415
+
+    history = _TableHistory()
+    history.add({"name": "fields · b", "time": 1.0, "columns": ["x"], "values": [[0.5]], "region": "b",
+                 "x": "coupling pass"})
+    (chart,) = history.charts()
+    assert chart["data"][0]["line"]["color"] == _REGION.color("b")
+    assert chart["layout"]["xaxis"]["title"]["text"] == "coupling pass"

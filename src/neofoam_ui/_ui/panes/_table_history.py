@@ -25,6 +25,9 @@ class _Table:
         self.group_columns: list[str] = []
         self.columns: list[str] = []
         self.ms: Optional[float] = None
+        #: A region's table (its fields): drawn in the region's colour; and the x axis' name.
+        self.region: Optional[str] = None
+        self.x: Optional[str] = None
 
 
 class _TableHistory:
@@ -49,6 +52,7 @@ class _TableHistory:
         table = self.tables.setdefault(msg["name"], _Table())
         table.columns, table.group_columns = list(msg["columns"]), list(msg.get("group_columns") or [])
         table.ms = msg.get("ms")
+        table.region, table.x = msg.get("region"), msg.get("x")
         t = float(msg["time"])
         self.time = t
         if table.times and t <= table.times[-1]:  # the same step again (a re-evaluation): replace it
@@ -98,6 +102,16 @@ class _TableHistory:
         data = [{"type": "scatter", "mode": mode, "x": table.times, "y": table.series[key],
                  "name": _line_name(key, table, len(rows)), "connectgaps": False,
                  "marker": {"size": 4}} for key in shown]
+        if table.region:  # a region's fields: its colour, in shades for further lines
+            from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
+
+            color = _REGION.color(table.region)
+            for i, line in enumerate(data):
+                line["line"] = {"color": color, "dash": ("solid", "dash", "dot", "dashdot")[i % 4]}
+                line["marker"] = {"size": 4, "color": color}
+            layout["title"]["font"] = {"size": 13, "color": color}
+        if table.x:
+            layout["xaxis"]["title"] = {"text": table.x, "font": {"size": 10}, "standoff": 2}
         layout["showlegend"] = len(shown) > 1
         if len(shown) > 1:  # the legend below the axis
             layout["legend"] = {"font": {"size": 10}, "orientation": "h", "y": -0.16, "yanchor": "top"}

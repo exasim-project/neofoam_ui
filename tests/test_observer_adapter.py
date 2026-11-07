@@ -259,3 +259,26 @@ def test_a_coupling_node_reports_what_its_partner_sends():
     node.func.func.index = 0
     assert _exchanged(node) == {"from": "b", "to": "a", "data": {"x": "mean 0.75 (n=2)"}}
     assert _exchanged(FakeOp("a.solve_x")) is None
+
+
+def test_a_coupling_loop_test_reports_each_region_s_fields():
+    import numpy as np  # noqa: PLC0415
+
+    emitted = []
+    session = RegionSession()
+    session.records = []
+    session.record = lambda *a, **k: None
+    session.emit = emitted.append
+    stepper = _Stepper(session, lambda event: None)
+    regions = {"a": (None, SimpleNamespace(fields={"x": np.array([1.5])})),
+               "b": (None, SimpleNamespace(fields={"x": np.array([0.25, 0.75])}))}
+    ctx = SimpleNamespace(models={"regions": regions})
+    loop = FakeOp("loop", [], iterations=1)
+    loop.func = SimpleNamespace(func=lambda ctx: None, residuals={})
+    stepper.operations(SimpleNamespace(ops=[loop]))
+    stepper.before_loop_test(loop, ctx, 1)
+    stepper.after_loop_test(loop, ctx, 1, True)
+
+    tables = [m for m in emitted if m["type"] == "pptable"]
+    assert [(m["name"], m["time"], m["columns"], m["values"], m["region"]) for m in tables] == [
+        ("fields · a", 1.0, ["x"], [[1.5]], "a"), ("fields · b", 1.0, ["x"], [[0.5]], "b")]

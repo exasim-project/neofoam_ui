@@ -304,8 +304,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w477-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w478-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w483-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w484-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -314,6 +314,16 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </span>
 </div>
 <img class="nf-field-img" v-show="fv_src" alt="in-situ view" :src="fv_src" />
+<div class="nf-field-regions" v-if="!fv_src && fields_rows.some(f => f.region)">
+<div class="nf-field-region" :style="`border-left-color:${f.color}`" :key="f.name" v-for="f in fields_rows.filter(f => f.region)">
+<span class="nf-mono" :style="`color:${f.color}`">
+{{ f.name }}
+</span>
+<span >
+{{ f.min === f.max ? f.mean : f.min + ' … ' + f.max + ' (mean ' + f.mean + ')' }}
+</span>
+</div>
+</div>
 <div class="nf-field-empty" v-show="!fv_src">
 {{ fv_msg }}
 </div>
@@ -390,7 +400,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w518-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w528-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -553,8 +563,11 @@ last written by
 </thead>
 <tbody >
 <tr :class="{ changed: f.changed, hl: f.field === hl_field }" style="cursor: pointer;" title="highlight the ops that write / read this field" :key="f.name" v-for="f in fields_rows" @click="trigger('nf_field', [f.field])">
-<td class="nf-mono">
+<td class="nf-mono" :style="f.color ? `color:${f.color}` : ''">
+<span class="nf-dot mr-1" :style="`background:${f.color}`" v-if="f.color" />
+<span >
 {{ f.name }}
+</span>
 </td>
 <td >
 {{ f.min }}

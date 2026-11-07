@@ -56,6 +56,8 @@ class _DagPane(BasePane):
         self._boxes_of: dict[str, list[str]] = {}
         self._followed: Optional[str] = None
         self._closed: frozenset[str] = frozenset()
+        #: The regions in the order of the execution view's boxes (kept over restarts).
+        self._box_order: list[str] = []
         #: The coupling line of each coupling node (its key), and the line's two regions.
         self._line_of: dict[str, str] = {}
         self._line_sides: dict[str, tuple[str, str]] = {}
@@ -210,6 +212,10 @@ class _DagPane(BasePane):
         graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed, view,
                             tuple(self._regions), self._closed)
         self._node_of, self._line_of, self._line_sides, self._boxes_of = {}, {}, {}, {}
+        boxes = sorted((n["position"]["x"], n["id"][len("exec::box:"):]) for n in graph["nodes"]
+                       if n["id"].startswith("exec::box:"))
+        if boxes:
+            self._box_order = [r for _, r in boxes]
         for n in graph["nodes"]:
             ref = (n.get("data") or {}).get("ref") or n["id"]
             self._node_of.setdefault(ref, n["id"])
@@ -298,6 +304,11 @@ class _DagPane(BasePane):
             self.app.server.js_call(getattr(self.editor, "_NodeEditor__ref"), "fitView",
                                     {"nodes": [target], "duration": 250, "maxZoom": 1.0, "minZoom": 0.5,
                                      "padding": 1.2})
+
+    def region_order(self) -> list[str]:
+        """The regions in the order of the execution view's boxes (else as they appeared)."""
+        boxes = [r for r in self._box_order if r in self._regions]
+        return boxes + [r for r in self._regions if r not in boxes]
 
     def _boxes_shut(self) -> frozenset[str]:
         """The region boxes drawn closed: the user's, but those the token or a breakpoint is in."""

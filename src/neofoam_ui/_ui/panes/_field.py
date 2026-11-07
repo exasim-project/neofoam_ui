@@ -29,6 +29,9 @@ _FIELD_CSS = r"""
 .nf-field-img { flex: 1 1 auto; min-height: 0; width: 100%; object-fit: contain; display: block; }
 .nf-field-empty { flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
   font-size: 13px; opacity: .6; padding: 16px; text-align: center; }
+.nf-field-regions { padding: 8px 12px 0; display: flex; flex-direction: column; gap: 4px; }
+.nf-field-region { display: flex; justify-content: space-between; gap: 12px; border-left: 4px solid;
+  padding: 2px 8px; font-size: 13px; background: rgba(128,128,128,.06); border-radius: 4px; }
 @media (max-width: 760px) { .nf-field { border-left: 0; border-top: 1px solid rgba(128,128,128,.25); } }
 """
 
@@ -60,6 +63,13 @@ def _field_pane() -> None:
                           classes="nf-num", title="and at least this many seconds apart")
             html.Span("{{ fv_msg }}", classes="nf-field-msg")
         html.Img(src=("fv_src",), classes="nf-field-img", v_show="fv_src", alt="in-situ view")
+        # a multi-region solver without an image (no mesh, or no Catalyst): each region's fields,
+        # grouped in the boxes' order, in the region's colour (the variables table's rows)
+        with html.Div(classes="nf-field-regions", v_if="!fv_src && fields_rows.some(f => f.region)"):
+            with html.Div(v_for="f in fields_rows.filter(f => f.region)", key="f.name",
+                          classes="nf-field-region", style=("`border-left-color:${f.color}`",)):
+                html.Span("{{ f.name }}", classes="nf-mono", style=("`color:${f.color}`",))
+                html.Span("{{ f.min === f.max ? f.mean : f.min + ' … ' + f.max + ' (mean ' + f.mean + ')' }}")
         html.Div("{{ fv_msg }}", classes="nf-field-empty", v_show="!fv_src")
 
 
