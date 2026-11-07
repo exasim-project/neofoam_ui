@@ -1,7 +1,8 @@
 """Step-by-step execution of a solver graph — the core of the DAG stepper (no trame here).
 
-* :class:`Op`, :class:`InitStep` — the graph a solver describes; :class:`Event` — the point
-  the engine is paused before;
+* :class:`Op`, :class:`InitStep` — the graph a solver describes (:class:`Exchange`: what a
+  coupling node of a multi-region solver hands over); :class:`Event` — the point the engine
+  is paused before;
 * :class:`Session` — drives one run event by event, see :mod:`neofoam_ui.engine._session`;
 * :class:`ThreadedProgram` — a solver that drives itself (calls back into the stepper);
 * :class:`Solver` and the small protocols around it — what the stepper needs from a solver
@@ -9,7 +10,7 @@
   :mod:`neofoam_ui.engine._protocols`.
 """
 
-from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
+from neofoam_ui.engine._graph import Event, Exchange, InitStep, Op, assign_ids, topological_order
 from neofoam_ui.engine._protocols import (
     FieldSource,
     GraphSolver,
@@ -34,6 +35,7 @@ from neofoam_ui.engine._threaded import ThreadedProgram
 __all__ = [
     "DEFAULT_REGION",
     "Event",
+    "Exchange",
     "FieldSource",
     "GraphSolver",
     "InitStep",

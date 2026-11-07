@@ -103,13 +103,14 @@ _CSS = r"""
 .nf-loop-title { position: absolute; left: 10px; top: 6px; font-size: 12px; opacity: .8; }
 .nf-loop-pass { font-weight: 600; color: #e0362c; }
 .nf-loop-res { font-family: monospace; font-size: 11px; opacity: .85; }
-.nf-loop-badge { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 11px;
-  background: rgba(103,65,217,.12); font-weight: 600; }
-.nf-lane { width: 100%; height: 100%; border: 1.5px dashed; border-radius: 10px; opacity: .9;
-  background: rgba(255,255,255,.35); pointer-events: none; }
-.nf-lane-head { position: absolute; left: 10px; top: 4px; font-size: 12px; font-weight: 600;
+.nf-box { width: 100%; height: 100%; border: 1.5px solid; border-radius: 10px; opacity: .9;
+  background: rgba(255,255,255,.55); pointer-events: none; }
+.nf-box-head { position: absolute; left: 10px; top: 4px; font-size: 12px; font-weight: 600;
   display: inline-flex; align-items: center; gap: 5px; }
-.vue-flow__node-lane { z-index: 0 !important; pointer-events: none; }
+.vue-flow__node-region { z-index: 0 !important; pointer-events: none; }
+.nf-action.cpl { border-style: dashed; border-color: #6741d9; background: #f4f0ff; }
+.nf-cpl { position: absolute; top: -9px; right: 10px; font-size: 10px; background: #6741d9; color: #fff;
+  border-radius: 8px; padding: 0 6px; line-height: 16px; white-space: nowrap; }
 .vue-flow__edge.nf-couple { z-index: 5; }
 .nf-regions { position: absolute; right: 10px; top: 8px; z-index: 5; font-size: 12px; padding: 2px 8px;
   display: flex; gap: 10px; background: rgba(128,128,128,.08); border-radius: 10px; }

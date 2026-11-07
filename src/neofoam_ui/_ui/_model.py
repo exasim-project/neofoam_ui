@@ -83,19 +83,6 @@ class _RunModel:
         walk(self.ops)
         return [{"name": r, "color": _REGION.color(r)} for r in seen]
 
-    def ancestors(self, node_id: Optional[str]) -> list[str]:
-        """The loops around ``node_id``, innermost first."""
-        out, cur = [], self.index.get(node_id or "", {}).get("parent")
-        while cur:
-            out.append(cur)
-            cur = self.index[cur]["parent"]
-        return out
-
-    def nested_couplings(self) -> set[str]:
-        """Coupling loops (ops with ``couples``) inside another coupling loop."""
-        return {i for i, info in self.index.items() if info.get("couples")
-                and any(self.index[a].get("couples") for a in self.ancestors(i))}
-
     def name(self, node_id: Optional[str]) -> str:
         if not node_id:
             return "—"

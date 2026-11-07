@@ -36,6 +36,10 @@ def _inspector_model(model: _RunModel, sel: Optional[str], bps: Iterable[str]) -
             rows.append({"k": "guard", "v": f"[{info['guard']}]"})
         if info.get("injected_by"):
             rows.append({"k": "injected by", "v": f"⊕ model {info['injected_by']}"})
+        if info.get("exchange"):
+            ex = info["exchange"]
+            rows.append({"k": "exchange", "v": f"{', '.join(ex.get('data') or ())} ← "
+                         f"{ex.get('partner') or '—'} ({ex['source']}), for the op below"})
         if info["prev"]:
             is_loop_test = info["prev"] == info["parent"]
             nav.append({"dir": "⬅", **chip(info["prev"], f"↺ {model.name(info['prev'])} test"

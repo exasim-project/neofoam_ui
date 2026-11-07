@@ -144,7 +144,7 @@ delay {{ delay_ms }} ms
 <Controls :showInteractive="false" />
 <MiniMap v-show="!is_mobile && !fv_on && !pp_on && !pt_on" pannable zoomable />
 <template v-slot:node-action=props>
-<div :class="['nf-node', 'nf-action', { cur: props.id === cur_node && cur_kind !== 'test', sel: props.id === selected, done: visited.includes(props.id) && props.id !== cur_node, inj: !!props.data.injected_by, hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]" :style="heat[props.id] ? `background:${heat[props.id]}` : ''">
+<div :class="['nf-node', 'nf-action', { cur: props.id === cur_node && cur_kind !== 'test', sel: props.id === selected, done: visited.includes(props.id) && props.id !== cur_node, inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]" :style="heat[props.id] ? `background:${heat[props.id]}` : ''">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
 <Handle id="r" position="right" type="source" />
@@ -161,6 +161,9 @@ delay {{ delay_ms }} ms
 </span>
 <span class="nf-badge" v-if="props.data.injected_by">
 ⊕ {{ props.data.injected_by }}
+</span>
+<span class="nf-cpl" v-if="props.data.exchange">
+⇄ {{ props.data.exchange }}
 </span>
 </div>
 </template>
@@ -182,6 +185,8 @@ delay {{ delay_ms }} ms
 <div :class="['nf-node', 'nf-loop', { active: active_loops.includes(props.id), collapsed: props.data.collapsed, sel: props.data.collapsed && props.id === selected, hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]" :style="props.data.collapsed ? heat[props.id] ? `background:${heat[props.id]}` : '' : ''">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
+<Handle id="r" position="right" type="source" />
+<Handle id="ls" position="left" type="source" />
 <div class="nf-loop-title">
 <span @click.stop="trigger('nf_collapse', [props.id])" class="nf-tog" title="collapse / expand">
 {{ props.data.collapsed ? '▸' : '▾' }}
@@ -194,9 +199,6 @@ delay {{ delay_ms }} ms
 </span>
 <span class="nf-loop-res" v-if="loop_res[props.id]">
  · {{ loop_res[props.id] }}
-</span>
-<span class="nf-loop-badge" v-if="props.data.collapsed && props.data.badge">
-{{ props.data.badge }}
 </span>
 </div>
 <div class="nf-loop-test">
@@ -217,9 +219,9 @@ test: {{ props.data.test }}
 <span @click.stop="trigger('nf_toggle_bp', [props.data.loop])" :class="['nf-bp', { on: bps.includes(props.data.loop) }]" />
 </div>
 </template>
-<template v-slot:node-lane=props>
-<div class="nf-lane" :style="`border-color:${props.data.color}`">
-<div class="nf-lane-head" :style="`color:${props.data.color}`">
+<template v-slot:node-region=props>
+<div class="nf-box" :style="`border-color:${props.data.color}`">
+<div class="nf-box-head" :style="`color:${props.data.color}`">
 <span class="nf-dot" :style="`background:${props.data.color}`" />
 <span >
 {{ props.data.label }}
@@ -260,8 +262,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w433-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w434-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w437-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w438-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -346,7 +348,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w474-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w478-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -600,7 +602,7 @@ click a field: ops that wrote (orange) / read (blue) it
 stripe colour: the op's region (multi-region), else its model
 </div>
 <div v-if="regions.length">
-coupling loop: a lane per region; dashed = data sent to the other region
+coupling loop: a box per region; ⇄ coupling node: takes the partner's data (dashed, partner's colour) and hands it to the op below it
 </div>
 </div>
 </VNavigationDrawer>

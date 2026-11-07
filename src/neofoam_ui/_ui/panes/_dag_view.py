@@ -37,12 +37,12 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
             with html.Div(classes=(
                 "['nf-node', 'nf-action', { cur: " + cls_node + ", sel: props.id === selected,"
                 " done: visited.includes(props.id) && props.id !== cur_node, inj: !!props.data.injected_by,"
-                " hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]",
+                " cpl: !!props.data.exchange, hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]",
             ), style=(_HEAT,)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
                 Handle(position="right", type="source", id="r")
-                # the data exchange of a coupling loop, between lanes
+                # the data exchange of a coupling loop, between region boxes
                 Handle(position="left", type="source", id="ls")
                 Handle(position="left", type="target", id="lt")
                 Handle(position="right", type="target", id="rt")
@@ -54,6 +54,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                           " : '') + props.data.number }}", classes="nf-meta")
                 html.Span("⊕ {{ props.data.injected_by }}", classes="nf-badge",
                           v_if="props.data.injected_by")
+                html.Span("⇄ {{ props.data.exchange }}", classes="nf-cpl", v_if="props.data.exchange")
 
         with CustomNode("init"):
             with html.Div(classes=(
@@ -76,6 +77,9 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
             ), style=("props.data.collapsed ? " + _HEAT + " : ''",)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
+                # a loop of a region box sends that region's data to a coupling node
+                Handle(position="right", type="source", id="r")
+                Handle(position="left", type="source", id="ls")
                 with html.Div(classes="nf-loop-title"):
                     html.Span("{{ props.data.collapsed ? '▸' : '▾' }}", classes="nf-tog",
                               title="collapse / expand",
@@ -85,8 +89,6 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                               v_if="loop_iter[props.id]")
                     html.Span(" · {{ loop_res[props.id] }}", classes="nf-loop-res",
                               v_if="loop_res[props.id]")
-                    html.Span("{{ props.data.badge }}", classes="nf-loop-badge",
-                              v_if="props.data.collapsed && props.data.badge")
                 html.Div("test: {{ props.data.test }}", classes="nf-loop-test")
                 html.Div("{{ heat_ms[props.id] ? heat_ms[props.id] + ' · ' : '' }}"
                          "{{ props.data.size }} actions", classes="nf-loop-size",
@@ -107,9 +109,9 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 html.Span(classes=("['nf-bp', { on: bps.includes(props.data.loop) }]",),
                           raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.loop])"'])
 
-        with CustomNode("lane"):
-            with html.Div(classes="nf-lane", style=("`border-color:${props.data.color}`",)):
-                with html.Div(classes="nf-lane-head", style=("`color:${props.data.color}`",)):
+        with CustomNode("region"):
+            with html.Div(classes="nf-box", style=("`border-color:${props.data.color}`",)):
+                with html.Div(classes="nf-box-head", style=("`color:${props.data.color}`",)):
                     html.Span(classes="nf-dot", style=("`background:${props.data.color}`",))
                     html.Span("{{ props.data.label }}")
 
@@ -217,5 +219,5 @@ def _drawer(drawer: Any) -> None:
         html.Div("▾ / ▸ on a loop: collapse / expand its body")
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
         html.Div("stripe colour: the op's region (multi-region), else its model", v_if="regions.length")
-        html.Div("coupling loop: a lane per region; dashed = data sent to the other region",
-                 v_if="regions.length")
+        html.Div("coupling loop: a box per region; ⇄ coupling node: takes the partner's data "
+                 "(dashed, partner's colour) and hands it to the op below it", v_if="regions.length")

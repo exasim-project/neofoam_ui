@@ -93,103 +93,104 @@ def test_region_ops_take_their_region_colour_and_make_the_legend():
     assert [r["name"] for r in model.regions()] == ["a", "b"]
 
 
-def _coupled(name, regions, couples, extra=()):
-    from neofoam_ui.engine import Op  # noqa: PLC0415
+def _coupled(name, regions, sources, extra=()):
+    """A coupling loop: per region its coupling node, taking ``sources[i]``'s data, then its solve."""
+    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
 
     body = []
-    for r in regions:
-        body += [Op(f"receive_{r}.x", "action", lambda ctx: None, region=r),
-                 Op(f"{r}.solve", "action", lambda ctx: None, region=r),
-                 Op(f"send_{r}.x", "action", lambda ctx: None, region=r)]
-    return Op(name, "loop", lambda ctx: False, [*extra, *body], couples=couples)
+    for r, (source, partner) in zip(regions, sources):
+        body += [Op(f"couple_{r}.x", "action", lambda ctx: None, region=r,
+                    exchange=Exchange(source, ("x",), partner)),
+                 Op(f"{r}.solve", "action", lambda ctx: None, region=r)]
+    return Op(name, "loop", lambda ctx: False, [*extra, *body])
 
 
-def test_a_coupling_loop_puts_each_region_in_a_lane_and_draws_the_exchange():
-    loop = _coupled("couple", ["a", "b"], [("send_a.x", "receive_b.x", "x"), ("send_b.x", "receive_a.x", "x")])
-    ops = [loop]
+def _flow(ops, **kw):
     assign_ids(ops)
-    flow = build_flow([], [op_dict(o) for o in ops])
+    return build_flow([], [op_dict(o) for o in ops], **kw)
+
+
+def test_a_coupling_loop_draws_a_box_per_region_connected_through_its_coupling_nodes():
+    flow = _flow([_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])])
     nodes = {n["id"]: n for n in flow["nodes"]}
 
-    assert [nodes[f"couple::lane{i}"]["data"]["label"] for i in (0, 1)] == ["a", "b"]
-    a, b = nodes["couple/a.solve"]["position"], nodes["couple/b.solve"]["position"]
+    assert [nodes[f"loop::box{i}"]["data"]["label"] for i in (0, 1)] == ["a", "b"]
+    assert nodes["loop::box0"]["type"] == "region"
+    a, b = nodes["loop/a.solve"]["position"], nodes["loop/b.solve"]["position"]
     assert a["y"] == b["y"] and a["x"] < b["x"]  # side by side
-    exchange = {(e["source"], e["target"]): e for e in flow["edges"] if e.get("class") == "nf-couple"}
-    assert set(exchange) == {("couple/send_a.x", "couple/receive_b.x"), ("couple/send_b.x", "couple/receive_a.x")}
-    assert exchange[("couple/send_a.x", "couple/receive_b.x")]["sourceHandle"] == "r"
-    assert exchange[("couple/send_b.x", "couple/receive_a.x")]["targetHandle"] == "rt"
-    assert exchange[("couple/send_a.x", "couple/receive_b.x")]["label"] == "x"
-    # control flow stays, behind the exchange
-    assert any(e.get("class") == "nf-secondary" and e["source"] == "couple/send_a.x"
-               and e["target"] == "couple/receive_b.x" for e in flow["edges"])
+    assert nodes["loop/couple_a.x"]["data"]["exchange"] == "x ← b"
+    pairs = {(e["source"], e["target"]): e for e in flow["edges"]}
+    # into a coupling node: from the partner's op; out of it: to its own op
+    exchange = {k for k, e in pairs.items() if e.get("class") == "nf-couple"}
+    assert exchange == {("loop/b.solve", "loop/couple_a.x"), ("loop/a.solve", "loop/couple_b.x")}
+    assert pairs[("loop/a.solve", "loop/couple_b.x")]["sourceHandle"] == "r"
+    assert pairs[("loop/b.solve", "loop/couple_a.x")]["targetHandle"] == "rt"
+    assert pairs[("loop/b.solve", "loop/couple_a.x")]["label"] == "x"
+    assert ("loop/couple_a.x", "loop/a.solve") in pairs and ("loop/couple_b.x", "loop/b.solve") in pairs
+    # the boxes are connected only through the coupling nodes
+    region = {f"loop/{name}": name[-3] if name.startswith("couple") else name[0]
+              for name in ("couple_a.x", "a.solve", "couple_b.x", "b.solve")}
+    assert not [k for k, e in pairs.items() if e.get("class") != "nf-couple"
+                and k[0] in region and k[1] in region and region[k[0]] != region[k[1]]]
+    # the loop's test leads into the first box, the last box back to it
+    assert ("loop::test", "loop/couple_a.x") in pairs and ("loop/b.solve", "loop::test") in pairs
 
 
-def test_a_nested_coupling_loop_sits_in_the_lane_it_continues():
-    inner = _coupled("inner", ["a", "b"], [("send_a.x", "receive_b.x", "x"), ("send_b.x", "receive_a.x", "x")])
+def test_a_loop_without_coupling_nodes_has_no_region_boxes():
     from neofoam_ui.engine import Op  # noqa: PLC0415
 
+    flow = _flow([Op("loop", "loop", lambda ctx: False, [
+        Op("a.solve", "action", lambda ctx: None, region="a"),
+        Op("b.solve", "action", lambda ctx: None, region="b")])])
+
+    assert not [n for n in flow["nodes"] if n["type"] == "region"]
+    assert not [e for e in flow["edges"] if e.get("class") == "nf-couple"]
+
+
+def test_a_nested_coupling_loop_sits_in_the_box_it_continues():
+    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
+
+    inner = _coupled("inner", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])
     outer = Op("outer", "loop", lambda ctx: False, [
-        Op("receive_b.x", "action", lambda ctx: None, region="b"), inner,
-        Op("send_b.x", "action", lambda ctx: None, region="b"),
-        Op("receive_c.x", "action", lambda ctx: None, region="c"),
+        Op("couple_b.x", "action", lambda ctx: None, region="b", exchange=Exchange("c.solve", ("x",), "c")),
+        inner,
+        Op("couple_c.x", "action", lambda ctx: None, region="c", exchange=Exchange("inner", ("x",), "b")),
         Op("c.solve", "action", lambda ctx: None, region="c"),
-        Op("send_c.x", "action", lambda ctx: None, region="c"),
-    ], couples=[("send_b.x", "receive_c.x", "x"), ("send_c.x", "receive_b.x", "x")])
-    ops = [outer]
-    assign_ids(ops)
-    flow = build_flow([], [op_dict(o) for o in ops])
+    ])
+    flow = _flow([outer])
     nodes = {n["id"]: n for n in flow["nodes"]}
 
-    assert [nodes[f"outer::lane{i}"]["data"]["label"] for i in (0, 1)] == ["b, a", "c"]
+    assert [nodes[f"outer::box{i}"]["data"]["label"] for i in (0, 1)] == ["b, a", "c"]
     exchange = {(e["source"], e["target"]) for e in flow["edges"] if e.get("class") == "nf-couple"}
-    # the outer loop's own b ops, not the inner loop's of the same name
-    assert ("outer/send_b.x", "outer/receive_c.x") in exchange
-    assert ("outer/inner/send_a.x", "outer/inner/receive_b.x") in exchange
+    # the outer loop's own coupling nodes take the partner's op of the outer loop (a loop for c)
+    assert exchange == {("outer/c.solve", "outer/couple_b.x"), ("outer/inner", "outer/couple_c.x"),
+                        ("outer/inner/b.solve", "outer/inner/couple_a.x"),
+                        ("outer/inner/a.solve", "outer/inner/couple_b.x")}
 
 
-def _chain_model():
+def test_the_labels_of_two_crossing_exchange_edges_do_not_overlap():
+    flow = _flow([_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])])
+
+    labels = [e["labelStyle"]["transform"] for e in flow["edges"] if e.get("class") == "nf-couple"]
+    assert len(labels) == 2 and labels[0] != labels[1]
+
+
+def test_a_collapsed_loop_hides_the_exchange_into_it():
+    flow = _flow([_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])],
+                 collapsed=frozenset({"loop"}))
+
+    assert not [e for e in flow["edges"] if e.get("class") == "nf-couple"]
+
+
+def test_the_inspector_names_a_coupling_node_s_exchange():
     from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
-    from neofoam_ui.engine import Op  # noqa: PLC0415
+    from neofoam_ui._ui.panes._inspector import _inspector_model  # noqa: PLC0415
 
-    inner = _coupled("inner", ["a", "b"], [("send_a.x", "receive_b.x", "x"), ("send_b.x", "receive_a.x", "x")])
-    outer = Op("outer", "loop", lambda ctx: False, [
-        Op("receive_b.x", "action", lambda ctx: None, region="b"), inner,
-        Op("send_b.x", "action", lambda ctx: None, region="b"),
-        Op("receive_c.x", "action", lambda ctx: None, region="c"),
-        Op("c.solve", "action", lambda ctx: None, region="c"),
-        Op("send_c.x", "action", lambda ctx: None, region="c"),
-    ], couples=[("send_b.x", "receive_c.x", "x"), ("send_c.x", "receive_b.x", "x")])
-    ops = [outer]
+    ops = [_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])]
     assign_ids(ops)
     model = _RunModel()
     model.graph({"activity": "exec", "ops": [op_dict(o) for o in ops]})
     model.reindex("probe")
-    return model
 
-
-def test_a_nested_coupling_loop_is_collapsed_unless_the_token_or_a_breakpoint_is_inside():
-    from types import SimpleNamespace  # noqa: PLC0415
-
-    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
-
-    model = _chain_model()
-    assert model.nested_couplings() == {"outer/inner"}
-    pane = SimpleNamespace(model=model, _opened=set(),
-                           app=SimpleNamespace(state=SimpleNamespace(cur_node="outer/c.solve", bps=[], collapsed=[])))
-    collapsed = lambda: _DagPane._collapsed(pane)  # noqa: E731
-    assert collapsed() == {"outer/inner"}
-    pane.app.state.cur_node = "outer/inner/a.solve"
-    assert collapsed() == set()
-    pane.app.state.cur_node, pane.app.state.bps = "outer/c.solve", ["outer/inner/b.solve"]
-    assert collapsed() == set()
-    pane.app.state.bps, pane._opened = [], {"outer/inner"}
-    assert collapsed() == set()
-
-
-def test_a_collapsed_coupling_loop_names_its_regions_and_labels_do_not_overlap():
-    model = _chain_model()
-    flow = build_flow([], model.ops, collapsed=frozenset({"outer/inner"}))
-    nodes = {n["id"]: n for n in flow["nodes"]}
-    assert nodes["outer/inner"]["data"]["badge"] == "a ↔ b"
-    labels = [e["labelStyle"]["transform"] for e in flow["edges"] if e.get("class") == "nf-couple"]
-    assert len(labels) == 2 and labels[0] != labels[1]
+    rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_a.x", [])["rows"]}
+    assert rows["exchange"] == "x ← b (b.solve), for the op below"

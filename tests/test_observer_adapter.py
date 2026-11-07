@@ -186,21 +186,45 @@ def test_a_loop_driven_by_a_bound_method_shows_its_class():
     assert _convert(loop, {}).test == "CouplingOp()"
 
 
-def test_a_coupling_loop_names_its_exchange_and_scheme():
+def test_a_coupling_loop_names_its_scheme():
     from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
 
     class CouplingOp:
         parallel = False
-        sides = [SimpleNamespace(field="x", label="a.x"), SimpleNamespace(field="b.y")]
 
         def _next_pass(self, ctx):
             return False
 
     loop = FakeOp("loop", [])
-    loop.func = SimpleNamespace(func=CouplingOp()._next_pass, sides=CouplingOp.sides)
-    op = _convert(loop, {})
-    assert op.test == "CouplingOp() · serial"
-    assert op.couples == [("send_a.x", "receive_b.y", "x"), ("send_b.y", "receive_a.x", "y")]
+    loop.func = SimpleNamespace(func=CouplingOp()._next_pass)
+    assert _convert(loop, {}).test == "CouplingOp() · serial"
+
+
+def test_a_coupling_node_names_the_partner_op_whose_data_it_hands_over():
+    from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
+    from neofoam_ui.engine import Exchange  # noqa: PLC0415
+
+    sides = [SimpleNamespace(kinds={"T": "Array", "h": "Array"}, op="a.solve_T", region="a"),
+             SimpleNamespace(kinds={"T": "Array", "h": "Array"}, op="b.solve_T", region="b")]
+
+    class CouplingNode:
+        """Hands the side its partner's data."""
+
+        def __init__(self, index):
+            self.coupling, self.index = SimpleNamespace(sides=sides), index
+
+        def __call__(self, ctx):
+            return None
+
+    nodes = [FakeOp(f"couple_{r}.T") for r in ("a", "b")]
+    for i, node in enumerate(nodes):
+        node.func = SimpleNamespace(func=CouplingNode(i))
+    assert [_convert(node, {}).exchange for node in nodes] == [
+        Exchange("b.solve_T", ("T", "h"), "b"), Exchange("a.solve_T", ("T", "h"), "a")]
+    # a plain op, and a coupling that lacks its partner, have none
+    assert _convert(FakeOp("a.solve_T"), {}).exchange is None
+    sides.pop()
+    assert _convert(nodes[0], {}).exchange is None
 
 
 def test_a_coupling_loop_test_reports_the_residuals_of_the_last_pass():

@@ -8,6 +8,22 @@ from typing import Any, Callable, Literal, Optional
 __all__ = ()
 
 
+@dataclass(frozen=True)
+class Exchange:
+    """A coupling node's data exchange: the data of an op of the partner region, for the op after it.
+
+    A coupling node is an action of a multi-region solver that runs right before the op it
+    belongs to and hands it the partner's data.
+    """
+
+    #: Name of the partner's op whose data the node hands over (an op of the same loop).
+    source: str
+    #: Names of the exchanged data, e.g. ``("T", "h")``.
+    data: tuple[str, ...] = ()
+    #: The partner's region.
+    partner: Optional[str] = None
+
+
 @dataclass
 class Op:
     """One node of the execution graph: an action, or a loop with children."""
@@ -35,9 +51,8 @@ class Op:
     pos: str = ""
     #: The region of a multi-region solver the op belongs to (``None``: the solver's own).
     region: Optional[str] = None
-    #: A coupling loop's data exchange: ``(send op name, receive op name, data name)``, one
-    #: per direction (names of ops in the loop's body).
-    couples: list[tuple[str, str, str]] = field(default_factory=list)
+    #: A coupling node's data exchange (``None``: not a coupling node).
+    exchange: Optional[Exchange] = None
 
 
 @dataclass

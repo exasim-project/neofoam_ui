@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from typing import Any, Callable, Optional
 
-from neofoam_ui.engine import Op
+from neofoam_ui.engine import Exchange, Op
 
 __all__ = ()
 
@@ -33,24 +33,27 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
         else:
             test = type(predicate).__name__ + "()"
         return Op(name, "loop", op.func, [_convert(c, injected) for c in op.sub_operations],
-                  test=test, couples=_couples(op.func), **common)
-    return Op(name, "action", op.run, guard=guard, **common)
+                  test=test, **common)
+    return Op(name, "action", op.run, guard=guard, exchange=_exchange(target), **common)
 
 
-def _couples(loop: Any) -> list[tuple[str, str, str]]:
-    """A NeoFOAM ``CouplingOp``'s exchange: each side's send op to its partner's receive op.
+def _exchange(func: Any) -> Optional[Exchange]:
+    """A NeoFOAM coupling node's exchange: the partner's op whose data it hands over.
 
-    The two sides attached to one coupling (``loop.sides``) are partners; the coupling names
-    their ops ``receive_<label>`` / ``send_<label>``, the label being the field they wrap as
-    the driver sees it (``a.x``; ``label``, else the side's ``field``). The data is named after
-    the field without its region.
+    The node's function (a ``CouplingNode``) names its coupling and the index of its side;
+    the coupling's other side is the partner, and ``op`` the op its own node runs before.
+    ``None`` for any other op, and for a coupling that lacks its partner.
     """
-    sides = getattr(loop, "sides", None)
-    if not isinstance(sides, list) or len(sides) != 2:
-        return []
-    fields = [str(getattr(side, "label", None) or getattr(side, "field", "")) for side in sides]
-    return [(f"send_{fields[i]}", f"receive_{fields[1 - i]}", fields[i].rsplit(".", 1)[-1])
-            for i in range(2)]
+    sides = getattr(getattr(func, "coupling", None), "sides", None)
+    index = getattr(func, "index", None)
+    if not isinstance(sides, list) or len(sides) != 2 or index not in (0, 1):
+        return None
+    side, partner = sides[index], sides[1 - index]
+    source = getattr(partner, "op", None)
+    if not source:
+        return None
+    return Exchange(str(source), tuple(str(name) for name in getattr(side, "kinds", {}) or ()),
+                    getattr(partner, "region", None))
 
 
 def _turb_corr_gate(func: Any) -> Optional[tuple[Any, str]]:

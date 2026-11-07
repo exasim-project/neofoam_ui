@@ -35,9 +35,7 @@ class _DagPane(BasePane):
         #: Visited nodes, applied to the state at the next push.
         self._visited: list[str] = []
         self._visited_dirty = False
-        #: Default-collapsed loops (nested coupling loops) the user opened, and the loops drawn
-        #: collapsed now (the user's ``collapsed`` plus the default ones, see :meth:`_collapsed`).
-        self._opened: set[str] = set()
+        #: The loops drawn collapsed now (the user's ``collapsed`` at the last rebuild).
         self._shown: frozenset[str] = frozenset()
         #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
         self.viewers = 0
@@ -57,7 +55,7 @@ class _DagPane(BasePane):
         s.bps = s.bps if isinstance(s.bps, list) else []
         s.collapsed = s.collapsed if isinstance(s.collapsed, list) else []
         s.loop_res = {}
-        self._opened, self._shown = set(), frozenset()
+        self._shown = frozenset()
         s.heat_on = bool(s.heat_on)
         s.heat = {}
         s.heat_ms = {}
@@ -153,8 +151,6 @@ class _DagPane(BasePane):
 
     def _on_paused(self, msg: dict[str, Any]) -> None:
         s, ev = self.app.state, msg["event"]
-        if self._collapsed() != self._shown:  # the token entered or left a default-collapsed loop
-            self.rebuild(fit=False)
         self._refresh_heat()
         self._refresh_highlight()
         if s.follow and ev["node"]:
@@ -168,7 +164,7 @@ class _DagPane(BasePane):
         s = self.app.state
         s.tree = self.model.reindex(s.solver_name)
         s.regions = self.model.regions()
-        collapsed = self._shown = self._collapsed()
+        collapsed = self._shown = frozenset(s.collapsed or ())
         self.editor.graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed)
         if fit:
             self.editor.fit_view()
@@ -183,8 +179,6 @@ class _DagPane(BasePane):
             bps.append(node_id)
         self.app.state.bps = bps
         self.app.send({"cmd": "breakpoints", "ids": bps})
-        if self._collapsed() != self._shown:  # a breakpoint inside a default-collapsed loop opens it
-            self.rebuild(fit=False)
         self._refresh_bp_list()
         self._refresh_inspector()
 
@@ -205,25 +199,10 @@ class _DagPane(BasePane):
                                     {"nodes": [target], "duration": 250, "maxZoom": 1.0, "minZoom": 0.5,
                                      "padding": 1.2})
 
-    def _collapsed(self) -> frozenset[str]:
-        """The loops drawn collapsed: the user's, plus the nested coupling loops (collapsed by
-        default) unless the user opened one or the token or a breakpoint is inside it."""
-        s, m = self.app.state, self.model
-        inside = set(m.ancestors(s.cur_node))
-        for bp in s.bps or ():
-            inside.update(m.ancestors(bp))
-        default = m.nested_couplings() - self._opened - inside
-        return frozenset(s.collapsed or ()) | default
-
     def toggle_collapse(self, loop_id: str) -> None:
         collapsed = list(self.app.state.collapsed)
-        default = loop_id in self.model.nested_couplings()
         if loop_id in collapsed:
             collapsed.remove(loop_id)
-        elif default and loop_id in self._shown:
-            self._opened.add(loop_id)
-        elif default and loop_id in self._opened:
-            self._opened.discard(loop_id)
         else:
             collapsed.append(loop_id)
         self.app.state.collapsed = collapsed

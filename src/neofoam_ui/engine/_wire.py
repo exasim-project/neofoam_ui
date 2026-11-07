@@ -28,8 +28,9 @@ def _op_dict(op: Op) -> dict[str, Any]:
     }
     if op.region is not None:  # optional: only a multi-region solver's ops carry it
         out["region"] = op.region
-    if op.couples:  # optional: only coupling loops
-        out["couples"] = [list(c) for c in op.couples]
+    if op.exchange is not None:  # optional: only coupling nodes
+        out["exchange"] = {"source": op.exchange.source, "data": list(op.exchange.data),
+                           "partner": op.exchange.partner}
     return out
 
 
