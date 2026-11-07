@@ -26,7 +26,8 @@ from neofoam_ui.engine._protocols import (
     ViewFieldProvider,
 )
 from neofoam_ui.engine._regions import DEFAULT_REGION
-from neofoam_ui.engine._session import Mode, Session
+from neofoam_ui.engine._session import Session
+from neofoam_ui.engine._stepping import Mode
 from neofoam_ui.engine._tracking import UNTRACKED
 from neofoam_ui.engine._threaded import ThreadedProgram
 

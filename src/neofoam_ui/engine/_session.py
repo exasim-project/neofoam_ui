@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import time
 import traceback
-from typing import Any, Callable, Iterator, Literal, Optional
+from typing import Any, Callable, Iterator, Optional
 
 
 from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
 from neofoam_ui.engine._fieldview import _FieldView
 from neofoam_ui.engine._protocols import Peers, RenderBackend, ResultObserver, SelfDrivingSolver, Solver
+from neofoam_ui.engine._stepping import _free_run, _until, Mode
 from neofoam_ui.engine._stats import _field_stats, _merge, _rows
 from neofoam_ui.engine._threaded import ThreadedProgram
 from neofoam_ui.engine._tracking import _Tracker
@@ -41,10 +42,6 @@ from neofoam_ui.engine._wire import _init_dict, _op_dict
 __all__ = ()
 
 
-#: Commands that advance the engine; ``None`` = until breakpoint / end / pause.
-Mode = Literal["into", "over", "out", "time_step", "skip_init", "run", "run_to"]
-#: Free runs: a self-driving solver passes the events they would not stop at on its own thread.
-_FREE_MODES = ("run", "run_to", "time_step", "skip_init")
 #: Seconds between two ``running`` messages of a free run without delay (the DAG's token).
 _RUNNING_EVERY = 0.1
 
@@ -219,7 +216,7 @@ class Session:
         """Execute the current event, then keep going until ``mode`` says stop.
 
         Only the single steps (into, over, out; or ``track``) checksum the fields after each
-        action to see what it wrote; a free run (:meth:`_free_run`) leaves its writes
+        action to see what it wrote; a free run (:func:`~neofoam_ui.engine._stepping._free_run`) leaves its writes
         :data:`UNTRACKED`.
         ``run_to`` is a single step while its target is near: it stops tracking at the
         second time step it starts.
@@ -227,9 +224,9 @@ class Session:
         if self.finished:
             return
         start = self.event
-        until = self._until(mode, start, target)
+        until = _until(mode, start, target)
         self.pause_requested = False
-        free = self._free_run(mode, start)
+        free = _free_run(mode, start)
         self._begin(not free or mode == "run_to" if track is None else track)
         self._arm(mode if free else None, target)
         steps = 0
@@ -265,11 +262,6 @@ class Session:
                 self._running(ev)
         self._paused()
 
-    @staticmethod
-    def _free_run(mode: Mode, start: Event) -> bool:
-        """Run, run to, next time step, skip init — and stepping over the time loop (to the end)."""
-        return mode in _FREE_MODES or (mode == "over" and start.kind == "test" and start.depth == 0)
-
     def _arm(self, mode: Optional[Mode], target: Optional[str]) -> None:
         """A free run lets the solver thread pass the events it would not stop at (:meth:`set_free`).
 
@@ -301,7 +293,7 @@ class Session:
         if params is None:
             thread.skip = None
             return
-        until = self._until(params["mode"], self.event, params.get("target"))
+        until = _until(params["mode"], self.event, params.get("target"))
         bps = frozenset(params["bps"])
         alone = self.peers is None and not self.follower  # no other ranks to keep in step
 
@@ -336,32 +328,6 @@ class Session:
         if now - self._running_at >= _RUNNING_EVERY:
             self._running_at = now
             self.emit({"type": "running", "event": ev.to_dict()})
-
-    @staticmethod
-    def _until(mode: Mode, start: Event, target: Optional[str]) -> Callable[[Event], bool]:
-        d = start.depth
-        if mode == "into":
-            return lambda ev: True
-        if mode == "over":
-            if start.kind == "test":
-                # Run the whole loop: stop at the first event after it.
-                return lambda ev: ev.depth <= d and not (ev.kind == "test" and ev.node == start.node)
-            return lambda ev: True
-        if mode == "out":
-            if start.kind == "init":  # out of the initialization activity
-                return lambda ev: ev.kind != "init"
-            if d == 0:  # out of the top-level activity = run to the end
-                return lambda ev: False
-            return lambda ev: ev.depth < d
-        if mode == "time_step":
-            return lambda ev: ev.kind == "test" and ev.depth == 0
-        if mode == "skip_init":
-            return lambda ev: ev.kind != "init"
-        if mode == "run_to":
-            return lambda ev: ev.node == target
-        if mode == "run":
-            return lambda ev: False
-        raise ValueError(f"unknown step mode {mode!r}")
 
     # -- reporting -----------------------------------------------------------------
 

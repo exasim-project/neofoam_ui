@@ -37,7 +37,7 @@ solver rank r                                                  UI (trame)
 
 ## 2. UI
 
-- **Plots** (toolbar, next to Field/Pipeline; `plotview.py`, trame-plotly — plotly.js is
+- **Plots** (toolbar, next to Field/Pipeline; `_ui/panes/_plots.py`, trame-plotly — plotly.js is
   bundled, no network): one chart per declared table, in declaration order. One line per value
   column (a vector: `_0/_1/_2`); several rows per step (bins, residual labels) → one line per row
   and column, capped at 12, with a note. NeoFOAM's `GREAT` (±1e15, empty bin) is a gap. History:

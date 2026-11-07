@@ -44,7 +44,7 @@ solver rank r (worker)                                 UI (trame)
 - Another pipeline: `NEOFOAM_UI_CATALYST_SCRIPT=<file>` (a Catalyst-v2 script, channel `grid`,
   parameters `field=…` and `component=mag|0|1|2` via `info.catalyst_params`).
 
-- **Post-processing diagram** (toolbar *Pipeline*, `pipelineview.py`): after each execute rank 0
+- **Post-processing diagram** (toolbar *Pipeline*, `_ui/panes/_pipeline.py`): after each execute rank 0
   reads the live ParaView pipeline back (`InSitu.describe` → `catalyst.describe_pipeline`:
   `GetSources()` and their input properties, `GetViews()` and visible representations,
   `GetExtractors()` and their producers). Nodes carry kind, name, type and a few settings
@@ -52,7 +52,7 @@ solver rank r (worker)                                 UI (trame)
   extractors file pattern and trigger). The frame carries `pipeline` when it changed and
   `pipeline_ms` always: the whole execute plus per node from the second execute on (Start/End
   observers on rank 0's algorithms and render windows; displays and extractors are not timed
-  separately). `layout.build_pipeline_flow` draws it in a second VueFlow editor, layered by
+  separately). `_ui/_layout/_pipeline.py` draws it in a second VueFlow editor, layered by
   data flow. Opening the pane also turns rendering on; any `NEOFOAM_UI_CATALYST_SCRIPT` pipeline
   shows as itself.
 
