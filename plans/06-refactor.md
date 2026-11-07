@@ -186,7 +186,38 @@ Add an `@_command("name")` handler in `worker/_commands.py`, plus the name in
 - **Lazy native imports.** Catalyst, ParaView, neofoam and pybFoam are imported only inside
   functions.
 
-## 5. Not done (later)
+## 5. Verification
+
+Every commit passed `pixi run pytest -q` and `pixi run ruff check src tests scripts`. The
+final state also passed:
+
+- **pixi suite:** 132 passed, 13 skipped.
+- **Opt-in suite:** run in the NeoFOAM venv with `NEOFOAM_UI_CATALYST` set and the
+  execution-observer NeoFOAM (tree and observed modes, real Catalyst, `mpirun -np 2`):
+  100 passed.
+- **Browser check (Playwright):** an `NP=2` pitzDaily run with Catalyst. Checked: every pane
+  (DAG, Field, Pipeline, Plots); picking a second table to plot; closing and reopening the
+  DAG pane; a Run to the end; and a restart, after which the chosen tables and the open panes
+  were kept. The only console error is a `405` on `POST /paraview/`, which the trame client
+  causes and which 013ca69 shows as well.
+
+`scripts/bench_overhead.sh`, `run` in seconds, best of 3, observed mode. "Before" is 013ca69
+(through `--src`), "after" is this refactor:
+
+| mode | np 1 before | np 1 after | np 2 before | np 2 after |
+|---|---:|---:|---:|---:|
+| plain | 4.21 | 4.21 | 2.76 | 2.78 |
+| dag-off | 4.29 | 4.28 | 2.81 | 2.82 |
+| ui | 4.30 | 4.29 | 2.83 | 2.82 |
+| field | 5.70 | 5.71 | 3.83 | 3.82 |
+| plots | 4.30 | 4.29 | 2.82 | 2.82 |
+| ui-wait | 4.34 | 4.32 | 2.86 | 2.85 |
+| field-wait | 5.77 | 5.76 | 3.87 | 3.87 |
+| plots-wait | 4.33 | 4.32 | 2.87 | 2.87 |
+
+Every difference is within the ±0.02 s spread, and the numbers match plan 05.
+
+## 6. Not done (later)
 
 - Multi-region rendering (region choice in the UI, a channel per region): see §3.
 - `pipelines/view.py`'s globals are not underscored. They are a ParaView script's names, and
