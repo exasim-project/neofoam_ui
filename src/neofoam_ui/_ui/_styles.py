@@ -108,6 +108,9 @@ _CSS = r"""
 .nf-box-head { position: absolute; left: 10px; top: 4px; font-size: 12px; font-weight: 600;
   display: inline-flex; align-items: center; gap: 5px; }
 .vue-flow__node-region { z-index: 0 !important; pointer-events: none; }
+.nf-loop.control { background: #f3f6ff; border-radius: 12px; }
+.nf-loop.control .nf-loop-title { right: 10px; white-space: normal; line-height: 1.35; }
+.nf-loop.control .nf-loop-test { top: 30px; left: 10px; }
 .nf-action.cpl { border-style: dashed; border-color: #6741d9; background: #f4f0ff; }
 .nf-cpl { position: absolute; top: -9px; right: 10px; font-size: 10px; background: #6741d9; color: #fff;
   border-radius: 8px; padding: 0 6px; line-height: 16px; white-space: nowrap; }

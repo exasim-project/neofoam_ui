@@ -110,30 +110,51 @@ def _flow(ops, **kw):
     return build_flow([], [op_dict(o) for o in ops], **kw)
 
 
-def test_a_coupling_loop_draws_a_box_per_region_connected_through_its_coupling_nodes():
-    flow = _flow([_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])])
-    nodes = {n["id"]: n for n in flow["nodes"]}
+def _box(nodes, prefix, i):
+    n = nodes[f"{prefix}::box{i}"]
+    return n["position"]["x"], n["position"]["y"], n["width"], n["height"]
 
-    assert [nodes[f"loop::box{i}"]["data"]["label"] for i in (0, 1)] == ["a", "b"]
-    assert nodes["loop::box0"]["type"] == "region"
-    a, b = nodes["loop/a.solve"]["position"], nodes["loop/b.solve"]["position"]
-    assert a["y"] == b["y"] and a["x"] < b["x"]  # side by side
-    assert nodes["loop/couple_a.x"]["data"]["exchange"] == "x ← b"
+
+def test_a_coupling_loop_draws_free_region_boxes_with_coupling_nodes_in_the_gap():
+    from neofoam_ui.engine import Op  # noqa: PLC0415
+
+    loop = _coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])
+    flow = _flow([Op("time", "loop", lambda ctx: False, [Op("set_time_step", "action", lambda ctx: None), loop])])
+    nodes = {n["id"]: n for n in flow["nodes"]}
+    p = "time/loop"
+
+    # the boxes and every op of the body hang off the loop's parent, not the loop
+    assert nodes[f"{p}::box0"]["type"] == "region"
+    assert [nodes[f"{p}::box{i}"]["data"]["label"] for i in (0, 1)] == ["a", "b"]
+    assert {nodes[i]["parentNode"] for i in (f"{p}::box0", f"{p}::box1", f"{p}/couple_a.x", f"{p}/b.solve")} == {"time"}
+    # the loop itself is a compact control node with its test
+    assert nodes[p]["data"]["control"] and nodes[f"{p}::test"]["parentNode"] == p
+    # coupling nodes sit in the gap, outside both boxes
+    ax, _, aw, _ = _box(nodes, p, 0)
+    bx, _, _, _ = _box(nodes, p, 1)
+    for name in ("couple_a.x", "couple_b.x"):
+        x = nodes[f"{p}/{name}"]["position"]["x"]
+        assert ax + aw < x and x + nodes[f"{p}/{name}"]["width"] < bx
+    # serial order top to bottom: a's row, then b's; a coupling node beside the op it feeds
+    assert nodes[f"{p}/a.solve"]["position"]["y"] < nodes[f"{p}/b.solve"]["position"]["y"]
+    assert nodes[f"{p}/couple_a.x"]["position"]["y"] == nodes[f"{p}/a.solve"]["position"]["y"]
+    # the driver's op above, the body below the control node
+    assert nodes["time/set_time_step"]["position"]["y"] < nodes[p]["position"]["y"] < _box(nodes, p, 0)[1]
     pairs = {(e["source"], e["target"]): e for e in flow["edges"]}
-    # into a coupling node: from the partner's op; out of it: to its own op
-    exchange = {k for k, e in pairs.items() if e.get("class") == "nf-couple"}
-    assert exchange == {("loop/b.solve", "loop/couple_a.x"), ("loop/a.solve", "loop/couple_b.x")}
-    assert pairs[("loop/a.solve", "loop/couple_b.x")]["sourceHandle"] == "r"
-    assert pairs[("loop/b.solve", "loop/couple_a.x")]["targetHandle"] == "rt"
-    assert pairs[("loop/b.solve", "loop/couple_a.x")]["label"] == "x"
-    assert ("loop/couple_a.x", "loop/a.solve") in pairs and ("loop/couple_b.x", "loop/b.solve") in pairs
-    # the boxes are connected only through the coupling nodes
-    region = {f"loop/{name}": name[-3] if name.startswith("couple") else name[0]
-              for name in ("couple_a.x", "a.solve", "couple_b.x", "b.solve")}
-    assert not [k for k, e in pairs.items() if e.get("class") != "nf-couple"
-                and k[0] in region and k[1] in region and region[k[0]] != region[k[1]]]
-    # the loop's test leads into the first box, the last box back to it
-    assert ("loop::test", "loop/couple_a.x") in pairs and ("loop/b.solve", "loop::test") in pairs
+    data = {k for k, e in pairs.items() if e.get("class") == "nf-couple"}
+    feed = {k for k, e in pairs.items() if e.get("class") == "nf-feed"}
+    assert data == {(f"{p}/b.solve", f"{p}/couple_a.x"), (f"{p}/a.solve", f"{p}/couple_b.x")}
+    assert feed == {(f"{p}/couple_a.x", f"{p}/a.solve"), (f"{p}/couple_b.x", f"{p}/b.solve")}
+    assert pairs[(f"{p}/b.solve", f"{p}/couple_a.x")]["label"] == "x"
+    assert (pairs[(f"{p}/a.solve", f"{p}/couple_b.x")]["sourceHandle"],
+            pairs[(f"{p}/a.solve", f"{p}/couple_b.x")]["targetHandle"]) == ("r", "lt")
+    assert (pairs[(f"{p}/couple_a.x", f"{p}/a.solve")]["sourceHandle"],
+            pairs[(f"{p}/couple_a.x", f"{p}/a.solve")]["targetHandle"]) == ("ls", "rt")
+    # a coupling node is joined to the boxes only by those lines; the loop's test into the
+    # first op, the last op back to it
+    body = {f"{p}/{n}" for n in ("couple_a.x", "a.solve", "couple_b.x", "b.solve")}
+    assert {k for k in pairs if k[0] in body and k[1] in body} == data | feed
+    assert (f"{p}::test", f"{p}/couple_a.x") in pairs and (f"{p}/b.solve", f"{p}::test") in pairs
 
 
 def test_a_loop_without_coupling_nodes_has_no_region_boxes():
@@ -145,6 +166,7 @@ def test_a_loop_without_coupling_nodes_has_no_region_boxes():
 
     assert not [n for n in flow["nodes"] if n["type"] == "region"]
     assert not [e for e in flow["edges"] if e.get("class") == "nf-couple"]
+    assert not [n for n in flow["nodes"] if n["data"].get("control")]
 
 
 def test_a_nested_coupling_loop_sits_in_the_box_it_continues():
@@ -161,18 +183,13 @@ def test_a_nested_coupling_loop_sits_in_the_box_it_continues():
     nodes = {n["id"]: n for n in flow["nodes"]}
 
     assert [nodes[f"outer::box{i}"]["data"]["label"] for i in (0, 1)] == ["b, a", "c"]
-    exchange = {(e["source"], e["target"]) for e in flow["edges"] if e.get("class") == "nf-couple"}
-    # the outer loop's own coupling nodes take the partner's op of the outer loop (a loop for c)
-    assert exchange == {("outer/c.solve", "outer/couple_b.x"), ("outer/inner", "outer/couple_c.x"),
-                        ("outer/inner/b.solve", "outer/inner/couple_a.x"),
-                        ("outer/inner/a.solve", "outer/inner/couple_b.x")}
-
-
-def test_the_labels_of_two_crossing_exchange_edges_do_not_overlap():
-    flow = _flow([_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])])
-
-    labels = [e["labelStyle"]["transform"] for e in flow["edges"] if e.get("class") == "nf-couple"]
-    assert len(labels) == 2 and labels[0] != labels[1]
+    assert [nodes[f"outer/inner::box{i}"]["data"]["label"] for i in (0, 1)] == ["a", "b"]
+    edges = {(e["source"], e["target"], e.get("class")) for e in flow["edges"]}
+    # the outer coupling nodes: c's data into b's, the inner loop's (b's) into c's; each feeds its op
+    assert {("outer/c.solve", "outer/couple_b.x", "nf-couple"), ("outer/couple_b.x", "outer/inner", "nf-feed"),
+            ("outer/inner", "outer/couple_c.x", "nf-couple"), ("outer/couple_c.x", "outer/c.solve", "nf-feed"),
+            ("outer/inner/b.solve", "outer/inner/couple_a.x", "nf-couple"),
+            ("outer/inner/a.solve", "outer/inner/couple_b.x", "nf-couple")} <= edges
 
 
 def test_a_collapsed_loop_hides_the_exchange_into_it():

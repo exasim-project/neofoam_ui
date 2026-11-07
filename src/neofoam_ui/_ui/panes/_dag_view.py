@@ -42,7 +42,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
                 Handle(position="right", type="source", id="r")
-                # the data exchange of a coupling loop, between region boxes
+                # the lines of a coupling node, in the gap between region boxes
                 Handle(position="left", type="source", id="ls")
                 Handle(position="left", type="target", id="lt")
                 Handle(position="right", type="target", id="rt")
@@ -72,14 +72,16 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
         with CustomNode("loop"):
             with html.Div(classes=(
                 "['nf-node', 'nf-loop', { active: active_loops.includes(props.id),"
-                " collapsed: props.data.collapsed, sel: props.data.collapsed && props.id === selected,"
+                " control: props.data.control, collapsed: props.data.collapsed, sel: props.data.collapsed && props.id === selected,"
                 " hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]",
             ), style=("props.data.collapsed ? " + _HEAT + " : ''",)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
-                # a loop of a region box sends that region's data to a coupling node
+                # a loop in a region box: its data goes to a coupling node, which may feed it
                 Handle(position="right", type="source", id="r")
                 Handle(position="left", type="source", id="ls")
+                Handle(position="left", type="target", id="lt")
+                Handle(position="right", type="target", id="rt")
                 with html.Div(classes="nf-loop-title"):
                     html.Span("{{ props.data.collapsed ? '▸' : '▾' }}", classes="nf-tog",
                               title="collapse / expand",
@@ -219,5 +221,5 @@ def _drawer(drawer: Any) -> None:
         html.Div("▾ / ▸ on a loop: collapse / expand its body")
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
         html.Div("stripe colour: the op's region (multi-region), else its model", v_if="regions.length")
-        html.Div("coupling loop: a box per region; ⇄ coupling node: takes the partner's data "
-                 "(dashed, partner's colour) and hands it to the op below it", v_if="regions.length")
+        html.Div("coupling loop: a box per region; ⇄ coupling nodes in the gaps take the partner's "
+                 "data (dashed, partner's colour) and feed the op beside them", v_if="regions.length")
