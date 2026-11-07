@@ -28,29 +28,24 @@ from __future__ import annotations
 import json
 import time
 import traceback
-import zlib
 from typing import Any, Callable, Iterator, Literal, Optional
 
 import numpy as np
 
 from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
 from neofoam_ui.engine._protocols import Solver
+from neofoam_ui.engine._stats import _field_stats, _merge, _rows
 from neofoam_ui.engine._threaded import ThreadedProgram
+from neofoam_ui.engine._tracking import _fingerprint, _Tracker
 from neofoam_ui.engine._wire import _init_dict, _op_dict
 
 __all__ = ()
-
-
-def _fingerprint(arr: np.ndarray) -> int:
-    return zlib.crc32(np.ascontiguousarray(arr).tobytes())
 
 
 #: Commands that advance the engine; ``None`` = until breakpoint / end / pause.
 Mode = Literal["into", "over", "out", "time_step", "skip_init", "run", "run_to"]
 #: Free runs: a self-driving solver passes the events they would not stop at on its own thread.
 _FREE_MODES = ("run", "run_to", "time_step", "skip_init")
-#: ``written_by`` of a field changed by a free run (its writer was not tracked).
-UNTRACKED = "not tracked while running"
 #: Seconds between two ``running`` messages of a free run without delay (the DAG's token).
 _RUNNING_EVERY = 0.1
 #: Seconds after which a live frame reads the ParaView pipeline back again (colour range etc.).
@@ -80,9 +75,6 @@ class Session:
         self.barrier: Optional[Callable[[], None]] = None
         #: The current advance is a single step (tracks writes, logs every event).
         self.stepping = True
-        #: A free run changed fields without tracking: their writer is :data:`UNTRACKED`.
-        self._untracked = False
-        self._prints_stale = False
         self._running_at = 0.0
         #: MPI rank 0: hands the free-run parameters (:meth:`set_free`) to the other ranks.
         self.on_resume: Optional[Callable[[Optional[dict[str, Any]]], None]] = None
@@ -92,15 +84,8 @@ class Session:
         self.ctx: Any = None
         self.ops: list[Op] = []
         self.results: dict[str, Any] = {}
-        self.calls: dict[str, int] = {}
-        self.last_ms: dict[str, float] = {}
-        #: Summed time per node over the whole run (timing heat map).
-        self.total_ms: dict[str, float] = {}
-        #: Fields each action was seen to change (a field fingerprint differed afterwards).
-        self.writes_seen: dict[str, set[str]] = {}
-        self.last_written_by: dict[str, str] = {}
-        self.last_writes: list[str] = []
-        self._prints: dict[str, int] = {}
+        #: Timing, call counts and the fields each action wrote.
+        self.tracker = _Tracker(solver.fields)
         #: The thread a self-driving solver runs on (set by its program), see :meth:`in_solver_thread`.
         self.program_thread: Optional[ThreadedProgram] = None
         #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
@@ -146,7 +131,7 @@ class Session:
     def _program(self) -> Iterator[Event]:
         for step in self.init:
             yield Event("init", step.id)
-            self._timed(step.id, lambda: self.results.__setitem__(step.name, step.func(self.results)))
+            self.tracker.timed(step.id, lambda: self.results.__setitem__(step.name, step.func(self.results)))
             self.observe_result(self.results[step.name])
             self._log("init", step.id, step.name)
         self.set_context(self.solver.create_context(self.results))
@@ -156,12 +141,15 @@ class Session:
 
     # -- used by self-driving programs too ------------------------------------------
 
+    # The tracker's books, read by the reports and the tests.
+    calls = property(lambda self: self.tracker.calls)
+    last_ms = property(lambda self: self.tracker.last_ms)
+    total_ms = property(lambda self: self.tracker.total_ms)
+    writes_seen = property(lambda self: self.tracker.writes_seen)
+
     def set_context(self, ctx: Any) -> None:
         self.ctx = ctx
-        if self.stepping:
-            self._prints = self._field_prints()
-        else:
-            self._prints_stale = True
+        self.tracker.new_context(ctx, self.stepping)
 
     def set_ops(self, ops: list[Op]) -> None:
         self.ops = ops
@@ -187,7 +175,7 @@ class Session:
 
     def record(self, kind: str, node: str, name: str, ms: float, **extra: Any) -> None:
         """Book-keeping after an event ran: timing, call count, written fields, log line."""
-        self._count(node, ms)
+        self.tracker.count(node, ms)
         if kind == "exec":
             self._track_writes(node, name)
         self._log(kind, node, name, **extra)
@@ -196,7 +184,7 @@ class Session:
         for op in ops:
             if op.kind == "action":
                 yield Event("exec", op.id, depth, stack=stack)
-                self._timed(op.id, lambda: op.func(self.ctx))
+                self.tracker.timed(op.id, lambda: op.func(self.ctx))
                 self._track_writes(op.id, op.name)
                 self._log("exec", op.id, op.name, stack=stack)
                 continue
@@ -204,36 +192,15 @@ class Session:
             while True:
                 i += 1
                 yield Event("test", op.id, depth, iter=i, stack=stack)
-                result = bool(self._timed(op.id, lambda: op.func(self.ctx)))
+                result = bool(self.tracker.timed(op.id, lambda: op.func(self.ctx)))
                 self._log("test", op.id, op.name, stack=stack, iter=i, result=result)
                 if not result:
                     break
                 yield from self._walk(op.children, depth + 1, stack + ((op.id, i),))
 
-    def _timed(self, node: str, fn: Callable[[], Any]) -> Any:
-        t0 = time.perf_counter()
-        out = fn()
-        self._count(node, (time.perf_counter() - t0) * 1e3)
-        return out
-
-    def _count(self, node: str, ms: float) -> None:
-        self.last_ms[node] = ms
-        self.total_ms[node] = self.total_ms.get(node, 0.0) + ms
-        self.calls[node] = self.calls.get(node, 0) + 1
-
-    def _field_prints(self) -> dict[str, int]:
-        return {k: _fingerprint(v) for k, v in self.solver.fields(self.ctx).items()}
-
     def _track_writes(self, node: str, op_name: str) -> None:
-        if not self.stepping:  # a free run: no checksums, see advance()
-            return
-        now = self._field_prints()
-        self.last_writes = [k for k, v in now.items() if self._prints.get(k) != v]
-        for k in self.last_writes:
-            self.last_written_by[k] = op_name
-        if self.last_writes:
-            self.writes_seen.setdefault(node, set()).update(self.last_writes)
-        self._prints = now
+        if self.stepping:  # a free run: no checksums, see advance()
+            self.tracker.track_writes(self.ctx, node, op_name)
 
     def _log(self, kind: str, node: str, name: str, **extra: Any) -> None:
         if not (self.stepping or self.watch):  # a free run nobody watches
@@ -245,7 +212,7 @@ class Session:
                 "kind": kind,
                 "node": node,
                 "name": name,
-                "ms": round(self.last_ms.get(node, 0.0), 3),
+                "ms": round(self.tracker.last_ms.get(node, 0.0), 3),
                 "stack": [list(s) for s in stack],
                 "time": self.solver.scalars(self.ctx).get("time") if self.ctx is not None else None,
                 **extra,
@@ -359,14 +326,10 @@ class Session:
     def _begin(self, stepping: bool) -> None:
         """Start tracking writes (fresh checksums after a free run), or stop for a free run."""
         self.stepping = stepping
-        if not stepping:
-            self._prints_stale = True
-            self._untracked = True
-            self.last_writes = []
-            self.last_written_by.clear()  # stale: the run will overwrite fields untracked
-        elif self._prints_stale and self.ctx is not None:
-            self._prints = self._field_prints()
-            self._prints_stale = False
+        if stepping:
+            self.tracker.start(self.ctx)
+        else:
+            self.tracker.stop()
 
     def _running(self, ev: Event) -> None:
         """The DAG's token while running: every event with a delay, else a few times a second."""
@@ -421,57 +384,16 @@ class Session:
 
     def field_stats(self) -> dict[str, dict[str, Any]]:
         """Per field: min / max / sum / cell count and who last wrote it (mergeable across ranks)."""
-        stats: dict[str, dict[str, Any]] = {}
         if self.ctx is None:
-            return stats
-        for name, arr in self.solver.fields(self.ctx).items():
-            a = np.asarray(arr, dtype=float)
-            label = name
-            if a.ndim == 2:  # vector/tensor field: summarise the magnitude
-                a = np.linalg.norm(a, axis=1)
-                label = f"|{name}|"
-            stats[name] = {
-                "label": label,
-                "min": float(a.min()) if a.size else None,
-                "max": float(a.max()) if a.size else None,
-                "sum": float(a.sum()),
-                "n": int(a.size),
-                "written_by": self.last_written_by.get(name, UNTRACKED if self._untracked else "init"),
-                "changed": name in self.last_writes,
-            }
-        return stats
+            return {}
+        return _field_stats(self.solver.fields(self.ctx), self.tracker)
 
     def summary(self) -> dict[str, Any]:
         if self.ctx is None:
             return {"scalars": {}, "fields": [], "init_done": sorted(self.results)}
-        stats = self.field_stats()
         # The other MPI ranks; not after a failure, they may be stuck in a collective.
-        for other in self.gather() if self.gather and not self.failed else ():
-            for name, theirs in other.items():
-                if name not in stats:
-                    stats[name] = dict(theirs)
-                    continue
-                mine = stats[name]
-                values = [v for v in (mine["min"], theirs["min"]) if v is not None]
-                mine["min"] = min(values) if values else None
-                values = [v for v in (mine["max"], theirs["max"]) if v is not None]
-                mine["max"] = max(values) if values else None
-                mine["sum"] += theirs["sum"]
-                mine["n"] += theirs["n"]
-                mine["changed"] = mine["changed"] or theirs["changed"]
-        rows = [
-            {
-                "field": name,
-                "name": st["label"],
-                "min": st["min"] if st["min"] is not None else float("nan"),
-                "max": st["max"] if st["max"] is not None else float("nan"),
-                "mean": st["sum"] / st["n"] if st["n"] else float("nan"),
-                "written_by": st["written_by"],
-                "changed": st["changed"],
-            }
-            for name, st in stats.items()
-        ]
-        return {"scalars": self.solver.scalars(self.ctx), "fields": rows,
+        others = self.gather() if self.gather and not self.failed else ()
+        return {"scalars": self.solver.scalars(self.ctx), "fields": _rows(_merge(self.field_stats(), others)),
                 "init_done": sorted(self.results)}
 
     # -- field view (in situ, Catalyst 2) -------------------------------------------------
@@ -632,6 +554,7 @@ class Session:
 
     def _paused(self) -> None:
         self.send_view()
+        t = self.tracker
         self.emit(
             {
                 "type": "paused",
@@ -639,9 +562,9 @@ class Session:
                 "finished": self.finished,
                 "failed": self.failed,
                 "summary": self.summary(),
-                "calls": self.calls,
-                "last_ms": {k: round(v, 3) for k, v in self.last_ms.items()},
-                "total_ms": {k: round(v, 3) for k, v in self.total_ms.items()},
-                "writes_seen": {k: sorted(v) for k, v in self.writes_seen.items()},
+                "calls": t.calls,
+                "last_ms": {k: round(v, 3) for k, v in t.last_ms.items()},
+                "total_ms": {k: round(v, 3) for k, v in t.total_ms.items()},
+                "writes_seen": {k: sorted(v) for k, v in t.writes_seen.items()},
             }
         )

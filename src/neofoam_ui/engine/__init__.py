@@ -9,7 +9,8 @@
 
 from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
 from neofoam_ui.engine._protocols import Solver
-from neofoam_ui.engine._session import UNTRACKED, Mode, Session
+from neofoam_ui.engine._session import Mode, Session
+from neofoam_ui.engine._tracking import UNTRACKED
 from neofoam_ui.engine._threaded import ThreadedProgram
 
 __all__ = [
