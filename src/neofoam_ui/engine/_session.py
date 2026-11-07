@@ -25,18 +25,17 @@ the open panes' own data (frames at their interval, post-processing rows).
 
 from __future__ import annotations
 
-import json
 import time
 import traceback
 from typing import Any, Callable, Iterator, Literal, Optional
 
-import numpy as np
 
 from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
-from neofoam_ui.engine._protocols import Solver
+from neofoam_ui.engine._fieldview import _FieldView
+from neofoam_ui.engine._protocols import RenderBackend, ResultObserver, SelfDrivingSolver, Solver
 from neofoam_ui.engine._stats import _field_stats, _merge, _rows
 from neofoam_ui.engine._threaded import ThreadedProgram
-from neofoam_ui.engine._tracking import _fingerprint, _Tracker
+from neofoam_ui.engine._tracking import _Tracker
 from neofoam_ui.engine._wire import _init_dict, _op_dict
 
 __all__ = ()
@@ -48,8 +47,6 @@ Mode = Literal["into", "over", "out", "time_step", "skip_init", "run", "run_to"]
 _FREE_MODES = ("run", "run_to", "time_step", "skip_init")
 #: Seconds between two ``running`` messages of a free run without delay (the DAG's token).
 _RUNNING_EVERY = 0.1
-#: Seconds after which a live frame reads the ParaView pipeline back again (colour range etc.).
-_DESCRIBE_EVERY = 5.0
 
 
 class Session:
@@ -60,7 +57,8 @@ class Session:
     collect them in a list.
     """
 
-    def __init__(self, solver: Solver, emit: Callable[[dict[str, Any]], None]) -> None:
+    def __init__(self, solver: Solver, emit: Callable[[dict[str, Any]], None],
+                 renderer: Optional[RenderBackend] = None) -> None:
         self.solver = solver
         self.emit = emit
         self.breakpoints: set[str] = set()
@@ -86,39 +84,24 @@ class Session:
         self.results: dict[str, Any] = {}
         #: Timing, call counts and the fields each action wrote.
         self.tracker = _Tracker(solver.fields)
+        self._observe = solver.observe if isinstance(solver, ResultObserver) else None
         #: The thread a self-driving solver runs on (set by its program), see :meth:`in_solver_thread`.
         self.program_thread: Optional[ThreadedProgram] = None
         #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
         self.gather: Optional[Callable[[], list[dict[str, dict[str, Any]]]]] = None
-        #: Field view: ``(field, component)`` to render at every pause, ``None`` = view closed.
-        #: Replaced as a whole (:meth:`request_view`), so another thread may set it while running.
-        self.view: Optional[tuple[Optional[str], str]] = None
-        #: Counts closings of the view: a reopened view renders again even if nothing changed.
-        self._view_epoch = 0
         #: Rank 0 under MPI: makes the other ranks render the same frame (set by the worker).
         self.on_render: Optional[Callable[[dict[str, str]], None]] = None
-        #: Also render at time steps while running (not only at pauses): at most every
-        #: :attr:`frame_every` time steps and :attr:`frame_seconds` seconds apart.
+        #: Field view: also render at time steps while running (not only at pauses), at most
+        #: every :attr:`frame_every` time steps and :attr:`frame_seconds` seconds apart.
         self.live_view = True
         self.frame_every = 1
         self.frame_seconds = 0.5
-        self._steps_since_frame = 0
-        self._frame_at = 0.0
-        #: Rendered frames kept on disk (older PNGs of this session are deleted).
+        #: Rendered frames kept on disk (older images of this session are deleted).
         self.keep_frames = 20
-        self.insitu: Any = None  # neofoam_ui.catalyst.InSitu, started on the first frame
-        self._insitu_error: Optional[str] = None
-        self._geometry: Any = None  # None = not built yet, False = solver has no geometry
-        self._view_sent: Optional[tuple[Any, ...]] = None
-        #: The post-processing pipeline as Catalyst last ran it (:meth:`InSitu.describe`, rank 0).
-        self.pipeline: Optional[dict[str, Any]] = None
-        self._pipeline_sent: Optional[str] = None
-        self._describe_failed = False  # reported once, then no more diagrams
-        self._described: Optional[tuple[Any, float]] = None  # (params, when) of the last read-back
-        program = getattr(solver, "program", None)
-        if program is not None:  # the solver drives itself and fills self.init
+        self._view = _FieldView(self, renderer)
+        if isinstance(solver, SelfDrivingSolver):  # the solver drives itself and fills self.init
             self.init: list[InitStep] = []
-            self._gen = program(self)
+            self._gen = solver.program(self)
         else:
             self.init = topological_order(solver.init_steps())
             self._gen = self._program()
@@ -158,11 +141,10 @@ class Session:
 
     def observe_result(self, value: Any) -> None:
         """Offer an init-step result to the solver's optional ``observe(value, emit)``."""
-        hook = getattr(self.solver, "observe", None)
-        if hook is None:
+        if self._observe is None:
             return
         try:
-            hook(value, self.emit)
+            self._observe(value, self.emit)
         except Exception:  # noqa: BLE001 - an observer must not stop the run
             self.emit({"type": "stdout", "text": "observe: " + traceback.format_exc()})
 
@@ -266,7 +248,7 @@ class Session:
                 if mode == "run_to" and steps == 2 and track is None:
                     self._begin(False)  # a far target: a free run from here on
                 if self.live_view:
-                    self._live_frame()
+                    self._view.time_step()
                 if self.watch and self.wait_ui and self.barrier is not None:
                     self.barrier()
                 self._arm(mode if free else None, target)  # breakpoints / delay changed meanwhile
@@ -344,16 +326,6 @@ class Session:
             self._running_at = now
             self.emit({"type": "running", "event": ev.to_dict()})
 
-    def _live_frame(self) -> None:
-        """A frame at this time step if :attr:`frame_every` steps and :attr:`frame_seconds` passed."""
-        self._steps_since_frame += 1
-        if self.view is None or self._steps_since_frame < max(1, self.frame_every):
-            return
-        if time.monotonic() - self._frame_at < self.frame_seconds:
-            return
-        self._steps_since_frame = 0
-        self.send_view()
-
     @staticmethod
     def _until(mode: Mode, start: Event, target: Optional[str]) -> Callable[[Event], bool]:
         d = start.depth
@@ -396,161 +368,31 @@ class Session:
         return {"scalars": self.solver.scalars(self.ctx), "fields": _rows(_merge(self.field_stats(), others)),
                 "init_done": sorted(self.results)}
 
-    # -- field view (in situ, Catalyst 2) -------------------------------------------------
+    # -- field view (in situ, Catalyst 2 by default) ------------------------------------------
+
+    pipeline = property(lambda self: self._view.pipeline)
+    view = property(lambda self: self._view.view)
 
     def set_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
         """Open (``on``) or close the field view; renders the current frame right away."""
-        self.request_view(field, component, on)
-        self.send_view()
+        self._view.request(field, component, on)
+        self._view.send()
 
     def request_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
         """Open or close the field view from any thread; the next frame (live or pause) shows it."""
-        if not on:
-            self._view_epoch += 1  # before the swap: whoever sees the new view sees the new epoch
-        self.view = (field, component) if on else None
-
-    def _cell_fields(self) -> Optional[tuple[dict[str, Any], dict[str, np.ndarray]]]:
-        """This rank's geometry (built once) and its cell-sized fields; ``None`` = no geometry."""
-        if self._geometry is None:
-            mesh = getattr(self.solver, "mesh", None)
-            geom = None
-            try:
-                geom = mesh(self.ctx) if mesh is not None else None
-            except Exception:  # noqa: BLE001 - no view rather than a dead session
-                self.emit({"type": "stdout", "text": "field view: " + traceback.format_exc()})
-            self._geometry = geom or False
-        if not self._geometry:
-            return None
-        from neofoam_ui.geometry import cell_count  # noqa: PLC0415
-
-        n = cell_count(self._geometry)
-        source = getattr(self.solver, "view_fields", None) or self.solver.fields
-        fields = {k: np.asarray(v) for k, v in source(self.ctx).items()}
-        return self._geometry, {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
-
-    def _published(self, fields: dict[str, np.ndarray], params: dict[str, str]) -> dict[str, np.ndarray]:
-        """What goes to Catalyst: the viewed field for the default pipeline, all for another script."""
-        from neofoam_ui import catalyst  # noqa: PLC0415
-
-        if catalyst.custom_script() or params.get("field") not in fields:
-            return fields
-        return {params["field"]: fields[params["field"]]}
-
-    def _view_error(self, text: str) -> None:
-        if self._view_sent != ("error", self._view_epoch, text):
-            self._view_sent = ("error", self._view_epoch, text)
-            self.emit({"type": "frame", "file": None, "fields": [], "error": text})
+        self._view.request(field, component, on)
 
     def send_view(self) -> None:
         """Render the viewed field in situ if the view is open and the values changed."""
-        view = self.view  # read once: the command reader may replace it meanwhile
-        if view is None or self.ctx is None:
-            return
-        from neofoam_ui import catalyst  # noqa: PLC0415
-
-        if self._insitu_error:
-            return self._view_error(self._insitu_error)
-        if not catalyst.configured():
-            return self._view_error(f"in-situ view off: set {catalyst.ENV} to a Catalyst + ParaView install")
-        cells = self._cell_fields()
-        if cells is None:
-            return self._view_error(f"{self.solver.name} provides no mesh geometry")
-        fields = cells[1]
-        name, comp = view
-        if name not in fields:
-            name = next((k for k in ("U", "p", "T") if k in fields), next(iter(fields), None))
-        if name is None:
-            return
-        arr = fields[name]
-        ncomp = int(arr.shape[1]) if arr.ndim == 2 else 1
-        if ncomp == 1 or comp not in ["mag"] + [str(i) for i in range(ncomp)]:
-            comp = "mag"
-        key = (self._view_epoch, name, comp, _fingerprint(arr))
-        if key == self._view_sent:
-            return
-        self._view_sent = key
-        self._frame_at = time.monotonic()
-        params = {"field": name, "component": comp}
-        if self.on_render is not None:
-            self.on_render(params)
-        file = self.render(params, describe=True)
-        if file is None:
-            return self._view_error(self._insitu_error or "in-situ view failed")
-        frame = {
-            "type": "frame", "file": file, "field": name, "component": comp,
-            "view": list(view),  # the request this frame answers (field/component may be a fallback)
-            "time": self.solver.scalars(self.ctx).get("time"),
-            "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
-                       for k, v in fields.items()],
-        }
-        if self.pipeline is not None:
-            # The graph and its settings only when they changed; the timings with every frame.
-            graph = {k: v for k, v in self.pipeline.items() if k != "ms"}
-            key = json.dumps(graph, sort_keys=True)
-            if key != self._pipeline_sent:
-                self._pipeline_sent = key
-                frame["pipeline"] = graph
-            frame["pipeline_ms"] = self.pipeline.get("ms", {})
-        self.emit(frame)
-        prune = getattr(self.insitu, "prune", None)
-        if prune is not None:
-            prune(self.keep_frames)
-        if self.wait_ui and self.barrier is not None:
-            self.barrier()
+        self._view.send()
 
     def render(self, params: dict[str, str], describe: bool = False) -> Optional[str]:
-        """Hand this rank's cells and fields to Catalyst (collective); the image file name.
-
-        ``describe``: afterwards also read back the pipeline (:attr:`pipeline`); one rank does.
-        """
-        out: list[Optional[str]] = [None]
-
-        def run() -> None:
-            cells = self._cell_fields() if self.ctx is not None else None
-            if cells is None:
-                return
-            from neofoam_ui.catalyst import InSitu  # noqa: PLC0415
-
-            if self.insitu is None:
-                self.insitu = InSitu()
-            time_value = self.solver.scalars(self.ctx).get("time") or 0.0
-            out[0] = self.insitu.execute(cells[0], self._published(cells[1], params), time_value, params)
-            if describe and not self._describe_failed and hasattr(self.insitu, "describe"):
-                try:
-                    self._describe(params)
-                except Exception:  # noqa: BLE001 - a frame without its diagram is still a frame
-                    self.pipeline, self._describe_failed = None, True
-                    self.emit({"type": "stdout", "text": "pipeline diagram: " + traceback.format_exc()})
-
-        def guarded() -> None:
-            try:
-                run()
-            except Exception as exc:  # noqa: BLE001 - the stepper outlives a broken view
-                self._insitu_error = f"in-situ view failed: {exc!r}"
-                self.emit({"type": "stdout", "text": "Catalyst: " + traceback.format_exc()})
-
-        if self._insitu_error is None:
-            self.in_solver_thread(guarded)
-        return out[0]
-
-    def _describe(self, params: dict[str, str]) -> None:
-        """Read the pipeline back when it may have changed: the first frame, another field or
-        component, or :data:`_DESCRIBE_EVERY` seconds on (colour range); else only the timings."""
-        now = time.monotonic()
-        last = self._described
-        if self.pipeline is None or last is None or last[0] != params or now - last[1] >= _DESCRIBE_EVERY:
-            self.pipeline = self.insitu.describe()
-            self._described = (dict(params), now)
-            return
-        ms = getattr(self.insitu, "ms", None)
-        if isinstance(ms, dict):
-            self.pipeline = {**self.pipeline, "ms": {k: round(v, 3) for k, v in ms.items()}}
+        """Hand this rank's cells and fields to the renderer (collective); the image file name."""
+        return self._view.render(params, describe)
 
     def finalize_view(self) -> None:
-        """``catalyst_finalize`` (collective) on the solver thread, if a frame was rendered."""
-        if self.insitu is not None:
-            insitu, self.insitu = self.insitu, None
-            self.in_solver_thread(insitu.finalize)
+        """Finalize the renderer (collective) on the solver thread, if a frame was rendered."""
+        self._view.finalize()
 
     def _paused(self) -> None:
         self.send_view()

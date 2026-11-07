@@ -240,9 +240,7 @@ def test_frame_names_the_request_it_answers():
 # -- post-processing diagram: the pipeline read back after each execute ------------------------
 
 
-def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst, monkeypatch):
-    from neofoam_ui.engine import _session as engine
-
+def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst):
     session, messages = session_after_init(Extra())
     session.set_view("T")
     first = of(messages, "frame")[-1]
@@ -257,7 +255,7 @@ def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst, monkey
     session.set_view("k")  # another field: read back
     assert of(messages, "frame")[-1]["pipeline"]["nodes"][1]["settings"] == [["size", "640×480"]]
     FakeInSitu.pipeline["nodes"][1]["settings"] = [["size", "1×1"]]
-    monkeypatch.setattr(engine, "_DESCRIBE_EVERY", 0.0)  # and again after a while
+    session._view.describe_every = 0.0  # and again after a while
     session.advance("time_step")
     assert of(messages, "frame")[-1]["pipeline"]["nodes"][1]["settings"] == [["size", "1×1"]]
 
@@ -652,3 +650,74 @@ insitu.finalize()
     assert "total" in first["ms"] and set(first["ms"]) == {"total"}
     by_name = {ids[k]: v for k, v in second["ms"].items() if k in ids}
     assert {"grid", view} <= set(by_name) and all(v >= 0 for v in by_name.values())
+
+
+# -- extension points: regions and the render backend --------------------------------------------
+
+
+class TwoRegions(Heat1D):
+    """A multi-region solver (e.g. CHT): the view shows the first region."""
+
+    def __init__(self):
+        super().__init__()
+        self.meshed = []
+
+    def regions(self, ctx):
+        solver = self
+
+        class Region:
+            def __init__(self, name, scale):
+                self.name, self.scale = name, scale
+
+            def mesh(self, ctx):
+                solver.meshed.append(self.name)
+                return {"kind": "line", "x": ctx.x * self.scale}
+
+            def fields(self, ctx):
+                return {f"T_{self.name}": ctx.fields["T"] * self.scale}
+
+        return [Region("fluid", 1.0), Region("solid", 2.0)]
+
+
+def test_a_region_provider_is_viewed_by_its_first_region(fake_catalyst):
+    session, messages = session_after_init(TwoRegions())
+    session.set_view(None)
+    frame = of(messages, "frame")[-1]
+    assert frame["field"] == "T_fluid" and [f["name"] for f in frame["fields"]] == ["T_fluid"]
+    session.advance("time_step")
+    assert session.solver.meshed == ["fluid"]  # the geometry is built once per region
+
+
+def test_a_render_backend_can_replace_catalyst():
+    class Backend:
+        def __init__(self):
+            self.rendered = []
+
+        def unavailable(self):
+            return None
+
+        def publishes_all(self):
+            return True
+
+        def create(self):
+            backend = self
+
+            class Renderer:
+                def execute(self, geom, fields, time, params):
+                    backend.rendered.append(sorted(fields))
+                    return "frame.png"
+
+                def finalize(self):
+                    backend.rendered.append("finalized")
+
+            return Renderer()
+
+    backend = Backend()
+    messages = []
+    session = Session(Heat1D(), messages.append, renderer=backend)
+    session.start()
+    session.advance("skip_init")
+    session.set_view("T")
+    session.finalize_view()
+    assert of(messages, "frame")[-1]["file"] == "frame.png"
+    assert backend.rendered == [["T", "T_old", "kappa", "source_mask"], "finalized"]
