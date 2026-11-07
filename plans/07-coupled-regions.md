@@ -21,7 +21,12 @@ To open a case, run `scripts/probe.sh <case>`, where `<case>` is pair, chain, �
 
 - **Two views.** The toolbar switches between Init and Execution. The only frames left are the region boxes.
 - **Each region box is a full solver,** as that solver would run alone: time loop → driver ops → coupling loop(s) → coupling node → solve. Shared loops and driver ops appear in every box as mirrored copies; a copy's id is `<op>@@<region>` and its `data.ref` points to the shared op. Loops are drawn as compact one-line nodes.
-- **Boxes are joined only by coupling lines,** one per exchange, drawn between the two coupling nodes. A line shows the sent values and lights up while its exchange runs. Boxes are ordered along the coupling chain and share rows, so each line is horizontal.
+- **Boxes are joined only by coupling lines,** one per interface, drawn between the two coupling nodes. Boxes are ordered along the coupling chain and share rows, so each line is horizontal.
+- **A mapping node on each coupling line** (preCICE's "mapping"): coupling node → mapping node → coupling node, the mapping node in the middle of the gap, outside both boxes. It shows the mapping kind, each side's interface points, and per direction (a → b, b → a) the fields, marked `(mapped)` (point by point), `(as is)` (one value, unmapped) or `(?)`; while the run steps, the values each side sends replace them. It lights up with its line while the exchange runs (`ex_hot`). The Init view draws the same node between the two boxes once the execution graph is known (boxes then in chain order). The inspector shows a coupling node's mapping.
+- **Wire:** `Exchange.mapping: Optional[PointMapping]` (`kind`, `mapped`, `source_points`, `target_points`; every field optional, `None` = the solver does not tell). Per coupling node, i.e. per direction: what the node receives, mapped from the partner's points onto its own. The adapter fills it from the framework as it is:
+  - `kind` from `CouplingOp.transfer`: `identity_transfer` → identity, `MappedTransfer` → nearest-neighbor, anything else → the transfer's name. pair (multiRun's `regionCoupling.yaml`) shows **nearest-neighbor**, the hand-built chain **identity**.
+  - `mapped` from the side's kinds: `Array` fields go through the transfer, plain fields are handed over as they are. Exact.
+  - points from `len(CoupledSide.coordinates)`; the probe cases give 1 point per side. A side without coordinates shows `?`.
 - **Chain (nested, built by hand):** each box shows every loop its region actually runs in, so a's box also shows the b↔c loop.
 - **Readability.** The minimap is off by default; "follow" fits the box that holds the token; a box collapses to its coupling nodes.
 - **Fields per region.** The variables table, the field list and the per-pass plots (`fields · <region>`) are grouped by region and drawn in region colours.
@@ -39,6 +44,11 @@ To open a case, run `scripts/probe.sh <case>`, where `<case>` is pair, chain, �
 2. **Framework hooks for the UI:**
    - multiRun announces its regions before initializing them, so the Init view can show every box from the first run;
    - `coupling_exchanged(node, data)`, so the line shows exactly the data handed over, after relaxation and mapping.
+   - **mapping info, for the mapping node.** Today the adapter guesses the kind from the transfer's class/function name and reads private-ish attributes (`coupling.sides[i].side.coordinates`, `_Attached.kinds`). What would make it exact and stable:
+     - a `kind` (or `name`) attribute on a `Transfer`, e.g. `MappedTransfer.kind = "nearest-neighbor"`, `identity_transfer.kind = "identity"`; a custom transfer sets its own. Then `mapping: auto` (doc, step 5) can also say what it picked (identity vs nearest neighbour) instead of the UI seeing only the callable;
+     - a public description per side, e.g. `CouplingOp.interface(index) -> {"kind", "mapped": [...], "points": n, "partner_points": m}`, so the UI no longer reaches into `_Attached`;
+     - when the mapping is not one-to-one, the mapping's quality (max distance of a target point to its nearest source point, unmatched points), which `MappedTransfer` computes anyway (`nearest_neighbor`) but drops.
+     - with `coupling_exchanged(node, data)` above, the mapping node could show the values *after* mapping on the target side next to what the source sent; today it shows the partner's `send()`, i.e. the mapping's input.
 3. **Limitations still open:**
    - a typo in a convergence key passes silently and the loop counts as converged; it should raise;
    - `no_coordinates` fails with an IndexError; it should fall back to identity mapping;
