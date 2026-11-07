@@ -19,6 +19,7 @@ a pause request, and reports what happened through a callback.
 
 from __future__ import annotations
 
+import json
 import time
 import traceback
 import zlib
@@ -221,6 +222,10 @@ class Session:
         self._insitu_error: Optional[str] = None
         self._geometry: Any = None  # None = not built yet, False = solver has no geometry
         self._view_sent: Optional[tuple[Any, ...]] = None
+        #: The post-processing pipeline as Catalyst last ran it (:meth:`InSitu.describe`, rank 0).
+        self.pipeline: Optional[dict[str, Any]] = None
+        self._pipeline_sent: Optional[str] = None
+        self._describe_failed = False  # reported once, then no more diagrams
         program = getattr(solver, "program", None)
         if program is not None:  # the solver drives itself and fills self.init
             self.init: list[InitStep] = []
@@ -514,19 +519,31 @@ class Session:
         params = {"field": name, "component": comp}
         if self.on_render is not None:
             self.on_render(params)
-        file = self.render(params)
+        file = self.render(params, describe=True)
         if file is None:
             return self._view_error(self._insitu_error or "in-situ view failed")
-        self.emit({
+        frame = {
             "type": "frame", "file": file, "field": name, "component": comp,
             "view": list(view),  # the request this frame answers (field/component may be a fallback)
             "time": self.solver.scalars(self.ctx).get("time"),
             "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
                        for k, v in fields.items()],
-        })
+        }
+        if self.pipeline is not None:
+            # The graph and its settings only when they changed; the timings with every frame.
+            graph = {k: v for k, v in self.pipeline.items() if k != "ms"}
+            key = json.dumps(graph, sort_keys=True)
+            if key != self._pipeline_sent:
+                self._pipeline_sent = key
+                frame["pipeline"] = graph
+            frame["pipeline_ms"] = self.pipeline.get("ms", {})
+        self.emit(frame)
 
-    def render(self, params: dict[str, str]) -> Optional[str]:
-        """Hand this rank's cells and fields to Catalyst (collective); the image file name."""
+    def render(self, params: dict[str, str], describe: bool = False) -> Optional[str]:
+        """Hand this rank's cells and fields to Catalyst (collective); the image file name.
+
+        ``describe``: afterwards also read back the pipeline (:attr:`pipeline`); one rank does.
+        """
         out: list[Optional[str]] = [None]
 
         def run() -> None:
@@ -539,6 +556,12 @@ class Session:
                 self.insitu = InSitu()
             time_value = self.solver.scalars(self.ctx).get("time") or 0.0
             out[0] = self.insitu.execute(cells[0], cells[1], time_value, params)
+            if describe and not self._describe_failed and hasattr(self.insitu, "describe"):
+                try:
+                    self.pipeline = self.insitu.describe()
+                except Exception:  # noqa: BLE001 - a frame without its diagram is still a frame
+                    self.pipeline, self._describe_failed = None, True
+                    self.emit({"type": "stdout", "text": "pipeline diagram: " + traceback.format_exc()})
 
         def guarded() -> None:
             try:

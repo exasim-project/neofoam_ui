@@ -31,17 +31,35 @@ class FakeInSitu:
         self.step += 1
         return f"view_{self.step - 1:06d}.png"
 
+    def describe(self):
+        FakeInSitu.calls.append("describe")
+        return {**json.loads(json.dumps(FakeInSitu.pipeline)), "ms": {"total": 2.5, "pv1": 0.5}}
+
     def finalize(self):
         FakeInSitu.calls.append("finalize")
+
+
+PIPELINE = {
+    "nodes": [{"id": "pv1", "kind": "source", "name": "grid", "type": "Conduit", "settings": []},
+              {"id": "pv2", "kind": "view", "name": "RenderView1", "type": "Render View",
+               "settings": [["size", "800×400"]]}],
+    "edges": [{"source": "pv1", "target": "pv2"}],
+    "script": "view.py",
+}
 
 
 @pytest.fixture(autouse=True)
 def fake_catalyst(monkeypatch, tmp_path):
     FakeInSitu.calls = []
+    FakeInSitu.pipeline = json.loads(json.dumps(PIPELINE))
     monkeypatch.setenv(catalyst.ENV, "/nowhere")
     monkeypatch.setenv(catalyst.OUT_ENV, str(tmp_path))
     monkeypatch.setattr(catalyst, "InSitu", FakeInSitu)
     return FakeInSitu.calls
+
+
+def renders(calls):
+    return [c for c in calls if isinstance(c, dict)]
 
 
 def session_after_init(solver=None):
@@ -69,7 +87,7 @@ def test_view_before_context_waits_for_initialization(fake_catalyst):
     session.set_view("T")
     assert not of(messages, "frame")  # no ctx during init
     session.advance("skip_init")
-    assert len(of(messages, "frame")) == 1 and len(fake_catalyst) == 1
+    assert len(of(messages, "frame")) == 1 and len(renders(fake_catalyst)) == 1
 
 
 def test_frames_only_when_values_change(fake_catalyst):
@@ -77,7 +95,7 @@ def test_frames_only_when_values_change(fake_catalyst):
     session.set_view("T")
     (frame,) = of(messages, "frame")
     assert frame["field"] == "T" and frame["file"] == "view_000000.png"
-    call = fake_catalyst[0]
+    call = renders(fake_catalyst)[0]
     assert call["params"] == {"field": "T", "component": "mag"}
     assert call["geom"]["kind"] == "line"
     # every cell-sized field goes to Catalyst (flux lives on the 41 faces)
@@ -125,11 +143,11 @@ def test_vector_components(fake_catalyst):
     session, messages = session_after_init(Vec())
     session.set_view("U", "1")
     assert of(messages, "frame")[-1]["component"] == "1"
-    assert fake_catalyst[-1]["params"] == {"field": "U", "component": "1"}
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "U", "component": "1"}
     session.set_view("U", "7")  # no such component
     assert of(messages, "frame")[-1]["component"] == "mag"
     assert {"name": "U", "ncomp": 3} in of(messages, "frame")[-1]["fields"]
-    assert fake_catalyst[-1]["geom"]["kind"] == "points"
+    assert renders(fake_catalyst)[-1]["geom"]["kind"] == "points"
 
 
 class NoMesh(Heat1D):
@@ -208,6 +226,59 @@ def test_frame_names_the_request_it_answers():
     assert (frame["field"], frame["component"], frame["view"]) == ("T", "mag", ["flux", "2"])
 
 
+# -- post-processing diagram: the pipeline read back after each execute ------------------------
+
+
+def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst):
+    session, messages = session_after_init()
+    session.set_view("T")
+    first = of(messages, "frame")[-1]
+    assert first["pipeline"] == PIPELINE and "ms" not in first["pipeline"]
+    assert first["pipeline_ms"] == {"total": 2.5, "pv1": 0.5}
+    session.advance("time_step")  # same pipeline: only the timings
+    frame = of(messages, "frame")[-1]
+    assert "pipeline" not in frame and frame["pipeline_ms"]["total"] == 2.5
+    FakeInSitu.pipeline["nodes"][1]["settings"] = [["size", "640×480"]]  # e.g. a colour range moved
+    session.advance("time_step")
+    assert of(messages, "frame")[-1]["pipeline"]["nodes"][1]["settings"] == [["size", "640×480"]]
+
+
+def test_only_the_deciding_rank_reads_the_pipeline_back(fake_catalyst):
+    session, _ = session_after_init()
+    session.render({"field": "T", "component": "mag"})  # how a follower renders
+    assert "describe" not in fake_catalyst and session.pipeline is None
+
+
+def test_a_failing_description_keeps_the_frames(monkeypatch):
+    def boom(self):
+        raise RuntimeError("no proxy manager")
+
+    monkeypatch.setattr(FakeInSitu, "describe", boom)
+    session, messages = session_after_init()
+    session.set_view("T")
+    session.advance("time_step")
+    frames = of(messages, "frame")
+    assert len(frames) == 2 and all(f["file"] and "pipeline" not in f for f in frames)
+    reports = [m for m in of(messages, "stdout") if "no proxy manager" in m["text"]]
+    assert len(reports) == 1  # once, then no more diagrams
+
+
+def test_pipeline_layout_layers_by_data_flow():
+    from neofoam_ui.layout import build_pipeline_flow
+
+    desc = {"script": "x.py", "edges": [{"source": "a", "target": "b"}, {"source": "b", "target": "c"},
+                                        {"source": "a", "target": "e"}, {"source": "c", "target": "gone"}],
+            "nodes": [{"id": i, "kind": k, "name": i, "type": k, "settings": [["k", "v"]] * n}
+                      for i, k, n in (("e", "extractor", 1), ("c", "view", 2), ("b", "filter", 0),
+                                      ("a", "source", 0))]}
+    flow = build_pipeline_flow(desc)
+    pos = {n["id"]: n["position"]["y"] for n in flow["nodes"] if n["type"] == "pp"}
+    assert pos["a"] < pos["b"] < pos["c"]
+    assert pos["a"] < pos["e"] < pos["c"]  # e is fed by a only: the row below it
+    assert flow["nodes"][0]["data"]["label"] == "Post-processing · x.py"
+    assert {(e["source"], e["target"]) for e in flow["edges"]} == {("a", "b"), ("b", "c"), ("a", "e")}
+
+
 class Extra(Heat1D):
     """Heat1D with a field only the view offers (like a turbulence model's ``k``)."""
 
@@ -220,7 +291,7 @@ def test_view_offers_view_fields_the_stats_table_does_not(fake_catalyst):
     session.set_view("k")
     frame = of(messages, "frame")[-1]
     assert frame["field"] == "k" and {"name": "k", "ncomp": 1} in frame["fields"]
-    assert "k" in fake_catalyst[-1]["fields"]
+    assert "k" in renders(fake_catalyst)[-1]["fields"]
     assert "k" not in {row["field"] for row in session.summary()["fields"]}
 
 
@@ -512,3 +583,52 @@ def test_live_frames_can_be_turned_off():
     n = len(of(messages, "frame"))
     session.advance("run")
     assert session.finished and len(of(messages, "frame")) == n + 1  # the final pause only
+
+
+@needs_catalyst
+@pytest.mark.parametrize("script", ["default", "other"])
+def test_paraview_pipeline_is_described(tmp_path, script):
+    """Rank 0's read-back of the live pipeline: nodes, edges, settings, per-node times."""
+    other = os.path.join(HELPERS, "catalyst_threshold.py")
+    code = f"""
+import json
+import numpy as np
+from neofoam_ui import catalyst
+geom = {{"kind": "line", "x": np.linspace(0, 1, 10)}}
+fields = {{"p": np.arange(10.0), "U": np.ones((10, 3))}}
+insitu = catalyst.InSitu({PREFIX!r}, {str(tmp_path / "out")!r}, script={other if script == "other" else None!r})
+for comp in ("mag", "1"):
+    insitu.execute(geom, fields, 0.5, {{"field": "U", "component": comp}})
+    print("DESC", json.dumps(insitu.describe()))
+insitu.finalize()
+"""
+    python = os.environ.get("NEOFOAM_PYTHON", sys.executable)
+    src = os.path.join(os.path.dirname(__file__), "..", "src")
+    res = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=300,
+                         env={**os.environ, "PYTHONPATH": src})
+    assert res.returncode == 0, res.stderr[-3000:]
+    first, second = [json.loads(part.splitlines()[0]) for part in res.stdout.split("DESC ")[1:]]
+    nodes = {n["name"]: n for n in second["nodes"]}
+    ids = {n["id"]: n["name"] for n in second["nodes"]}
+    edges = {(ids[e["source"]], ids[e["target"]]) for e in second["edges"]}
+    view = next(n["name"] for n in second["nodes"] if n["kind"] == "view")
+    display = next(n for n in second["nodes"] if n["kind"] == "display")
+    if script == "default":
+        assert second["script"] == "view.py"
+        assert [nodes[n]["kind"] for n in ("grid", "surface", "png")] == ["source", "filter", "extractor"]
+        assert {("grid", "surface"), ("surface", display["name"]), (display["name"], view),
+                (view, "png")} == edges
+        assert dict(first["nodes"][2]["settings"])["colour"] == "|U| (cells)"
+        assert dict(display["settings"])["colour"] == "U[1] (cells)"
+        assert dict(display["settings"])["range"] == "1 … 1"
+        assert dict(nodes["png"]["settings"])["file"] == "view_{timestep:06d}.png"
+    else:
+        assert second["script"] == "catalyst_threshold.py"
+        assert dict(nodes["hot"]["settings"])["Scalars"] == "[CELLS, p]"
+        assert dict(nodes["data"]["settings"]) == {"file": "grid_{timestep:06d}.vtpd", "every": "5 step(s)"}
+        assert {("grid", "hot"), ("grid", "data"), (view, "image")} <= edges
+        assert dict(display["settings"])["colour"] == "solid"
+    # times: the whole execute always; per node from the second execute on (observers attached)
+    assert "total" in first["ms"] and set(first["ms"]) == {"total"}
+    by_name = {ids[k]: v for k, v in second["ms"].items() if k in ids}
+    assert {"grid", view} <= set(by_name) and all(v >= 0 for v in by_name.values())

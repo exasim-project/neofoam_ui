@@ -26,7 +26,8 @@ from trame_flow.widgets.flow import Background, Controls, CustomNode, Handle, Mi
 from neofoam_ui.catalyst import ENV as CATALYST_ENV
 from neofoam_ui.catalyst import OUT_ENV
 from neofoam_ui.fieldview import FIELD_CSS, component_items, field_pane
-from neofoam_ui.layout import build_flow, domain_color
+from neofoam_ui.layout import build_flow, build_pipeline_flow, domain_color
+from neofoam_ui.pipelineview import PIPELINE_CSS, pipeline_pane
 
 __all__ = ["StepperApp", "main"]
 
@@ -54,6 +55,7 @@ _CSS = r"""
   .nf-grid.fv { grid-template-rows: auto auto auto; }
   .nf-grid.fv .nf-diagram { flex: none; height: 52vh; }
   .nf-grid.fv .nf-field { flex: none; height: 62vh; border-left: 0; border-top: 1px solid rgba(128,128,128,.25); }
+  .nf-grid.fv .nf-pp { height: 70vh; }
   .nf-bottom { grid-column: 1; grid-row: 2; grid-template-columns: 1fr; }
   .nf-bottom > div { max-height: 34vh; }
   .nf-bottom > div:first-child { border-right: 0; border-bottom: 1px solid rgba(128,128,128,.25); }
@@ -167,8 +169,11 @@ class StepperApp:
         self.writes_seen: dict[str, list[str]] = {}
         #: Last field-view request sent to the worker (so the worker's own choice is not echoed back).
         self._view_req: Optional[tuple[Any, ...]] = None
+        #: Nodes and edges of the pipeline diagram drawn last (refit only when they change).
+        self._pp_topology: Optional[tuple[Any, ...]] = None
         self._reset_state()
         self.editor: Any = None
+        self.pp_editor: Any = None
         self._build_ui()
 
         self.ctrl.on_server_ready.add(lambda **_: asynchronous.create_task(self.spawn()))
@@ -177,7 +182,8 @@ class StepperApp:
         self.server.trigger("nf_key")(self._on_key)
         self.server.trigger("nf_collapse")(self.toggle_collapse)
         self.server.trigger("nf_field")(self.highlight_field)
-        self.state.change("fv_on", "fv_field", "fv_comp")(lambda **_: self._send_view())
+        self.state.change("fv_on", "fv_field", "fv_comp", "pp_on")(lambda **_: self._send_view())
+        self.state.change("fv_on", "pp_on")(lambda **_: self._fit_pipeline())
         self.state.change("fv_live")(lambda fv_live, **_: self._send({"cmd": "live", "on": bool(fv_live)}))
         self.state.change("delay_ms")(self._on_delay)
         self.state.change("heat_on")(lambda **_: self._refresh_heat())
@@ -226,6 +232,12 @@ class StepperApp:
         s.fv_src = None
         s.fv_live = True if s.fv_live is None else bool(s.fv_live)
         s.fv_msg = "the field view starts once the solver context exists (after initialization)"
+        # Post-processing diagram (drawn from the pipeline Catalyst runs for the field view).
+        s.pp_on = bool(s.pp_on)
+        s.pp_graph = False
+        s.pp_ms = {}
+        s.pp_msg = "the pipeline appears with the first in-situ frame (after initialization)"
+        self._pp_topology = None
 
     # -- worker -------------------------------------------------------------------------
 
@@ -376,9 +388,12 @@ class StepperApp:
             self._refresh_inspector()
 
     def _send_view(self) -> None:
-        """Tell the worker what the field view shows; closed = nothing is rendered at pauses."""
+        """Tell the worker what the field view shows; closed = nothing is rendered at pauses.
+
+        The pipeline pane needs frames too: its diagram is read back from the executed pipeline.
+        """
         s = self.state
-        on = bool(s.fv_on or self.live)
+        on = bool(s.fv_on or s.pp_on or self.live)
         req = (True, s.fv_field, s.fv_comp) if on else (False,)
         if req == self._view_req or self.proc is None:
             return
@@ -388,9 +403,11 @@ class StepperApp:
     def _on_frame(self, msg: dict[str, Any]) -> None:
         s = self.state
         if msg.get("error"):
-            s.fv_msg = msg["error"]
+            s.fv_msg = s.pp_msg = msg["error"]
             s.fv_src = None
+            s.pp_graph = False
             return
+        self._on_pipeline(msg)
         if self._view_req != (True, *msg.get("view", (msg["field"], msg["component"]))):
             return  # rendered for an earlier choice (a live frame in flight): keep the user's
         fields = msg["fields"]
@@ -406,6 +423,35 @@ class StepperApp:
         ranks = f"{self.np} ranks" if self.np > 1 else ""
         parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "", "rendered in situ (Catalyst)", ranks]
         s.fv_msg = " · ".join(p for p in parts if p)
+
+    def _on_pipeline(self, msg: dict[str, Any]) -> None:
+        """The frame's pipeline diagram (sent when it changed) and last execute times."""
+        s = self.state
+        desc = msg.get("pipeline")
+        if desc is not None:
+            self.pp_editor.graph = build_pipeline_flow(desc)
+            topology = (tuple(n["id"] for n in desc["nodes"]),
+                        tuple((e["source"], e["target"]) for e in desc["edges"]))
+            if topology != self._pp_topology:
+                self._pp_topology = topology
+                self.pp_editor.fit_view()
+            s.pp_graph = True
+        ms = msg.get("pipeline_ms")
+        if ms is None:
+            if not s.pp_graph:
+                s.pp_msg = "this Catalyst implementation does not describe its pipeline"
+            return
+        s.pp_ms = {k: _fmt_ms(v) for k, v in ms.items() if k != "total"}
+        t = msg.get("time")
+        parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "",
+                 f"last execute {_fmt_ms(ms['total'])}" if "total" in ms else "",
+                 "times of rank 0" if self.np > 1 else ""]
+        s.pp_msg = " · ".join(p for p in parts if p)
+
+    def _fit_pipeline(self) -> None:
+        """Refit the diagram when its pane opens or the field pane next to it changes its width."""
+        if self.pp_editor is not None and self.state.pp_on and self.state.pp_graph:
+            self.pp_editor.fit_view()
 
     def _set_event(self, ev: dict[str, Any]) -> None:
         s = self.state
@@ -522,6 +568,7 @@ class StepperApp:
             self.calls, self.last_ms, self.total_ms, self.writes_seen = {}, {}, {}, {}
             self._reset_state()
             self.editor.clear_graph()
+            self.pp_editor.clear_graph()
         await self.spawn()
 
     def toggle_bp(self, node_id: str) -> None:
@@ -678,7 +725,7 @@ class StepperApp:
         idle = "!connected || running || finished"
         with SinglePageWithDrawerLayout(self.server) as layout:
             layout.title.set_text("DAG stepper")
-            client.Style(_CSS + FIELD_CSS)
+            client.Style(_CSS + FIELD_CSS + PIPELINE_CSS)
             # Phones: drawer closed and overlaying instead of pushing the content.
             client.ClientTriggers(mounted=(
                 "set('is_mobile', window.innerWidth < 900);"
@@ -718,6 +765,12 @@ class StepperApp:
                                  title="show a solver field on the mesh, refreshed at every pause"):
                         v3.VIcon("mdi-palette", size="small")
                         html.Span("Field", classes="nf-btxt ml-1")
+                    with v3.VBtn(size="small", classes="mx-1", click="pp_on = !pp_on",
+                                 variant=("pp_on ? 'tonal' : 'text'",),
+                                 color=("pp_on ? 'primary' : undefined",),
+                                 title="show the post-processing (Catalyst/ParaView) pipeline as a diagram"):
+                        v3.VIcon("mdi-graph-outline", size="small")
+                        html.Span("Pipeline", classes="nf-btxt ml-1")
                     v3.VDivider(vertical=True, classes="mx-1")
                     html.Span("animation", classes="text-caption mx-2 nf-btxt")
                     v3.VSlider(v_model=("delay_ms",), min=0, max=600, step=10, hide_details=True,
@@ -757,11 +810,12 @@ class StepperApp:
                     html.Div("click a field: ops that wrote (orange) / read (blue) it")
 
             with layout.content:
-                with html.Div(classes=("['nf-grid', { fv: fv_on }]",)):
+                with html.Div(classes=("['nf-grid', { fv: fv_on || pp_on }]",)):
                     with html.Div(classes="nf-canvas"):
                         with html.Div(classes="nf-diagram"):
                             self._canvas()
                         field_pane()
+                        self.pp_editor = pipeline_pane()
                     with html.Div(classes="nf-side"):
                         self._inspector()
                     with html.Div(classes="nf-bottom"):
@@ -810,7 +864,7 @@ class StepperApp:
             self.editor = editor
             Background(gap=16, size=1, pattern_color="#c3c8d2")
             Controls(show_interactive=False)
-            MiniMap(pannable=True, zoomable=True, v_show="!is_mobile && !fv_on")
+            MiniMap(pannable=True, zoomable=True, v_show="!is_mobile && !fv_on && !pp_on")
 
             with CustomNode("action"):
                 with html.Div(classes=(

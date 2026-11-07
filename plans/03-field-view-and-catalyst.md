@@ -44,6 +44,18 @@ solver rank r (worker)                                 UI (trame)
 - Another pipeline: `NEOFOAM_UI_CATALYST_SCRIPT=<file>` (a Catalyst-v2 script, channel `grid`,
   parameters `field=…` and `component=mag|0|1|2` via `info.catalyst_params`).
 
+- **Post-processing diagram** (toolbar *Pipeline*, `pipelineview.py`): after each execute rank 0
+  reads the live ParaView pipeline back (`InSitu.describe` → `catalyst.describe_pipeline`:
+  `GetSources()` and their input properties, `GetViews()` and visible representations,
+  `GetExtractors()` and their producers). Nodes carry kind, name, type and a few settings
+  (non-default properties; for displays the coloured array, component and colour range; for
+  extractors file pattern and trigger). The frame carries `pipeline` when it changed and
+  `pipeline_ms` always: the whole execute plus per node from the second execute on (Start/End
+  observers on rank 0's algorithms and render windows; displays and extractors are not timed
+  separately). `layout.build_pipeline_flow` draws it in a second VueFlow editor, layered by
+  data flow. Opening the pane also turns rendering on; any `NEOFOAM_UI_CATALYST_SCRIPT` pipeline
+  shows as itself.
+
 ### 1.1 Geometry (`geometry.py`)
 
 pybFoam's `fvMesh` exposes no points/faces, so the adapter reads `constant/polyMesh`
@@ -89,7 +101,9 @@ and `PARAVIEW_ENABLE_CATALYST=ON` in its `paraview` feedstock).
 
 ## 3. Verification
 
-- `tests/test_field_view.py` (19 tests): the view protocol with Catalyst faked (frames only on
+- `tests/test_field_view.py` (34 tests, incl. the pipeline diagram: sent only when changed,
+  only rank 0 describes, a failing description keeps the frames, layout; real ParaView: the
+  default and another script described with settings and times): the view protocol with Catalyst faked (frames only on
   change, field fallback, components, no geometry, unconfigured, failing Catalyst, other ranks
   told), polyMesh → polyhedra; with `NEOFOAM_UI_CATALYST` set also a Blueprint `verify` and a
   real ParaView render (polyhedral and line) in a fresh interpreter.
@@ -104,3 +118,5 @@ and `PARAVIEW_ENABLE_CATALYST=ON` in its `paraview` feedstock).
   page it would need remote rendering (trame + ParaView) attached to the in-situ pipeline.
 - Dynamic meshes: rebuild the geometry when `mesh.changing()`.
 - The scalar bar title shows the array name, not `|U|`.
+- Pipeline diagram: no per-node time for displays and extractors (only the whole execute);
+  times are rank 0's.

@@ -135,6 +135,9 @@ def _fit_camera():
 
 def catalyst_execute(info):
     params = _params(info)
+    # Bring the producer to this execute's data first: until then its output still holds the
+    # previous step's arrays, whose memory the solver may have freed (nut is reallocated).
+    grid.UpdatePipeline(info.time)
     local = _local()
     local = local.GetCellData() if local is not None else None
     names = [local.GetArrayName(i) for i in range(local.GetNumberOfArrays())] if local is not None else []
