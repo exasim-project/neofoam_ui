@@ -143,18 +143,25 @@ def test_each_region_box_is_the_full_solver_with_copies_of_the_shared_loops():
         assert nodes[f"time/set_time_step@@{region}"]["data"]["number"] == "1.1"
     # nothing of the other region in a box
     assert not [i for i in nodes if i.endswith("@@a") and ("b.solve" in i or "couple_b" in i)]
-    # between the boxes only the line between the coupling nodes, both ways, labelled
+    # between the boxes only the line between the coupling nodes, through the interface's
+    # mapping node, arrowheads at the coupling nodes
     couple = [e for e in flow["edges"] if "nf-couple" in e.get("class", "")]
     assert [(e["source"], e["target"], e["class"]) for e in couple] == [
-        ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b", "nf-couple cl-0")]
-    assert couple[0]["markerStart"] and couple[0]["markerEnd"]
-    # its data label sits between the two coupling nodes, keyed for the values and the highlight
-    label = nodes["exlabel:0"]
-    assert label["data"] == {"key": "0", "data": "x", "left": "a", "right": "b",
-                             "nodes": ["time/couple/couple_a.x", "time/couple/couple_b.x"]}
-    a_right = nodes["time/couple/couple_a.x@@a"]["position"]["x"] + nodes["time/couple/couple_a.x@@a"]["width"]
-    assert a_right < label["position"]["x"] < nodes["time/couple/couple_b.x@@b"]["position"]["x"]
-    a_box = {i for i in nodes if i.endswith("@@a")}  # (the label node belongs to no box)
+        ("time/couple/couple_a.x@@a", "exmap:0", "nf-couple cl-0"),
+        ("exmap:0", "time/couple/couple_b.x@@b", "nf-couple cl-0")]
+    assert couple[0]["markerStart"] and "markerEnd" not in couple[0] and couple[1]["markerEnd"]
+    # the mapping node sits between the two coupling nodes, outside both boxes, keyed for the
+    # values and the highlight
+    label = nodes["exmap:0"]
+    assert {k: label["data"][k] for k in ("key", "data", "left", "right", "nodes")} == {
+        "key": "0", "data": "x", "left": "a", "right": "b",
+        "nodes": ["time/couple/couple_a.x", "time/couple/couple_b.x"]}
+    a_right = nodes["exec::box:a"]["position"]["x"] + nodes["exec::box:a"]["width"]
+    assert a_right < label["position"]["x"] < label["position"]["x"] + label["width"] < \
+        nodes["exec::box:b"]["position"]["x"]
+    couple_a = nodes["time/couple/couple_a.x@@a"]
+    assert label["position"]["y"] + label["height"] / 2 == couple_a["position"]["y"] + couple_a["height"] / 2
+    a_box = {i for i in nodes if i.endswith("@@a")}  # (the mapping node belongs to no box)
     b_box = {i for i in nodes if i.endswith("@@b")}
     crossing = [e for e in flow["edges"] if (e["source"].split("::")[0] in a_box)
                 != (e["target"].split("::")[0] in a_box) and "nf-couple" not in e.get("class", "")]
@@ -193,10 +200,18 @@ def test_a_nested_coupling_loop_is_projected_into_each_region_s_box():
     assert xs == sorted(xs)
     # a shared loop's copies on one row; each line joins neighbouring boxes, horizontally, in the gap
     assert nodes["outer/inner@@a"]["position"]["y"] == nodes["outer/inner@@b"]["position"]["y"]
-    couple = [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")]
+    halves = [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")]
+    couple = [(s, t2) for s, m in halves if m.startswith("exmap:") for m2, t2 in halves if m2 == m]
     assert set(couple) == {("outer/inner/couple_a.x@@a", "outer/inner/couple_b.x@@b"),
                            ("outer/couple_b.x@@b", "outer/couple_c.x@@c")}
+    # one mapping node per interface, each in its own gap, on its line's row
+    maps = {n["data"]["left"] + n["data"]["right"]: n for n in flow["nodes"] if n["type"] == "exmap"}
+    assert set(maps) == {"ab", "bc"}
     for s, tgt in couple:
+        m = maps[s[-1] + tgt[-1]]
+        assert nodes[s]["position"]["x"] + nodes[s]["width"] < m["position"]["x"]
+        assert m["position"]["x"] + m["width"] < nodes[tgt]["position"]["x"]
+        assert m["position"]["y"] + m["height"] / 2 == nodes[s]["position"]["y"] + nodes[s]["height"] / 2
         left, right = s[-1], tgt[-1]
         assert nodes[s]["position"]["y"] == nodes[tgt]["position"]["y"]
         box_l, box_r = nodes[f"exec::box:{left}"], nodes[f"exec::box:{right}"]
@@ -247,8 +262,13 @@ def test_the_init_view_puts_each_region_s_steps_in_its_box_below_the_driver_s():
         assert box["position"]["x"] < n["position"]["x"] < box["position"]["x"] + box["width"]
         assert box["position"]["y"] < n["position"]["y"] < box["position"]["y"] + box["height"]
     assert nodes["init:time"]["position"]["y"] < nodes["init::box:a"]["position"]["y"]
-    edges = {(e["source"], e["target"]) for e in flow["edges"]}
+    edges = {(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" not in e.get("class", "")}
     assert edges == {("init:time", "init:a.mesh"), ("init:time", "init:b.mesh"), ("init:b.mesh", "init:b.T")}
+    # the interface: its mapping node between the two boxes, the coupling line through it
+    m = nodes["exmap:0"]
+    assert bx + nodes["init::box:b"]["width"] < m["position"]["x"] < m["position"]["x"] + m["width"] < ax
+    assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
+        ("init::box:b", "exmap:0"), ("exmap:0", "init::box:a")]
 
 
 def test_a_plain_solver_s_init_view_has_no_region_boxes():
@@ -317,7 +337,7 @@ def test_the_pair_view_keeps_its_shape():
     assert a["position"]["y"] == b["position"]["y"]
     assert nodes["time/couple/a.solve@@a"]["position"]["y"] == nodes["time/couple/b.solve@@b"]["position"]["y"]
     assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
-        ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b")]
+        ("time/couple/couple_a.x@@a", "exmap:0"), ("exmap:0", "time/couple/couple_b.x@@b")]
 
 
 def test_a_closed_region_box_keeps_only_its_coupling_nodes_on_their_rows():
@@ -332,7 +352,11 @@ def test_a_closed_region_box_keeps_only_its_coupling_nodes_on_their_rows():
     # still facing its partner, still joined to it
     assert nodes["time/couple/couple_b.x@@b"]["position"]["y"] == nodes["time/couple/couple_a.x@@a"]["position"]["y"]
     assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
-        ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b")]
+        ("time/couple/couple_a.x@@a", "exmap:0"), ("exmap:0", "time/couple/couple_b.x@@b")]
+    # its mapping node between the narrow box and its partner's
+    m = nodes["exmap:0"]
+    assert nodes["exec::box:a"]["position"]["x"] + nodes["exec::box:a"]["width"] < m["position"]["x"]
+    assert m["position"]["x"] + m["width"] < nodes["exec::box:b"]["position"]["x"]
 
 
 def test_a_box_holding_the_token_or_a_breakpoint_opens():
@@ -371,3 +395,70 @@ def test_a_region_fields_table_is_drawn_in_the_region_s_colour():
     (chart,) = history.charts()
     assert chart["data"][0]["line"]["color"] == _REGION.color("b")
     assert chart["layout"]["xaxis"]["title"]["text"] == "coupling pass"
+
+
+def _mapped_pair(left, right):
+    """The pair, its coupling nodes telling how they map (``left``/``right``: each node's PointMapping)."""
+    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
+
+    body = [Op("couple_a.q", "action", lambda ctx: None, region="a",
+               exchange=Exchange("b.solve", ("T", "h"), "b", left)),
+            Op("a.solve", "action", lambda ctx: None, region="a"),
+            Op("couple_b.q", "action", lambda ctx: None, region="b",
+               exchange=Exchange("a.solve", ("T", "h"), "a", right)),
+            Op("b.solve", "action", lambda ctx: None, region="b")]
+    return [Op("loop", "loop", lambda ctx: False, body)]
+
+
+def test_the_mapping_node_shows_kind_points_and_mapped_fields_each_way():
+    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
+
+    # a has 4 interface points, b 3; T is mapped point by point, h handed over as is
+    ops = _mapped_pair(PointMapping("nearest-neighbor", ("T",), 3, 4), PointMapping("nearest-neighbor", ("T",), 4, 3))
+    data = {n["id"]: n for n in _flow(ops)["nodes"]}["exmap:0"]["data"]
+    assert data["kind"] == "nearest-neighbor"
+    assert data["points"] == {"a": 4, "b": 3}
+    assert data["ways"] == [
+        {"from": "a", "to": "b", "fields": [{"name": "T", "mapped": True}, {"name": "h", "mapped": False}]},
+        {"from": "b", "to": "a", "fields": [{"name": "T", "mapped": True}, {"name": "h", "mapped": False}]}]
+
+
+def test_the_mapping_node_marks_what_the_solver_does_not_tell():
+    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
+
+    # one side tells nothing (no mapping), the other its mapped fields but no points
+    data = {n["id"]: n for n in _flow(_mapped_pair(None, PointMapping(mapped=("T", "h"))))["nodes"]}["exmap:0"]["data"]
+    assert data["kind"] is None and data["points"] == {"a": None, "b": None}
+    assert data["ways"][0]["fields"] == [{"name": "T", "mapped": True}, {"name": "h", "mapped": True}]
+    assert data["ways"][1]["fields"] == [{"name": "T", "mapped": None}, {"name": "h", "mapped": None}]
+    # each side's count comes from either node: a's own (target) or b's partner's (source)
+    data = {n["id"]: n for n in _flow(_mapped_pair(PointMapping(target_points=5), PointMapping()))["nodes"]}[
+        "exmap:0"]["data"]
+    assert data["points"] == {"a": 5, "b": None}
+
+
+def test_the_wire_carries_a_coupling_node_s_mapping_only_when_known():
+    from neofoam_ui.engine import Exchange, Op, PointMapping  # noqa: PLC0415
+
+    plain = op_dict(Op("couple_a.x", "action", lambda ctx: None, exchange=Exchange("b.solve", ("x",), "b")))
+    assert "mapping" not in plain["exchange"]
+    told = op_dict(Op("couple_a.x", "action", lambda ctx: None,
+                      exchange=Exchange("b.solve", ("x",), "b", PointMapping("identity", ("x",), None, 2))))
+    assert told["exchange"]["mapping"] == {"kind": "identity", "mapped": ["x"], "source_points": None,
+                                           "target_points": 2}
+
+
+def test_the_inspector_shows_a_coupling_node_s_mapping():
+    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
+    from neofoam_ui._ui.panes._inspector import _inspector_model  # noqa: PLC0415
+    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
+
+    ops = _mapped_pair(PointMapping("nearest-neighbor", ("T",), 3, 4), None)
+    assign_ids(ops)
+    model = _RunModel()
+    model.graph({"activity": "exec", "ops": [op_dict(o) for o in ops]})
+    model.reindex("probe")
+    rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_a.q", [])["rows"]}
+    assert rows["mapping"] == "nearest-neighbor, 3 → 4 points; mapped T, as is h"
+    rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_b.q", [])["rows"]}
+    assert "mapping" not in rows

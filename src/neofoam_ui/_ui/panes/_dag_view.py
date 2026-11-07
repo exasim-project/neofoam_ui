@@ -103,13 +103,29 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                           v_if="props.data.collapsed",
                           raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.ref])"'])
 
-        with CustomNode("exlabel"):
-            # the data on a coupling line: what each side sends, filled in while stepping
-            with html.Div(classes=("['nf-exlabel', { hot: ex_hot.includes(props.data.key) }]",)):
-                html.Div("{{ (ex_vals[props.data.key] || {})[props.data.left] || props.data.data }} →",
-                         classes="nf-ex-r")
-                html.Div("← {{ (ex_vals[props.data.key] || {})[props.data.right] || props.data.data }}",
-                         classes="nf-ex-l")
+        with CustomNode("exmap"):
+            # an interface's mapping node, on its coupling line between the boxes: how the data
+            # goes from one side's points onto the other's, and what each side sends (values
+            # filled in while stepping); lit while the exchange runs
+            with html.Div(classes=("['nf-exmap', { hot: ex_hot.includes(props.data.key) }]",),
+                          title=("props.data.kind ? '' : 'mapping kind: the solver does not tell'",)):
+                Handle(position="left", type="target", id="lt")
+                Handle(position="right", type="source", id="r")
+                with html.Div(classes="nf-map-head"):
+                    html.Span("⇆ mapping", classes="nf-map-title")
+                    html.Span("{{ props.data.kind || 'unknown' }}",
+                              classes=("['nf-map-kind', { unk: !props.data.kind }]",))
+                html.Div("{{ props.data.left }} · {{ props.data.points[props.data.left] ?? '?' }} pt"
+                         "  ⇄  {{ props.data.right }} · {{ props.data.points[props.data.right] ?? '?' }} pt",
+                         classes="nf-map-pts")
+                # per way: the values the sending side sends now, else the fields, each marked
+                # as mapped (point by point), as is (one value, unmapped) or (?) (not known)
+                with html.Div(v_for="w in props.data.ways", key="w.from", classes="nf-map-way"):
+                    html.Span("{{ w.from }} → {{ w.to }}", classes="nf-map-dir")
+                    html.Span("{{ (ex_vals[props.data.key] || {})[w.from] }}", classes="nf-map-val",
+                              v_if="(ex_vals[props.data.key] || {})[w.from]")
+                    html.Span("{{ w.fields.map(f => f.name + (f.mapped === true ? ' (mapped)' : f.mapped === false"
+                              " ? ' (as is)' : ' (?)')).join(', ') }}", classes="nf-map-val", v_else=True)
 
         with CustomNode("decision"):
             with html.Div(classes=(
@@ -133,6 +149,9 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                               raw_attrs=['@click.stop="trigger(\'nf_box\', [props.data.toggle])"'])
                     html.Span(classes="nf-dot", style=("`background:${props.data.color}`",))
                     html.Span("{{ props.data.label }}")
+                # the init view's coupling lines start and end at the box
+                Handle(position="right", type="source", id="r")
+                Handle(position="left", type="target", id="lt")
 
         with CustomNode("activity"):
             with html.Div(classes="nf-node nf-activity"):
@@ -239,4 +258,6 @@ def _drawer(drawer: Any) -> None:
             html.Div("▢ a box per solver (its region's colour), as it runs alone")
             html.Div("loops and driver ops appear in every box: copies of one shared node")
             html.Div("⇄ coupling node: hands its op the partner's data")
-            html.Div("- - coupling line: what each side sends (x = … →); red, moving: exchanging now")
+            html.Div("- - coupling line, through the interface's ⇆ mapping node: how the data goes onto the"
+                     " partner's points (mapped, or as is: unmapped), the points per side, what each side"
+                     " sends; red, moving: exchanging now")

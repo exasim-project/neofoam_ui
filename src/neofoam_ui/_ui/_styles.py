@@ -117,11 +117,19 @@ _CSS = r"""
 .nf-loop.control { background: #f3f6ff; border-radius: 18px; }
 .nf-loop.control .nf-loop-title { left: 10px; right: 44px; top: 9px; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; opacity: .9; }
-.nf-exlabel { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; font: 600 11px ui-monospace, Menlo, monospace; color: #6741d9; line-height: 13px;
-  pointer-events: none; }
-.nf-exlabel.hot { color: #e0362c; font-size: 12px; }
-.vue-flow__node-exlabel { pointer-events: none; }
+.nf-exmap { width: 100%; height: 100%; box-sizing: border-box; padding: 4px 8px; border: 1.5px dashed #6741d9;
+  border-radius: 6px; background: #f4f0ff; color: #6741d9; font: 600 10.5px ui-monospace, Menlo, monospace;
+  line-height: 13px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+.nf-exmap > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-exmap.hot { border: 2.5px solid #e0362c; color: #e0362c; background: #fff2f1; }
+.nf-map-head { display: flex; justify-content: space-between; gap: 6px; }
+.nf-map-title { opacity: .8; }
+.nf-map-kind { color: #fff; background: #6741d9; border-radius: 7px; padding: 0 6px; }
+.nf-map-kind.unk { background: #9a9aa6; }
+.nf-exmap.hot .nf-map-kind { background: #e0362c; }
+.nf-map-pts { font-weight: 500; opacity: .85; }
+.nf-map-dir { display: inline-block; min-width: 46px; opacity: .75; font-weight: 500; }
+.vue-flow__node-exmap { z-index: 6 !important; }
 .hot-0 .vue-flow__edge.cl-0 path.vue-flow__edge-path,
 .hot-1 .vue-flow__edge.cl-1 path.vue-flow__edge-path,
 .hot-2 .vue-flow__edge.cl-2 path.vue-flow__edge-path,

@@ -221,7 +221,7 @@ class _DagPane(BasePane):
             self._node_of.setdefault(ref, n["id"])
             if "@@" in n["id"] and "::" not in n["id"]:
                 self._boxes_of.setdefault(ref, []).append(f"exec::box:{n['id'].rsplit('@@', 1)[1]}")
-            if n["type"] == "exlabel":
+            if n["type"] == "exmap":
                 data = n["data"]
                 self._line_sides[data["key"]] = (data["left"], data["right"])
                 for ref in data["nodes"]:
@@ -280,7 +280,7 @@ class _DagPane(BasePane):
         if node_id in ("act:init", "act:exec"):  # the tree's headings: show that view
             self.app.state.dag_view = node_id[4:]
             return
-        if node_id.startswith(("act:", "exec::box", "init::box")) or node_id in ("start", "end", "exec:placeholder"):
+        if node_id.startswith(("act:", "exec::box", "init::box", "exmap:")) or node_id in ("start", "end", "exec:placeholder"):
             return
         s, index = self.app.state, self.model.index
         if node_id in index and (index[node_id]["kind"] == "init") != (s.dag_view == "init"):

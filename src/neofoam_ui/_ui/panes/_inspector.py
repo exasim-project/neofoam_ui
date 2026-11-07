@@ -40,6 +40,8 @@ def _inspector_model(model: _RunModel, sel: Optional[str], bps: Iterable[str]) -
             ex = info["exchange"]
             rows.append({"k": "exchange", "v": f"{', '.join(ex.get('data') or ())} ← "
                          f"{ex.get('partner') or '—'} ({ex['source']}), for the op below"})
+            if ex.get("mapping"):
+                rows.append({"k": "mapping", "v": _mapping_text(ex["mapping"], ex.get("data") or ())})
         if info["prev"]:
             is_loop_test = info["prev"] == info["parent"]
             nav.append({"dir": "⬅", **chip(info["prev"], f"↺ {model.name(info['prev'])} test"
@@ -72,3 +74,15 @@ def _inspector_model(model: _RunModel, sel: Optional[str], bps: Iterable[str]) -
         "seen": model.writes_seen.get(sel, []),
         "bp": sel in bps,
     }
+
+
+def _mapping_text(mapping: dict[str, Any], data: Iterable[str]) -> str:
+    """A coupling node's mapping, e.g. ``nearest-neighbor, 4 → 3 points; mapped T, as is h``."""
+    pts = lambda n: "?" if n is None else str(n)  # noqa: E731
+    text = f"{mapping.get('kind') or 'unknown'}, {pts(mapping.get('source_points'))} → " \
+           f"{pts(mapping.get('target_points'))} points"
+    mapped = mapping.get("mapped")
+    if mapped is None:
+        return text + "; mapped fields unknown"
+    plain = [n for n in data if n not in mapped]
+    return text + "; mapped " + (", ".join(mapped) or "—") + (f", as is {', '.join(plain)}" if plain else "")

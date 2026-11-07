@@ -2,15 +2,17 @@
 
 * **Initialization** (``view="init"``) — the init DAG, layered by longest dependency path:
   the driver's steps (no region) on top, below them one box per region with its own steps,
-  in the regions' order of the execution view;
+  in the regions' order of the execution view; once the execution graph is known, every
+  interface's mapping node between its two boxes, on the coupling line that joins them;
 * **Execution** (``view="exec"``) — the operation tree. A multi-region solver is drawn as one
   box per region, each the full solver as it would run alone: the tree *projected* onto the
   region — its own ops and every op of no region (the driver's, e.g. ``set_time_step``), in
   their loops. A shared op (a loop, a driver op) thus appears once per box; each copy has the
   id ``<op id>@@<region>`` and ``data.ref``, the shared op's id, which the UI binds to (token,
   selection, breakpoints, pass, residuals). Between the boxes only the coupling nodes of one
-  coupling loop are joined: one line with arrowheads at both ends, labelled with the exchanged
-  data. A solver without regions is one tree, no boxes. There are no frames: a loop is its
+  coupling loop are joined: one line per interface, arrowheads at both ends, through the
+  interface's *mapping node* in the gap (how the data goes from one side's interface points
+  onto the other's, and what each side sends). A solver without regions is one tree, no boxes. There are no frames: a loop is its
   compact control node (one line: title, pass, residuals; the test diamond at its right end)
   above its body, with a ``[true]`` edge
   into the first op, a dashed back edge from the last op and a ``[false]`` exit on the left.
@@ -46,10 +48,10 @@ __all__ = ()
 
 
 #: Height of a region box's header (its region), its padding around its content, the width of
-#: the gap between two boxes (room for the coupling lines and their labels), and the size of a
-#: loop's control node.
+#: the gap between two boxes (room for the coupling lines and their mapping nodes), and the
+#: size of a loop's control node.
 _BOX_HEAD, _BOX_PAD = 30, 14
-_BOX_GAP = 200
+_BOX_GAP = 290
 _CTRL_W, _CTRL_H = 320, 36
 #: Space left of a loop's footprint for its ``[false]`` exit edge.
 _EXIT = 24
@@ -447,55 +449,114 @@ def _solver(ops: list[dict[str, Any]], x0: float, y0: float, suffix: str, nodes:
     return y + 26 - y0
 
 
-def _between(ops: list[dict[str, Any]], regions: list[str], placed: dict[str, dict[str, Any]],
-             out_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The lines between the region boxes: per coupling loop, one between each pair of coupling
-    nodes (their regions' copies), arrowheads at both ends. Each line gets a key (``cl-<n>``,
-    its edge class) and a label node in its middle (``exlabel``) with the exchanged data, which
-    the UI fills with the values while the run steps (``ex_vals``) and highlights (``ex_hot``)."""
+def _interfaces(ops: list[dict[str, Any]], regions: list[str]) -> list[dict[str, Any]]:
+    """The coupled interfaces, one per pair of coupling nodes of one coupling loop that take each
+    other's data: ``{"key", "left", "right"}``, ``left``/``right`` the two coupling ops in the
+    boxes' order (``regions``). ``key`` (``"0"``, ``"1"``, …) keys the interface's line, its
+    mapping node, its values (``ex_vals``) and its highlight (``ex_hot``)."""
     out: list[dict[str, Any]] = []
-    for op in ops:
-        if op["kind"] != "loop":
-            continue
-        out += _between(op["children"], regions, placed, out_nodes)
-        couplers = [c for c in op["children"] if c.get("exchange") and c.get("region") in regions]
-        done: set[str] = set()
-        for c in couplers:
-            partner = next((d for d in couplers if d is not c and d.get("region") == c["exchange"].get("partner")
-                            and d["exchange"].get("partner") == c.get("region")), None)
-            if partner is None or partner["id"] in done:
+
+    def walk(ops_: list[dict[str, Any]]) -> None:
+        for op in ops_:
+            if op["kind"] != "loop":
                 continue
-            done.add(c["id"])
-            left, right = sorted((c, partner), key=lambda n: regions.index(n["region"]))
-            source, target = f"{left['id']}{_SEP}{left['region']}", f"{right['id']}{_SEP}{right['region']}"
-            if source not in placed or target not in placed:
-                continue
-            key = str(sum(1 for n in out_nodes if n["type"] == "exlabel"))
-            data = [*c["exchange"].get("data", ()), *(n for n in partner["exchange"].get("data", ())
-                                                      if n not in c["exchange"].get("data", ()))]
-            out.append(_line(source, target, key))
-            s, tgt = placed[source], placed[target]
-            x0, x1 = s["position"]["x"] + s["width"], tgt["position"]["x"]
-            out_nodes.append({
-                "id": f"exlabel:{key}", "type": "exlabel",
-                "position": {"x": x0 + 8, "y": s["position"]["y"] - 30},
-                "data": {"key": key, "data": ", ".join(data), "left": left["region"], "right": right["region"],
-                         "nodes": [left["id"], right["id"]]},
-                "width": max(x1 - x0 - 16, 40), "height": 28,
-                "style": {"width": f"{max(x1 - x0 - 16, 40)}px", "height": "28px"},
-                "draggable": False, "selectable": False, "connectable": False,
-            })
+            walk(op["children"])
+            couplers = [c for c in op["children"] if c.get("exchange") and c.get("region") in regions]
+            done: set[str] = set()
+            for c in couplers:
+                partner = next((d for d in couplers if d is not c and d.get("region") == c["exchange"].get("partner")
+                                and d["exchange"].get("partner") == c.get("region")), None)
+                if partner is None or partner["id"] in done:
+                    continue
+                done.add(c["id"])
+                left, right = sorted((c, partner), key=lambda n: regions.index(n["region"]))
+                out.append({"key": str(len(out)), "left": left, "right": right})
+
+    walk(ops)
     return out
 
 
-def _line(source: str, target: str, key: str) -> dict[str, Any]:
-    """A coupling line between two coupling nodes, arrowheads at both ends (class ``cl-<key>``)."""
+def _mapping_data(face: dict[str, Any]) -> dict[str, Any]:
+    """What an interface's mapping node shows (``data``): the data each way, mapped or not, the
+    mapping kind and each side's interface points; ``None`` where the solver does not tell.
+
+    A coupling node's ``exchange`` is what it *receives*: the right node's is the data that
+    goes left → right, mapped from the left side's points onto its own."""
+    left, right = face["left"], face["right"]
+    lx, rx = left["exchange"], right["exchange"]
+    lm, rm = lx.get("mapping") or {}, rx.get("mapping") or {}
+
+    def fields(exchange: dict[str, Any], mapping: dict[str, Any]) -> list[dict[str, Any]]:
+        mapped = mapping.get("mapped")
+        return [{"name": n, "mapped": None if mapped is None else n in mapped} for n in exchange.get("data") or ()]
+
+    def first(*values: Any) -> Any:
+        return next((v for v in values if v is not None), None)
+
+    kinds = list(dict.fromkeys(k for k in (rm.get("kind"), lm.get("kind")) if k))
+    names = [*(lx.get("data") or ()), *(n for n in rx.get("data") or () if n not in (lx.get("data") or ()))]
+    return {
+        "key": face["key"], "left": left["region"], "right": right["region"],
+        "nodes": [left["id"], right["id"]], "data": ", ".join(names),
+        "kind": " / ".join(kinds) or None,
+        "points": {left["region"]: first(rm.get("source_points"), lm.get("target_points")),
+                   right["region"]: first(lm.get("source_points"), rm.get("target_points"))},
+        # left → right is what the right node receives; right → left what the left one does
+        "ways": [{"from": left["region"], "to": right["region"], "fields": fields(rx, rm)},
+                 {"from": right["region"], "to": left["region"], "fields": fields(lx, lm)}],
+    }
+
+
+#: A mapping node: the place on a coupling line, between the boxes, where the data is mapped
+#: from one side's interface points onto the other's.
+_MAP_W, _MAP_H = 210, 76
+
+
+def _map_node(face: dict[str, Any], cx: float, cy: float) -> dict[str, Any]:
+    """The mapping node of interface ``face``, centred on ``(cx, cy)``."""
+    return {
+        "id": f"exmap:{face['key']}", "type": "exmap",
+        "position": {"x": cx - _MAP_W / 2, "y": cy - _MAP_H / 2},
+        "data": _mapping_data(face),
+        "width": _MAP_W, "height": _MAP_H, "style": {"width": f"{_MAP_W}px", "height": f"{_MAP_H}px"},
+        "draggable": False, "selectable": False, "connectable": False,
+    }
+
+
+def _between(ops: list[dict[str, Any]], regions: list[str], placed: dict[str, dict[str, Any]],
+             out_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The lines between the region boxes: per interface (:func:`_interfaces`) one from the left
+    coupling node through the interface's mapping node (``exmap``, in the middle of the gap) to
+    the right one, arrowheads at the coupling nodes. Both halves carry the line's class
+    (``cl-<key>``); the mapping node shows the data each way and is filled with the values
+    while the run steps (``ex_vals``) and lit with the line (``ex_hot``)."""
+    out: list[dict[str, Any]] = []
+    for face in _interfaces(ops, regions):
+        left, right = face["left"], face["right"]
+        source, target = f"{left['id']}{_SEP}{left['region']}", f"{right['id']}{_SEP}{right['region']}"
+        if source not in placed or target not in placed:
+            continue
+        s, tgt = placed[source], placed[target]
+        # in the middle of the gap between the two boxes (else between the two nodes)
+        a, b = placed.get(f"exec::box:{left['region']}", s), placed.get(f"exec::box:{right['region']}", tgt)
+        x0, x1 = a["position"]["x"] + a["width"], b["position"]["x"]
+        node = _map_node(face, (x0 + x1) / 2, s["position"]["y"] + s["height"] / 2)
+        out_nodes.append(node)
+        out += _line(source, node["id"], target, face["key"])
+    return out
+
+
+def _line(source: str, mapping: str, target: str, key: str, straight: bool = True) -> list[dict[str, Any]]:
+    """A coupling line from ``source`` through its mapping node to ``target`` (class
+    ``cl-<key>``): two halves, arrowheads where the data arrives, at the two ends."""
     color = "#6741d9"
     arrow = {"type": "arrowclosed", "color": color}
-    return _edge(source, target, type="straight",
-                 sourceHandle="r", targetHandle="lt",
-                 style={"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
-                 markerStart=arrow, markerEnd=arrow, **{"class": f"nf-couple cl-{key}"})
+    common = {"type": "straight" if straight else "smoothstep",
+              "style": {"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
+              "class": f"nf-couple cl-{key}"}
+    first = _edge(source, mapping, sourceHandle="r", targetHandle="lt", markerStart=arrow, **common)
+    del first["markerEnd"]  # (the mapping node's end has none)
+    return [first, _edge(mapping, target, sourceHandle="r", targetHandle="lt", markerEnd=arrow, **common)]
 
 
 # -- initialization activity ------------------------------------------------------------
@@ -526,17 +587,23 @@ def _init_block(steps: list[dict[str, Any]]) -> tuple[float, float, list[tuple[d
     return width, height, placed
 
 
-def _init_view(steps: list[dict[str, Any]], regions: list[str]) -> dict[str, list[dict[str, Any]]]:
+def _init_view(steps: list[dict[str, Any]], regions: list[str],
+               ops: Optional[list[dict[str, Any]]] = None) -> dict[str, list[dict[str, Any]]]:
+    """The init DAG; with the execution graph known (``ops``), the boxes in its order and every
+    interface's mapping node between its two boxes, joined to them by the coupling line."""
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     driver = [s for s in steps if not s.get("region")]
     regions = [*regions, *(s["region"] for s in steps if s.get("region") and s["region"] not in regions)]
     regions = list(dict.fromkeys(regions))
+    if ops:
+        regions = _chain_order(ops, regions)
+    faces = _interfaces(ops or [], regions)
     # a region not initialized yet (known from an earlier run) is an empty box
     groups = [(r, [s for s in steps if s.get("region") == r]) for r in regions]
     top_w, top_h, top = _init_block(driver)
     blocks = [(r, *_init_block(g)) for r, g in groups]
-    gap = 60
+    gap = _BOX_GAP if faces else 60
     boxes_w = sum(w + 2 * _BOX_PAD for _, w, _, _ in blocks) + gap * max(len(blocks) - 1, 0)
     width = max(top_w, boxes_w)
     y = _TOP
@@ -550,6 +617,14 @@ def _init_view(steps: list[dict[str, Any]], regions: list[str]) -> dict[str, lis
         for step, sx, sy in placed:
             nodes.append(_init_node(step, x + _BOX_PAD + sx, y + _BOX_HEAD + sy))
         x += w + 2 * _BOX_PAD + gap
+    boxes = {n["id"][len("init::box:"):]: n for n in nodes if n["type"] == "region"}
+    for face in faces:
+        a, b = boxes[face["left"]["region"]], boxes[face["right"]["region"]]
+        x0, x1 = a["position"]["x"] + a["width"], b["position"]["x"]
+        cy = min(a["position"]["y"] + a["height"] / 2, b["position"]["y"] + b["height"] / 2)
+        node = _map_node(face, (x0 + x1) / 2, cy)
+        nodes.append(node)
+        edges += _line(a["id"], node["id"], b["id"], face["key"], straight=False)
     shown = {s["id"] for s in steps}
     for step in steps:
         for dep in step["depends_on"]:
@@ -586,5 +661,5 @@ def _build_flow(
         order: list[str] = list(regions)
         for op in ops or ():
             order += [r for r in _regions_in(op) if r not in order]
-        return _init_view(init_steps, order)
+        return _init_view(init_steps, order, ops)
     return _exec_view(ops, collapsed, closed)
