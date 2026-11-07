@@ -140,6 +140,7 @@ class StepperApp:
         s.cur_kind = None
         s.depth = 0
         s.active_loops = []
+        s.loop_iter = {}
         s.status = "starting solver worker…"
         s.logs = []
         s.scalars = []
@@ -246,6 +247,9 @@ class StepperApp:
         s.cur_kind = ev["kind"]
         s.depth = ev["depth"]
         s.active_loops = [lid for lid, _ in ev["stack"]] + ([ev["node"]] if ev["kind"] == "test" else [])
+        # The pass each active loop is in (a loop test: the pass it decides on).
+        s.loop_iter = {**{lid: it for lid, it in ev["stack"]},
+                       **({ev["node"]: ev["iter"]} if ev["kind"] == "test" else {})}
         if ev["kind"] == "end":
             s.callstack = ["— finished —"]
             return

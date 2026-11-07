@@ -131,6 +131,14 @@ delay {{ delay_ms }} ms
 <div class="nf-status" :style="failed ? 'color:#d22' : running ? '' : 'color:#e0362c'">
 {{ status }}
 </div>
+<div class="nf-regions" v-if="regions.length">
+<span class="nf-region" :key="r.name" v-for="r in regions">
+<span class="nf-dot" :style="`background:${r.color}`" />
+<span >
+{{ r.name }}
+</span>
+</span>
+</div>
 <node-editor :ref="(el) => trame.refs['_node_editor_3'] = el" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" :min-zoom="0.1">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
@@ -177,6 +185,9 @@ delay {{ delay_ms }} ms
 </span>
 <span >
 «loop» {{ props.data.number }} {{ props.data.label }}
+</span>
+<span class="nf-loop-pass" v-if="loop_iter[props.id]">
+ · pass {{ loop_iter[props.id] }}
 </span>
 </div>
 <div class="nf-loop-test">
@@ -230,8 +241,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w399-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w400-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w411-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w412-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -316,7 +327,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w440-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w452-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -565,6 +576,9 @@ green = executed this time step
 </div>
 <div >
 click a field: ops that wrote (orange) / read (blue) it
+</div>
+<div v-if="regions.length">
+stripe colour: the op's region (multi-region), else its model
 </div>
 </div>
 </VNavigationDrawer>

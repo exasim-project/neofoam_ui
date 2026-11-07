@@ -21,6 +21,10 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
     """The diagram (``minimap``: when its minimap shows)."""
     html.Div("{{ status }}", classes="nf-status",
              style=("failed ? 'color:#d22' : running ? '' : 'color:#e0362c'",))
+    with html.Div(classes="nf-regions", v_if="regions.length"):
+        with html.Span(v_for="r in regions", key="r.name", classes="nf-region"):
+            html.Span(classes="nf-dot", style=("`background:${r.color}`",))
+            html.Span("{{ r.name }}")
     cls_node = "props.id === cur_node && cur_kind !== 'test'"
     with NodeEditor(style="width: 100%; height: 100%;",
                     node_click=(pane.select, "[$event.node.id]")) as editor:
@@ -73,6 +77,8 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                               title="collapse / expand",
                               raw_attrs=['@click.stop="trigger(\'nf_collapse\', [props.id])"'])
                     html.Span("«loop» {{ props.data.number }} {{ props.data.label }}")
+                    html.Span(" · pass {{ loop_iter[props.id] }}", classes="nf-loop-pass",
+                              v_if="loop_iter[props.id]")
                 html.Div("test: {{ props.data.test }}", classes="nf-loop-test")
                 html.Div("{{ heat_ms[props.id] ? heat_ms[props.id] + ' · ' : '' }}"
                          "{{ props.data.size }} actions", classes="nf-loop-size",
@@ -196,3 +202,4 @@ def _drawer(drawer: Any) -> None:
         html.Div("● breakpoint — click the gutter left of a node")
         html.Div("▾ / ▸ on a loop: collapse / expand its body")
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
+        html.Div("stripe colour: the op's region (multi-region), else its model", v_if="regions.length")

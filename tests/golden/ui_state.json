@@ -33,6 +33,7 @@
   "insp": null,
   "is_mobile": false,
   "logs": [],
+  "loop_iter": {},
   "main_drawer": true,
   "pp_cat_msg": "",
   "pp_graph": false,
@@ -48,6 +49,7 @@
    "data": [],
    "layout": {}
   },
+  "regions": [],
   "running": false,
   "scalars": [],
   "selected": null,

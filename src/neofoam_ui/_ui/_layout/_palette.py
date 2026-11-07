@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 __all__ = ()
 
@@ -57,3 +57,11 @@ class _Palette:
 _DOMAIN = _Palette(_DOMAIN_COLORS)
 #: Post-processing pipeline nodes by their kind.
 _PIPELINE = _Palette(_PIPELINE_COLORS)
+#: The regions of a multi-region solver (multiRun), in the order they first appear.
+_REGION = _Palette({})
+
+
+def _node_color(node: dict[str, Any], key: str) -> str:
+    """A node's stripe colour: its region's, if it belongs to one, else its ``key`` (domain / category)."""
+    region = node.get("region")
+    return _REGION.color(region) if region else _DOMAIN.color(node.get(key))

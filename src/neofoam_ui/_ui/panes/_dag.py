@@ -59,6 +59,7 @@ class _DagPane(BasePane):
         s.hl = {}
         s.selected = None
         s.tree = []
+        s.regions = []
         s.insp = None
         s.bp_list = []
         # Closed, a run reports no events (the solver runs as without the UI).
@@ -152,6 +153,7 @@ class _DagPane(BasePane):
     def rebuild(self, fit: bool = True) -> None:
         s = self.app.state
         s.tree = self.model.reindex(s.solver_name)
+        s.regions = self.model.regions()
         collapsed = frozenset(s.collapsed or ())
         self.editor.graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed)
         if fit:

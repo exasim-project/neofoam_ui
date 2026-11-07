@@ -30,7 +30,7 @@ from neofoam_ui._ui._layout._common import (
     _activity,
     _edge,
 )
-from neofoam_ui._ui._layout._palette import _DOMAIN
+from neofoam_ui._ui._layout._palette import _node_color
 
 __all__ = ()
 
@@ -76,7 +76,7 @@ def _ops(
                 "number": op.get("pos") or op.get("number") or "",
                 "collapsed": op["id"] in collapsed,
                 "size": _count(op),
-                "color": _DOMAIN.color(op.get("domain")),
+                "color": _node_color(op, "domain"),
                 "guard": op.get("guard"),
                 "injected_by": op.get("injected_by"),
                 "test": op.get("test"),
@@ -188,7 +188,7 @@ def _build_flow(
                     "parentNode": "act:init",
                     "position": {"x": (init_w - row_w) / 2 + si * (_IW + 24),
                                  "y": _ACT_HEAD + li * (_IH + _GAP)},
-                    "data": {"label": step["name"], "color": _DOMAIN.color(step.get("category"))},
+                    "data": {"label": step["name"], "color": _node_color(step, "category")},
                     "width": _IW, "height": _IH,
                     "draggable": False, "selectable": False, "connectable": False,
                 }

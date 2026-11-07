@@ -101,6 +101,10 @@ _CSS = r"""
 .nf-node.hlr { box-shadow: 0 0 0 3px #4d8fe0; }
 .nf-vars tr.hl td { outline: 1px solid #f08c00; background: rgba(240,140,0,.12); }
 .nf-loop-title { position: absolute; left: 10px; top: 6px; font-size: 12px; opacity: .8; }
+.nf-loop-pass { font-weight: 600; color: #e0362c; }
+.nf-regions { position: absolute; right: 10px; top: 8px; z-index: 5; font-size: 12px; padding: 2px 8px;
+  display: flex; gap: 10px; background: rgba(128,128,128,.08); border-radius: 10px; }
+.nf-region { display: inline-flex; align-items: center; gap: 4px; }
 .nf-loop-test { position: absolute; left: 26px; top: 24px; font-size: 11px; opacity: .65; font-family: ui-monospace, Menlo, monospace; }
 .nf-decision { width: 100%; height: 100%; position: relative; cursor: pointer; }
 .nf-decision .d { position: absolute; inset: 5px; transform: rotate(45deg); border: 1.6px solid #7b8fc7; background: #f3f6ff; }

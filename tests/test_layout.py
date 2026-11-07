@@ -74,3 +74,20 @@ def test_empty_loop_is_drawn():
            {"id": "after", "name": "after", "kind": "action", "children": []}]
     nodes = {n["id"]: n for n in build_flow([], ops)["nodes"]}
     assert nodes["wait"]["type"] == "loop" and "wait::test" in nodes and "after" in nodes
+
+
+def test_region_ops_take_their_region_colour_and_make_the_legend():
+    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
+    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
+    from neofoam_ui.engine import Op  # noqa: PLC0415
+
+    ops = [Op("loop", "loop", lambda ctx: False, [Op("a.solve", "action", lambda ctx: None, region="a"),
+                                                  Op("b.solve", "action", lambda ctx: None, region="b")])]
+    assign_ids(ops)
+    model = _RunModel()
+    model.graph({"activity": "exec", "ops": [op_dict(o) for o in ops]})
+    nodes = {n["id"]: n for n in build_flow([], model.ops)["nodes"]}
+
+    assert nodes["loop/a.solve"]["data"]["color"] == _REGION.color("a")
+    assert nodes["loop/a.solve"]["data"]["color"] != nodes["loop/b.solve"]["data"]["color"]
+    assert [r["name"] for r in model.regions()] == ["a", "b"]

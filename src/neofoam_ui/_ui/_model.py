@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from neofoam_ui._ui._layout._palette import _DOMAIN
+from neofoam_ui._ui._layout._palette import _REGION, _node_color
 
 __all__ = ()
 
@@ -48,7 +48,7 @@ class _RunModel:
                                    "preds": s["depends_on"],
                                    "succs": [t["id"] for t in self.init_steps if s["id"] in t["depends_on"]]}
             tree.append({"id": s["id"], "name": s["name"], "depth": 1, "kind": "init",
-                         "color": _DOMAIN.color(s.get("category"))})
+                         "color": _node_color(s, "category")})
         tree.append({"id": "act:exec", "name": f"Execution · {solver_name}", "depth": 0,
                      "color": "#8a94a6", "kind": "activity"})
 
@@ -59,11 +59,27 @@ class _RunModel:
                 self.index[op["id"]] = {**op, "parent": parent, "prev": prev, "next": nxt,
                                         "child_ids": [c["id"] for c in op["children"]]}
                 tree.append({"id": op["id"], "name": op["name"], "depth": depth, "kind": op["kind"],
-                             "color": _DOMAIN.color(op.get("domain"))})
+                             "color": _node_color(op, "domain")})
                 walk(op["children"], op["id"], depth + 1)
 
         walk(self.ops, None, 1)
         return tree
+
+    def regions(self) -> list[dict[str, str]]:
+        """The regions of the graph, in order of appearance, with their colour (the legend)."""
+        seen: dict[str, None] = {}
+
+        def walk(ops: list[dict[str, Any]]) -> None:
+            for op in ops:
+                if op.get("region"):
+                    seen.setdefault(op["region"], None)
+                walk(op["children"])
+
+        for s in self.init_steps:
+            if s.get("region"):
+                seen.setdefault(s["region"], None)
+        walk(self.ops)
+        return [{"name": r, "color": _REGION.color(r)} for r in seen]
 
     def name(self, node_id: Optional[str]) -> str:
         if not node_id:
