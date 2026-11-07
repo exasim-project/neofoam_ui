@@ -23,15 +23,15 @@ def test_app_tells_the_worker_who_watches():
     app = StepperApp(get_server("overhead_watch", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D",
                      delay_ms=40)
     sent = []
-    app._send = sent.append
+    app.link.send = sent.append
     assert app.state.delay_ms == 40 and app.state.dag_on
     app.viewer(True)  # a browser tab shows the app
     assert sent[-1] == {"cmd": "watch", "on": True}
     app.state.dag_on = False  # the DAG pane closed (the state listener calls this)
-    app._send_watch()
+    app.dag.send_watch()
     assert sent[-1] == {"cmd": "watch", "on": False}
     app.state.dag_on = True
-    app._send_watch()
+    app.dag.send_watch()
     assert sent[-1] == {"cmd": "watch", "on": True}
     app.viewer(False)  # ... and is gone
     assert sent[-1] == {"cmd": "watch", "on": False}
@@ -47,8 +47,8 @@ def test_state_is_pushed_at_a_capped_rate_and_syncs_are_acknowledged():
 
     app = StepperApp(get_server("overhead_push", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D")
     pushes = []
-    real = app._push
-    app._push = lambda: (pushes.append(1), real())[1]
+    real = app.pusher.push
+    app.pusher.push = lambda: (pushes.append(1), real())[1]
     written = []
 
     class Stdin:
@@ -65,7 +65,7 @@ def test_state_is_pushed_at_a_capped_rate_and_syncs_are_acknowledged():
         proc.stdout.feed_data((json.dumps({"type": "sync", "seq": 3}) + "\n").encode())
         proc.stdout.feed_data(b'{"type": "stdout", "text": "last"}\n')
         proc.stdout.feed_eof()
-        await app._read_stdout(proc)
+        await app.link._read_stdout(proc)
 
     asyncio.run(feed())
     assert len(pushes) < 20  # not one per message

@@ -139,8 +139,8 @@ async def _run_ui(case: Path, python: str, np_: int, mode: str, catalyst: str | 
     while not (s.finished or s.failed or not s.connected):
         await asyncio.sleep(0.01)
     t_end = time.time()
-    out_dir = os.path.join(app.insitu_dir, app._run_dir)
-    frames = len(os.listdir(out_dir)) if app._run_dir and os.path.isdir(out_dir) else 0
+    out_dir = os.path.join(app.insitu_dir, app.run_dir)
+    frames = len(os.listdir(out_dir)) if app.run_dir and os.path.isdir(out_dir) else 0
     app.stop()
     try:
         await asyncio.wait_for(app.proc.wait(), 60)

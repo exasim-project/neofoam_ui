@@ -359,27 +359,27 @@ def test_app_draws_tables_and_plots_their_rows():
     tables = [describe_table(t) for t in processor()._tables]
     s = app.state
     with s:
-        app._handle({"type": "pptables", "tables": tables})
+        app.dispatch({"type": "pptables", "tables": tables})
         assert s.pp_graph and "NeoFOAM: 2 tables" in s.pp_msg
-        frames = [n["id"] for n in app.pp_editor.graph["nodes"] if n["type"] == "activity"]
+        frames = [n["id"] for n in app.pane("pipeline").editor.graph["nodes"] if n["type"] == "activity"]
         assert frames == ["pp:act:p_mean", "pp:act:U_bins"]
         # Catalyst not configured: the tables stay
-        app._handle({"type": "frame", "file": None, "fields": [], "error": "in-situ view off"})
+        app.dispatch({"type": "frame", "file": None, "fields": [], "error": "in-situ view off"})
         assert s.pp_graph and "in-situ view off" in s.pp_msg
-        app._handle(msg("p_mean", 0.1, [[1.0]]))
+        app.dispatch(msg("p_mean", 0.1, [[1.0]]))
         assert s.pt_charts == []  # the Plots pane is closed: nothing sent
         s.pt_on = True
-        app._plot(force=True)
+        app.pane("plots").plot(force=True)
         # the select box offers every table; the first is chosen, only chosen ones are charted
         assert s.pt_names == ["p_mean", "U_bins"] and s.pt_sel == ["p_mean"]
         assert [c["name"] for c in s.pt_charts] == ["p_mean"]
         assert s.pt_charts[0]["data"][0]["y"] == [1.0]
         s.pt_sel = ["U_bins", "p_mean"]
-        app._plot(force=True)
+        app.pane("plots").plot(force=True)
         assert [c["name"] for c in s.pt_charts] == ["p_mean", "U_bins"]  # declaration order
         assert s.pp_ms["pp:act:p_mean"] == "0.5 ms"
         app._reset_state()  # what a restart does
-        assert s.pt_charts == [] and app.history.charts() == [] and s.pt_on
+        assert s.pt_charts == [] and app.pane("plots").history.charts() == [] and s.pt_on
         assert s.pt_sel == ["U_bins", "p_mean"]  # the choice survives
 
 
@@ -390,7 +390,7 @@ def test_no_tables_says_so():
 
     app = StepperApp(get_server("pptables_none", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D")
     with app.state:
-        app._handle({"type": "pptables", "tables": []})
+        app.dispatch({"type": "pptables", "tables": []})
     assert "declares no post-processing tables" in app.state.pt_msg
     assert not app.state.pp_graph
-    assert math.isfinite(app._plotted)
+    assert math.isfinite(app.pane("plots").plotted)

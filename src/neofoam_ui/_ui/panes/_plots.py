@@ -10,9 +10,15 @@ plotly.js is bundled (works offline).
 
 from __future__ import annotations
 
+import time
+from typing import Any, Mapping
+
 from trame.widgets import html
 from trame.widgets import vuetify3 as v3
 from trame_plotly.widgets import plotly
+
+from neofoam_ui._ui.panes._table_history import _TableHistory
+from neofoam_ui.extensions import BasePane, PaneContext, PaneToggle
 
 __all__ = ()
 
@@ -45,3 +51,78 @@ def _plot_pane() -> None:
                 html.Div("{{ ptc.note }}", v_if="ptc.note", classes="nf-pt-note")
         html.Div("{{ pt_names.length && !pt_sel.length ? 'pick tables to plot' : pt_msg }}",
                  classes="nf-field-empty", v_show="!pt_charts.length")
+
+
+#: Seconds between chart updates while running (each step brings a row per table).
+_PLOT_EVERY = 0.5
+
+
+class _PlotsPane(BasePane):
+    """NeoFOAM's post-processing tables plotted over time; the chosen tables survive a restart."""
+
+    name = "plots"
+    toggle = PaneToggle("pt_on", "Plots", "mdi-chart-line", "plot NeoFOAM's post-processing tables over time")
+    css = _PLOT_CSS
+
+    def __init__(self, ctx: PaneContext) -> None:
+        super().__init__(ctx)
+        #: Rows of NeoFOAM's post-processing tables (``pptable``).
+        self.history = _TableHistory()
+        self.plotted = 0.0
+        ctx.state.change("pt_on", "pt_sel")(lambda **_: self.plot(force=True))
+
+    def reset(self) -> None:
+        s = self.ctx.state
+        # The toggle survives a restart, the history not.
+        s.pt_on = bool(s.pt_on)
+        s.pt_charts = []
+        s.pt_names = []
+        s.pt_sel = list(s.pt_sel or [])  # the chosen tables survive a restart
+        s.pt_msg = "the tables' rows appear after the first post_process (once initialized)"
+        self.history.clear()
+
+    def build(self) -> None:
+        _plot_pane()
+
+    def handlers(self) -> Mapping[str, Any]:
+        return {"pptables": self._on_tables, "pptable": self._on_row,
+                "paused": lambda msg: self.plot(force=True)}
+
+    def _on_tables(self, msg: dict[str, Any]) -> None:
+        tables = msg["tables"]
+        self.history.declare([t["name"] for t in tables])
+        self._table_names()
+        self.ctx.state.pt_msg = (f"{len(tables)} tables declared · rows after each post_process"
+                                 if tables else
+                                 "this case declares no post-processing tables "
+                                 "(system/postProcess.py / postProcess.yaml)")
+        self.plot(force=True)
+
+    def _on_row(self, msg: dict[str, Any]) -> None:
+        self.history.add(msg)
+        self.plot()
+
+    def plot(self, force: bool = False) -> None:
+        """Hand the tables' history to the charts: at pauses, at most every ``_PLOT_EVERY`` s running."""
+        s = self.ctx.state
+        now = time.monotonic()
+        if not force and now - self.plotted < _PLOT_EVERY:
+            return
+        self.plotted = now
+        if len(self.history.names()) != len(s.pt_names):
+            self._table_names()
+        if not s.pt_on or not self.history.names():
+            return
+        s.pt_charts = self.history.charts(s.pt_sel)
+        t = self.history.time
+        ranks = f"reduced over {self.ctx.np} ranks" if self.ctx.np > 1 else ""
+        parts = [f"{len(s.pt_charts)} of {len(s.pt_names)} tables",
+                 f"t = {t:.6g}" if t is not None else "no rows yet", ranks]
+        s.pt_msg = " · ".join(p for p in parts if p)
+
+    def _table_names(self) -> None:
+        """The select box's tables; keeps the choice that still exists, else the first table."""
+        s = self.ctx.state
+        s.pt_names = self.history.names()
+        kept = [n for n in s.pt_sel if n in s.pt_names]
+        s.pt_sel = kept or s.pt_names[:1]
