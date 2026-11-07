@@ -26,13 +26,30 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
         predicate = op.func.func
         if inspect.ismethod(predicate):  # e.g. a CouplingOp's own pass predicate
             test = f"{type(predicate.__self__).__name__}()"
+            if hasattr(predicate.__self__, "parallel"):
+                test += " · parallel" if predicate.__self__.parallel else " · serial"
         elif inspect.isfunction(predicate):
             test = f"{predicate.__name__}()"
         else:
             test = type(predicate).__name__ + "()"
         return Op(name, "loop", op.func, [_convert(c, injected) for c in op.sub_operations],
-                  test=test, **common)
+                  test=test, couples=_couples(op.func), **common)
     return Op(name, "action", op.run, guard=guard, **common)
+
+
+def _couples(loop: Any) -> list[tuple[str, str, str]]:
+    """A NeoFOAM ``CouplingOp``'s exchange: each side's send op to its partner's receive op.
+
+    The two sides attached to one coupling (``loop.sides``, each wrapping the solution of a
+    field such as ``a.x``) are partners; their ops are named ``send_<field>`` and
+    ``receive_<field>`` by the coupling. The data is named after the field without its region.
+    """
+    sides = getattr(loop, "sides", None)
+    if not isinstance(sides, list) or len(sides) != 2:
+        return []
+    fields = [str(getattr(side, "field", "")) for side in sides]
+    return [(f"send_{fields[i]}", f"receive_{fields[1 - i]}", fields[i].rsplit(".", 1)[-1])
+            for i in range(2)]
 
 
 def _turb_corr_gate(func: Any) -> Optional[tuple[Any, str]]:

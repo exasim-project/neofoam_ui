@@ -184,3 +184,20 @@ def test_a_loop_driven_by_a_bound_method_shows_its_class():
     loop = FakeOp("loop", [])
     loop.func = SimpleNamespace(func=CouplingOp()._next_pass)
     assert _convert(loop, {}).test == "CouplingOp()"
+
+
+def test_a_coupling_loop_names_its_exchange_and_scheme():
+    from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
+
+    class CouplingOp:
+        parallel = False
+        sides = [SimpleNamespace(field="a.x"), SimpleNamespace(field="b.y")]
+
+        def _next_pass(self, ctx):
+            return False
+
+    loop = FakeOp("loop", [])
+    loop.func = SimpleNamespace(func=CouplingOp()._next_pass, sides=CouplingOp.sides)
+    op = _convert(loop, {})
+    assert op.test == "CouplingOp() · serial"
+    assert op.couples == [("send_a.x", "receive_b.y", "x"), ("send_b.y", "receive_a.x", "y")]

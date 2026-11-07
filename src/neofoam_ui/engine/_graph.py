@@ -35,6 +35,9 @@ class Op:
     pos: str = ""
     #: The region of a multi-region solver the op belongs to (``None``: the solver's own).
     region: Optional[str] = None
+    #: A coupling loop's data exchange: ``(send op name, receive op name, data name)``, one
+    #: per direction (names of ops in the loop's body).
+    couples: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass
