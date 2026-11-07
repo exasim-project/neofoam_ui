@@ -237,6 +237,27 @@ def test_pipeline_is_described_from_the_node_objects():
     assert by_id["nf:p_mean:0.right"]["type"] == "not"
 
 
+def test_a_registered_describer_describes_its_nodes(monkeypatch):
+    from neofoam_ui.pptables import _describe  # noqa: PLC0415
+    from neofoam_ui.pptables import register_describer  # noqa: PLC0415
+
+    monkeypatch.setattr(_describe, "_DESCRIBERS", [])
+
+    def binary(obj):  # e.g. a case's own selector, drawn as one node
+        if getattr(obj, "type", None) != "binary":
+            return None
+        return {"name": "region", "settings": [["rule", "left and not right"]]}
+
+    register_describer(binary)
+    desc = describe_table(processor()._tables[0])
+    by_id = {n["id"]: n for n in desc["nodes"]}
+    node = by_id["nf:p_mean:0"]
+    assert (node["name"], node["type"], node["kind"]) == ("region", "binary", "selector")
+    assert node["settings"] == [["rule", "left and not right"]]
+    assert "nf:p_mean:0.left" not in by_id  # its nested plugins are its own business
+    assert by_id["nf:p_mean:1"]["kind"] == "aggregator"  # the others: the generic reading
+
+
 def test_tables_are_drawn_as_frames_without_catalyst():
     tables = [describe_table(t) for t in processor()._tables] * 5
     tables = [{**t, "name": f"{t['name']}{i}",
