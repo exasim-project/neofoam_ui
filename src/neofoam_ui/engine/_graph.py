@@ -33,6 +33,8 @@ class Op:
     id: str = ""
     #: Position in the tree, ``"1.4.2"`` (set by :func:`assign_ids`).
     pos: str = ""
+    #: The region of a multi-region solver the op belongs to (``None``: the solver's own).
+    region: Optional[str] = None
 
 
 @dataclass
@@ -45,6 +47,8 @@ class InitStep:
     category: Optional[str] = None
     doc: str = ""
     source: Optional[str] = None
+    #: The region of a multi-region solver the step initializes (``None``: the solver's own).
+    region: Optional[str] = None
 
     @property
     def id(self) -> str:

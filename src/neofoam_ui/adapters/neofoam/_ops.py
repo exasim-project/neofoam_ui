@@ -20,6 +20,7 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
         doc=meta.description or _doc(target),
         source=_source(target),
         injected_by=injected.get(id(op)),
+        region=getattr(meta, "region", None),
     )
     if op.operation_type == "iterative":
         predicate = op.func.func

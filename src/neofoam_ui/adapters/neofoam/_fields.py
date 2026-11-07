@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
+
+from neofoam_ui.engine import DEFAULT_REGION
 
 __all__ = ()
 
@@ -13,8 +15,49 @@ __all__ = ()
 _OLD_COPY = re.compile(r"(_0)+$|PrevIter$")
 
 
+def _region_contexts(ctx: Any) -> Optional[dict[str, Any]]:
+    """``{region: context}`` of a multi-region driver (multiRun's ``ctx.models["regions"]``), else ``None``."""
+    regions = (getattr(ctx, "models", None) or {}).get("regions")
+    if not isinstance(regions, dict):
+        return None
+    return {name: entry[1] for name, entry in regions.items()
+            if isinstance(entry, tuple) and len(entry) == 2}
+
+
+class _Region:
+    """One region of a NeoFOAM case: its context's cell fields and, if it has one, its mesh."""
+
+    def __init__(self, name: str, solver: "_FieldAccess", ctx: Optional[Any] = None) -> None:
+        self.name = name
+        self._solver = solver
+        #: The region's own context; ``None``: the context the stepper hands in (one region).
+        self._ctx = ctx
+
+    def mesh(self, ctx: Any) -> Optional[dict[str, Any]]:
+        if self._ctx is not None and getattr(self._ctx, "mesh", None) is None:
+            return None  # a region without a mesh (e.g. a test solver): no field view
+        mesh = getattr(self._solver, "mesh", None)
+        return mesh(self._ctx if self._ctx is not None else ctx) if mesh else None
+
+    def fields(self, ctx: Any) -> dict[str, np.ndarray]:
+        if self._ctx is not None:
+            return self._solver._own_fields(self._ctx)
+        return self._solver.view_fields(ctx)
+
+
 class _FieldAccess:
-    """``scalars`` / ``fields`` / ``view_fields`` of a NeoFOAM context (``ctx.time``, ``ctx.fields``)."""
+    """``scalars`` / ``fields`` / ``view_fields`` of a NeoFOAM context (``ctx.time``, ``ctx.fields``).
+
+    A multi-region driver's context (multiRun) is read through :meth:`regions`: every region's
+    fields, named ``<region>.<field>``.
+    """
+
+    def regions(self, ctx: Any) -> list[Any]:
+        """The case's regions (:class:`~neofoam_ui.engine.Region`); one, ``region0``, unless multi-region."""
+        contexts = _region_contexts(ctx)
+        if not contexts:
+            return [_Region(DEFAULT_REGION, self)]
+        return [_Region(name, self, region_ctx) for name, region_ctx in contexts.items()]
 
     def scalars(self, ctx: Any) -> dict[str, Any]:
         t = getattr(ctx, "time", None)
@@ -24,8 +67,20 @@ class _FieldAccess:
                 "writeTime": t.write_time}
 
     def fields(self, ctx: Any) -> dict[str, np.ndarray]:
+        contexts = _region_contexts(ctx)
+        if not contexts:
+            return self._own_fields(ctx)
+        return {f"{region}.{name}": values
+                for region, region_ctx in contexts.items()
+                for name, values in self._own_fields(region_ctx).items()}
+
+    def _own_fields(self, ctx: Any) -> dict[str, np.ndarray]:
+        """The cell fields of one context: geometric fields and plain numpy arrays."""
         out: dict[str, np.ndarray] = {}
         for name, field in (getattr(ctx, "fields", None) or {}).items():
+            if isinstance(field, np.ndarray):
+                out[name] = np.atleast_1d(field)
+                continue
             try:
                 out[name] = np.asarray(field.internalField())
             except Exception:  # not a geometric field (or no internalField)

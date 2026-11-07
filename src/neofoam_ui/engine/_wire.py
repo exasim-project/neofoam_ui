@@ -10,7 +10,7 @@ __all__ = ()
 
 
 def _op_dict(op: Op) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "id": op.id,
         "name": op.name,
         "kind": op.kind,
@@ -26,10 +26,13 @@ def _op_dict(op: Op) -> dict[str, Any]:
         "source": op.source or _source(op.func),
         "children": [_op_dict(c) for c in op.children],
     }
+    if op.region is not None:  # optional: only a multi-region solver's ops carry it
+        out["region"] = op.region
+    return out
 
 
 def _init_dict(step: InitStep) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "id": step.id,
         "name": step.name,
         "depends_on": [f"init:{d}" for d in step.depends_on],
@@ -37,6 +40,9 @@ def _init_dict(step: InitStep) -> dict[str, Any]:
         "doc": step.doc,
         "source": step.source or _source(step.func),
     }
+    if step.region is not None:  # optional, as for ops
+        out["region"] = step.region
+    return out
 
 
 def _source(func: Callable[..., Any]) -> Optional[str]:

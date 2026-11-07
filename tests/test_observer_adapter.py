@@ -87,3 +87,88 @@ def test_nested_loops_and_untracked_inner_ops():
         ("test", "outer/inner", 2),
         ("test", "outer", 3),
     ]
+
+
+# -- multi-region solvers (NeoFOAM multiRun) ---------------------------------------------------
+
+
+class RegionSession(FakeSession):
+    """A FakeSession that also keeps init steps, results and emitted messages."""
+
+    def __init__(self):
+        super().__init__()
+        self.init, self.results, self.emitted = [], {}, []
+
+    def emit(self, msg):
+        self.emitted.append(msg)
+
+    def observe_result(self, value):
+        pass
+
+
+def _step(name, region=None, depends_on=()):
+    return SimpleNamespace(name=name, region=region, depends_on=list(depends_on), category="field",
+                           initializer=lambda ctx: None)
+
+
+def test_region_init_steps_are_added_with_the_region_in_their_name():
+    session = RegionSession()
+    stepper = _Stepper(session, lambda event: None)
+    stepper.init_steps([_step("time")])
+    stepper.init_steps([_step("mesh", "a"), _step("fields.x", "a", ["mesh"])])
+    stepper.init_steps([_step("fields.x", "b")])
+
+    assert [(s.id, s.region, s.depends_on) for s in session.init] == [
+        ("init:time", None, []),
+        ("init:a.mesh", "a", []),
+        ("init:a.fields.x", "a", ["a.mesh"]),
+        ("init:b.fields.x", "b", []),
+    ]
+    graphs = [m for m in session.emitted if m["type"] == "graph"]
+    assert len(graphs) == 2 and graphs[-1]["steps"][-1]["region"] == "b"
+    stepper.after_init_step(_step("fields.x", "b"), {}, 7)
+    assert session.results == {"b.fields.x": 7}
+
+
+def test_a_region_op_keeps_the_driver_context():
+    driver, region_ctx = object(), object()
+    a = FakeOp("a.solve")
+    a.metadata.region = "a"
+    loop = FakeOp("loop", [a], iterations=1)
+    session = RegionSession()
+    stepper = _Stepper(session, lambda event: None)
+    stepper.operations(SimpleNamespace(ops=[loop]))
+    stepper.before_loop_test(loop, driver, 1)
+    stepper.after_loop_test(loop, driver, 1, True)
+    stepper.before_operation(a, region_ctx)
+
+    assert session.ctx is driver
+    assert session.ops[0].children[0].region == "a"
+
+
+def test_a_coupling_outcome_is_a_table_row_per_loop_run():
+    session = RegionSession()
+    stepper = _Stepper(session, lambda event: None)
+    coupling = SimpleNamespace(label="loop_solving_a.x_b.x")
+    for passes, converged in [(20, True), (5, False)]:
+        stepper.coupling_finished(coupling, SimpleNamespace(passes=passes, converged=converged,
+                                                            residuals={"x": 1e-7}))
+
+    assert [(m["name"], m["time"], m["columns"], m["values"]) for m in session.emitted] == [
+        ("coupling · loop_solving_a.x_b.x", 1.0, ["passes", "converged", "residual x"], [[20.0, 1.0, 1e-7]]),
+        ("coupling · loop_solving_a.x_b.x", 2.0, ["passes", "converged", "residual x"], [[5.0, 0.0, 1e-7]]),
+    ]
+
+
+def test_multi_region_fields_are_named_by_region():
+    import numpy as np  # noqa: PLC0415
+
+    from neofoam_ui.adapters.neofoam._fields import _FieldAccess  # noqa: PLC0415
+
+    region = lambda x: SimpleNamespace(fields={"x": np.array([x])}, mesh=None)  # noqa: E731
+    driver = SimpleNamespace(fields={}, models={"regions": {"a": (None, region(2.0)), "b": (None, region(1.0))}})
+    access = _FieldAccess()
+
+    assert {k: v.tolist() for k, v in access.fields(driver).items()} == {"a.x": [2.0], "b.x": [1.0]}
+    assert [(r.name, r.mesh(driver)) for r in access.regions(driver)] == [("a", None), ("b", None)]
+    assert [r.name for r in access.regions(SimpleNamespace(fields={}, models={}))] == ["region0"]

@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterator, Optional
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase
 from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source
 from neofoam_ui.engine import Event, InitStep, Op, ProgramContext, ThreadedProgram
+from neofoam_ui.engine._wire import _init_dict
 
 __all__ = ()
 
@@ -56,28 +57,41 @@ class _Stepper:
         self.taken: dict[str, set[str]] = {}
         #: Node of the loop test between before_loop_test and after_loop_test.
         self.test_node: Optional[str] = None
+        #: Finished runs of each coupling loop (by its label), the x of its outcome table.
+        self.coupling_runs: dict[str, int] = {}
 
     # -- init -----------------------------------------------------------------------------
 
     def init_steps(self, steps: list[Any]) -> None:
         names = {s.name for s in steps}
-        self.s.init = [
-            InitStep(st.name, lambda results: None,
-                     [d for d in st.depends_on if d in names],
+        new = [
+            InitStep(_init_name(st), lambda results: None,
+                     [_init_name(st, d) for d in st.depends_on if d in names],
                      category=st.category, doc=_doc(st.initializer),
-                     source=_source(st.initializer))
+                     source=_source(st.initializer), region=getattr(st, "region", None))
             for st in steps
         ]
+        regional = any(st.region is not None for st in new)
+        if not regional or not self.s.init:
+            self.s.init = new
+            return
+        # A region of a multi-region solver initializes after the driver: add its steps
+        # and announce the grown init graph.
+        self.s.init = [*self.s.init, *new]
+        emit = getattr(self.s, "emit", None)
+        if emit is not None:
+            emit({"type": "graph", "activity": "init", "steps": [_init_dict(s) for s in self.s.init]})
 
     def before_init_step(self, step: Any, context: dict[str, Any]) -> None:
-        self.pause(Event("init", f"init:{step.name}"))
+        self.pause(Event("init", f"init:{_init_name(step)}"))
         self.t0 = time.perf_counter()
 
     def after_init_step(self, step: Any, context: dict[str, Any], value: Any) -> None:
         ms = (time.perf_counter() - self.t0) * 1e3
-        self.s.results[step.name] = value
+        name = _init_name(step)
+        self.s.results[name] = value
         self.s.observe_result(value)
-        self.s.record("init", f"init:{step.name}", step.name, ms)
+        self.s.record("init", f"init:{name}", name, ms)
 
     # -- execution ------------------------------------------------------------------------
 
@@ -107,7 +121,11 @@ class _Stepper:
         taken.add(node)
         return node
 
-    def _see(self, ctx: Any) -> None:
+    def _see(self, ctx: Any, op: Any) -> None:
+        # A region's op runs on its region's context; the session keeps the driver's,
+        # which reaches every region (see _FieldAccess.regions).
+        if getattr(op.metadata, "region", None) is not None and self.s.ctx is not None:
+            return
         if self.s.ctx is not ctx:
             self.s.set_context(ctx)
 
@@ -116,7 +134,7 @@ class _Stepper:
         self.open.append(node)
         if node is None:
             return
-        self._see(ctx)
+        self._see(ctx, op)
         self.pause(Event("exec", node, len(self.stack), stack=tuple(self.stack)))
         self.t0 = time.perf_counter()
 
@@ -139,7 +157,7 @@ class _Stepper:
             return
         self.taken.pop(node, None)  # its body starts a new pass
         self.test_node = node
-        self._see(ctx)
+        self._see(ctx, op)
         self.pause(Event("test", node, len(self.stack), iter=iteration, stack=tuple(self.stack)))
         self.t0 = time.perf_counter()
 
@@ -152,3 +170,29 @@ class _Stepper:
                       iter=iteration, result=result)
         if result:
             self.stack.append((node, iteration))
+
+    # -- coupling -------------------------------------------------------------------------
+
+    def coupling_finished(self, coupling: Any, outcome: Any) -> None:
+        """A coupling loop ended: its outcome as one row of a ``pptable`` (Plots pane).
+
+        x is the loop's run count, not the time: a nested loop ends once per outer pass.
+        """
+        label = getattr(coupling, "label", None) or "coupling"
+        run = self.coupling_runs[label] = self.coupling_runs.get(label, 0) + 1
+        residuals = dict(getattr(outcome, "residuals", {}) or {})
+        emit = getattr(self.s, "emit", None)
+        if emit is None:
+            return
+        emit({"type": "pptable", "name": f"coupling · {label}", "time": float(run),
+              "columns": ["passes", "converged", *(f"residual {q}" for q in residuals)],
+              "group_columns": [], "groups": [[]],
+              "values": [[float(outcome.passes), 1.0 if outcome.converged else 0.0,
+                          *(float(v) for v in residuals.values())]]})
+
+
+def _init_name(step: Any, name: Optional[str] = None) -> str:
+    """A step's name (or its dependency ``name``), prefixed with the step's region if any."""
+    name = step.name if name is None else name
+    region = getattr(step, "region", None)
+    return f"{region}.{name}" if region else name
