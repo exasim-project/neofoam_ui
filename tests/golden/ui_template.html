@@ -165,7 +165,7 @@ delay {{ delay_ms }} ms
 </span>
 </span>
 </div>
-<node-editor :ref="(el) => trame.refs['_node_editor_3'] = el" :class="ex_hot.map(k => 'hot-' + k)" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" :min-zoom="0.1">
+<node-editor :ref="(el) => trame.refs['_node_editor_3'] = el" :class="ex_hot.map(k => 'hot-' + k)" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="document.activeElement && document.activeElement.blur()" :min-zoom="0.1">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
 <MiniMap v-show="minimap_on && !is_mobile && !fv_on && !pp_on && !pt_on" pannable zoomable />
@@ -239,15 +239,22 @@ test: {{ props.data.test }}
 </div>
 </template>
 <template v-slot:node-exmap=props>
-<div :class="['nf-exmap', { hot: ex_hot.includes(props.data.key) }]" :title="props.data.kind ? '' : 'mapping kind: the solver does not tell'">
+<div :class="['nf-exmap', { hot: ex_hot.includes(props.data.key), unk: !props.data.kind }]" tabindex="0">
 <Handle id="lt" position="left" type="target" />
 <Handle id="r" position="right" type="source" />
+<span class="nf-map-icon">
+≈
+</span>
+<span class="nf-map-kind">
+{{ props.data.kind || '?' }}
+</span>
+<div class="nf-map-tip">
 <div class="nf-map-head">
 <span class="nf-map-title">
 ⇆ mapping
 </span>
-<span :class="['nf-map-kind', { unk: !props.data.kind }]">
-{{ props.data.kind || 'unknown' }}
+<span class="nf-map-tkind">
+{{ props.data.kind || 'unknown: the solver does not tell' }}
 </span>
 </div>
 <div class="nf-map-pts">
@@ -257,12 +264,13 @@ test: {{ props.data.test }}
 <span class="nf-map-dir">
 {{ w.from }} → {{ w.to }}
 </span>
-<span class="nf-map-val" v-if="(ex_vals[props.data.key] || {})[w.from]">
-{{ (ex_vals[props.data.key] || {})[w.from] }}
-</span>
-<span class="nf-map-val" v-else>
+<span >
 {{ w.fields.map(f => f.name + (f.mapped === true ? ' (mapped)' : f.mapped === false ? ' (as is)' : ' (?)')).join(', ') }}
 </span>
+<div class="nf-map-val" v-if="(ex_vals[props.data.key] || {})[w.from]">
+{{ (ex_vals[props.data.key] || {})[w.from] }}
+</div>
+</div>
 </div>
 </div>
 </template>
@@ -324,8 +332,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w503-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w504-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w509-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w510-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -420,7 +428,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w548-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w554-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -675,7 +683,7 @@ loops and driver ops appear in every box: copies of one shared node
 ⇄ coupling node: hands its op the partner's data
 </div>
 <div >
-- - coupling line, through the interface's ⇆ mapping node: how the data goes onto the partner's points (mapped, or as is: unmapped), the points per side, what each side sends; red, moving: exchanging now
+- - coupling line, through the interface's ≈ mapping chip (its kind; hover or tap: how the data goes onto the partner's points, mapped or as is, the points per side, what each side sends); red, moving: exchanging now
 </div>
 </div>
 </div>

@@ -117,18 +117,28 @@ _CSS = r"""
 .nf-loop.control { background: #f3f6ff; border-radius: 18px; }
 .nf-loop.control .nf-loop-title { left: 10px; right: 44px; top: 9px; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; opacity: .9; }
-.nf-exmap { width: 100%; height: 100%; box-sizing: border-box; padding: 4px 8px; border: 1.5px dashed #6741d9;
-  border-radius: 6px; background: #f4f0ff; color: #6741d9; font: 600 10.5px ui-monospace, Menlo, monospace;
-  line-height: 13px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
-.nf-exmap > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-exmap { width: 100%; height: 100%; box-sizing: border-box; padding: 0 8px; border: 1.5px dashed #6741d9;
+  border-radius: 12px; background: #f4f0ff; color: #6741d9; font: 600 10.5px ui-monospace, Menlo, monospace;
+  display: flex; align-items: center; gap: 5px; outline: none; cursor: help; position: relative; }
+.nf-exmap.unk { color: #7a7a86; border-color: #9a9aa6; }
 .nf-exmap.hot { border: 2.5px solid #e0362c; color: #e0362c; background: #fff2f1; }
-.nf-map-head { display: flex; justify-content: space-between; gap: 6px; }
+.nf-map-icon { font-size: 13px; }
+.nf-map-kind { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-map-tip { display: none; position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%);
+  min-width: 200px; max-width: 360px; padding: 5px 8px; border: 1.5px solid #6741d9; border-radius: 6px;
+  background: #fff; color: #3d2a85; box-shadow: 0 3px 10px rgba(0,0,0,.2); line-height: 14px; cursor: default; }
+.nf-exmap:hover .nf-map-tip, .nf-exmap:focus .nf-map-tip { display: block; }
+.nf-exmap.hot .nf-map-tip { border-color: #e0362c; }
+.nf-map-tip > div { white-space: nowrap; }
+.nf-map-head { display: flex; justify-content: space-between; gap: 8px; }
 .nf-map-title { opacity: .8; }
-.nf-map-kind { color: #fff; background: #6741d9; border-radius: 7px; padding: 0 6px; }
-.nf-map-kind.unk { background: #9a9aa6; }
-.nf-exmap.hot .nf-map-kind { background: #e0362c; }
+.nf-map-tkind { color: #fff; background: #6741d9; border-radius: 7px; padding: 0 6px; }
+.nf-exmap.unk .nf-map-tkind { background: #9a9aa6; }
+.nf-exmap.hot .nf-map-tkind { background: #e0362c; }
 .nf-map-pts { font-weight: 500; opacity: .85; }
 .nf-map-dir { display: inline-block; min-width: 46px; opacity: .75; font-weight: 500; }
+.nf-map-val { padding-left: 46px; color: #e0362c; }
+.vue-flow__node-exmap:hover, .vue-flow__node-exmap:focus-within { z-index: 50 !important; }
 .vue-flow__node-exmap { z-index: 6 !important; }
 .hot-0 .vue-flow__edge.cl-0 path.vue-flow__edge-path,
 .hot-1 .vue-flow__edge.cl-1 path.vue-flow__edge-path,

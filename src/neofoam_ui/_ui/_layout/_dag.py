@@ -51,7 +51,7 @@ __all__ = ()
 #: the gap between two boxes (room for the coupling lines and their mapping nodes), and the
 #: size of a loop's control node.
 _BOX_HEAD, _BOX_PAD = 30, 14
-_BOX_GAP = 290
+_BOX_GAP = 200
 _CTRL_W, _CTRL_H = 320, 36
 #: Space left of a loop's footprint for its ``[false]`` exit edge.
 _EXIT = 24
@@ -508,8 +508,9 @@ def _mapping_data(face: dict[str, Any]) -> dict[str, Any]:
 
 
 #: A mapping node: the place on a coupling line, between the boxes, where the data is mapped
-#: from one side's interface points onto the other's.
-_MAP_W, _MAP_H = 210, 76
+#: from one side's interface points onto the other's. A small chip (its kind); the rest of
+#: :func:`_mapping_data` shows on hover / tap.
+_MAP_W, _MAP_H = 148, 24
 
 
 def _map_node(face: dict[str, Any], cx: float, cy: float) -> dict[str, Any]:

@@ -161,6 +161,8 @@ def test_each_region_box_is_the_full_solver_with_copies_of_the_shared_loops():
         nodes["exec::box:b"]["position"]["x"]
     couple_a = nodes["time/couple/couple_a.x@@a"]
     assert label["position"]["y"] + label["height"] / 2 == couple_a["position"]["y"] + couple_a["height"] / 2
+    # a chip on the line, no taller than the coupling node (the details show on hover)
+    assert label["height"] <= couple_a["height"]
     a_box = {i for i in nodes if i.endswith("@@a")}  # (the mapping node belongs to no box)
     b_box = {i for i in nodes if i.endswith("@@b")}
     crossing = [e for e in flow["edges"] if (e["source"].split("::")[0] in a_box)
