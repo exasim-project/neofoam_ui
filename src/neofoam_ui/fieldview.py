@@ -44,6 +44,9 @@ def field_pane() -> None:
                        hide_details=True, variant="outlined", disabled=("!fv_fields.length",))
             v3.VSelect(v_model=("fv_comp",), items=("fv_comps",), label="component", density="compact",
                        hide_details=True, variant="outlined", v_show="fv_comps.length")
+            v3.VCheckbox(v_model=("fv_live",), label="live", hide_details=True, density="compact",
+                         style="flex: none;", title="update at every time step while running "
+                                                    "(off: only at pauses)")
             html.Span("{{ fv_msg }}", classes="nf-field-msg")
         html.Img(src=("fv_src",), classes="nf-field-img", v_show="fv_src", alt="in-situ view")
         html.Div("{{ fv_msg }}", classes="nf-field-empty", v_show="!fv_src")

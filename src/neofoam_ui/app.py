@@ -178,6 +178,7 @@ class StepperApp:
         self.server.trigger("nf_collapse")(self.toggle_collapse)
         self.server.trigger("nf_field")(self.highlight_field)
         self.state.change("fv_on", "fv_field", "fv_comp")(lambda **_: self._send_view())
+        self.state.change("fv_live")(lambda fv_live, **_: self._send({"cmd": "live", "on": bool(fv_live)}))
         self.state.change("delay_ms")(self._on_delay)
         self.state.change("heat_on")(lambda **_: self._refresh_heat())
 
@@ -223,6 +224,7 @@ class StepperApp:
         s.fv_fields = []
         s.fv_comps = []
         s.fv_src = None
+        s.fv_live = True if s.fv_live is None else bool(s.fv_live)
         s.fv_msg = "the field view starts once the solver context exists (after initialization)"
 
     # -- worker -------------------------------------------------------------------------
@@ -256,6 +258,7 @@ class StepperApp:
             self.state.connected = True
         self._send({"cmd": "delay", "seconds": self.state.delay_ms / 1000})
         self._send({"cmd": "breakpoints", "ids": list(self.state.bps)})
+        self._send({"cmd": "live", "on": bool(self.state.fv_live)})
         self._view_req = None
         self._send_view()
         asynchronous.create_task(self._read_stderr(self.proc))

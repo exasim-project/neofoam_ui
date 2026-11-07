@@ -9,6 +9,7 @@ UI → worker (stdin)::
     {"cmd": "breakpoints", "ids": [...]}
     {"cmd": "delay", "seconds": 0.2}      # animation while running
     {"cmd": "view", "field": "U", "component": "mag|0|1|2", "on": true}   # field view
+    {"cmd": "live", "on": true}           # field view frames at every time step while running
     {"cmd": "stop"}
 
 worker → UI (stdout): the engine messages (``graph``, ``log``, ``paused``,
@@ -164,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
             commands.put({"cmd": "step", "mode": str(cmd["mode"]), "node": cmd.get("node")})
         elif kind == "view":
             commands.put(cmd)
+        elif kind == "live":
+            session.live_view = bool(cmd["on"])
         else:
             raise ValueError(f"unknown command {kind!r}")
 

@@ -348,3 +348,23 @@ insitu.finalize()
     name = res.stdout.split("FILE ")[1].split()[0]
     png = tmp_path / "out" / name
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_live_frames_at_every_time_step_while_running():
+    session, messages = session_after_init()
+    session.set_view("T")
+    n = len(of(messages, "frame"))
+    session.breakpoints = set()
+    session.advance("run")
+    assert session.finished
+    steps = sum(1 for m in messages if m["type"] == "log" and m["kind"] == "test" and not m["stack"])
+    assert len(of(messages, "frame")) - n >= steps - 1 > 1
+
+
+def test_live_frames_can_be_turned_off():
+    session, messages = session_after_init()
+    session.set_view("T")
+    session.live_view = False
+    n = len(of(messages, "frame"))
+    session.advance("run")
+    assert session.finished and len(of(messages, "frame")) == n + 1  # the final pause only

@@ -210,6 +210,8 @@ class Session:
         self.view: Optional[tuple[Optional[str], str]] = None
         #: Rank 0 under MPI: makes the other ranks render the same frame (set by the worker).
         self.on_render: Optional[Callable[[dict[str, str]], None]] = None
+        #: Also render at every time step while running (not only at pauses).
+        self.live_view = True
         self.insitu: Any = None  # neofoam_ui.catalyst.InSitu, started on the first frame
         self._insitu_error: Optional[str] = None
         self._geometry: Any = None  # None = not built yet, False = solver has no geometry
@@ -349,6 +351,8 @@ class Session:
                 if ev.node in self.breakpoints and not until(ev):
                     self.emit({"type": "breakpoint", "node": ev.node})
                 break
+            if self.live_view and ev.kind == "test" and not ev.stack:  # new time step: live frame
+                self.send_view()
             if self.delay > 0:
                 self.emit({"type": "running", "event": ev.to_dict()})
                 time.sleep(self.delay)

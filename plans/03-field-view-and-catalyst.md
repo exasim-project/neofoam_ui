@@ -31,6 +31,7 @@ solver rank r (worker)                                 UI (trame)
 - **Collective.** Rank 0 decides whether to render (view open, values changed) and tells the
   followers with `{"op": "render", "params": …}` on the sync socket; each rank calls
   `catalyst_execute` on its solver thread (where MPI was initialised).
+- **Live frames:** while running, a frame is rendered at every time step (outer loop test) unless the pane's *live* toggle is off (`{"cmd": "live", "on": false}`); then only at pauses.
 - **Catalyst Live:** `NEOFOAM_UI_CATALYST_LIVE=host:port` enables Live in the pipeline and
   renders at every pause even with the pane closed. Connect a ParaView 6.0 GUI (*Catalyst ▸
   Connect*).
