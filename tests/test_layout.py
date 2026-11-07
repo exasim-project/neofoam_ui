@@ -183,13 +183,27 @@ def test_a_nested_coupling_loop_is_projected_into_each_region_s_box():
         Op("c.solve", "action", lambda ctx: None, region="c"),
     ])
     flow = _flow([outer])
-    nodes = {n["id"] for n in flow["nodes"]}
+    nodes = {n["id"]: n for n in flow["nodes"]}
 
-    assert {"outer@@a", "outer/inner@@a", "outer@@c"} <= nodes and "outer/inner@@c" not in nodes
-    couple = {(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")}
-    # boxes in order of first appearance: b (outer's coupling node), a, c; lines run left to right
-    assert couple == {("outer/couple_b.x@@b", "outer/couple_c.x@@c"),
-                      ("outer/inner/couple_b.x@@b", "outer/inner/couple_a.x@@a")}
+    # each box shows the loops its region runs in: a re-solves inside every outer pass too
+    assert {"outer@@a", "outer/inner@@a", "outer@@b", "outer/inner@@b", "outer@@c"} <= set(nodes)
+    assert "outer/inner@@c" not in nodes
+    # the boxes along the chain, b in the middle
+    xs = [nodes[f"exec::box:{r}"]["position"]["x"] for r in "abc"]
+    assert xs == sorted(xs)
+    # a shared loop's copies on one row; each line joins neighbouring boxes, horizontally, in the gap
+    assert nodes["outer/inner@@a"]["position"]["y"] == nodes["outer/inner@@b"]["position"]["y"]
+    couple = [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")]
+    assert set(couple) == {("outer/inner/couple_a.x@@a", "outer/inner/couple_b.x@@b"),
+                           ("outer/couple_b.x@@b", "outer/couple_c.x@@c")}
+    for s, tgt in couple:
+        left, right = s[-1], tgt[-1]
+        assert nodes[s]["position"]["y"] == nodes[tgt]["position"]["y"]
+        box_l, box_r = nodes[f"exec::box:{left}"], nodes[f"exec::box:{right}"]
+        assert box_l["position"]["x"] < nodes[s]["position"]["x"] + nodes[s]["width"] \
+            <= box_l["position"]["x"] + box_l["width"] < box_r["position"]["x"] <= nodes[tgt]["position"]["x"]
+    # b holds both of its coupling nodes, one per exchange
+    assert {"outer/couple_b.x@@b", "outer/inner/couple_b.x@@b"} <= set(nodes)
 
 
 def test_a_collapsed_loop_hides_the_exchange_into_it():
@@ -291,3 +305,16 @@ def test_the_dag_pane_shows_what_a_coupling_node_hands_over_and_heats_its_line()
     assert state.ex_vals == {"0": {"a": "x = 1.5", "b": "x = 0.75"}}
     exchanged({"node": "c/a.solve"})
     assert state.ex_hot == []
+
+
+def test_the_pair_view_keeps_its_shape():
+    """Guard: pair stays two boxes a | b, the coupling nodes face each other on one row."""
+    flow = _flow(_pair())
+    nodes = {n["id"]: n for n in flow["nodes"]}
+    boxes = sorted((n["position"]["x"], n["id"]) for n in flow["nodes"] if n["type"] == "region")
+    assert [b for _, b in boxes] == ["exec::box:a", "exec::box:b"]
+    a, b = nodes["time/couple/couple_a.x@@a"], nodes["time/couple/couple_b.x@@b"]
+    assert a["position"]["y"] == b["position"]["y"]
+    assert nodes["time/couple/a.solve@@a"]["position"]["y"] == nodes["time/couple/b.solve@@b"]["position"]["y"]
+    assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
+        ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b")]
