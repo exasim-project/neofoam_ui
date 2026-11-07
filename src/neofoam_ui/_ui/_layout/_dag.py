@@ -7,9 +7,8 @@
   holds coupling nodes, ops with an ``exchange``) is no container: a compact control node
   (title, pass, residuals, diamond) sits above one box per region, side by side. Each box
   is its solver's part of the body, a coupling node right before the op it feeds. The boxes
-  are joined only by data lines: dashed in the partner's colour, labelled with the data,
-  from the partner's op whose data a coupling node takes. Each box starts where its first
-  op runs, so the serial order reads top to bottom.
+  are joined only between their coupling nodes: one line with arrowheads at both ends,
+  labelled with the exchanged data; the op below a coupling node gets the data from it.
 
 Positions of children are relative to their parent group (VueFlow ``parentNode``).
 A *collapsed* loop is drawn as a single node without its body.
@@ -195,40 +194,25 @@ def _exchange_text(exchange: Optional[dict[str, Any]]) -> Optional[str]:
     return f"{data} ← {exchange.get('partner') or exchange['source']}"
 
 
-def _find(op: dict[str, Any], name: str) -> Optional[dict[str, Any]]:
-    """The op ``name`` in ``op``'s body, the loop's own ops first (a nested loop may hold one of
-    the same name)."""
-    stack = list(op["children"])
-    while stack:
-        node = stack.pop(0)
-        if node["name"] == name:
-            return node
-        stack += node.get("children", [])
-    return None
-
-
 def _plan(op: dict[str, Any], boxes: list[dict[str, Any]], collapsed: frozenset[str]) -> list[dict[str, Any]]:
-    """Measure a coupling loop's body: one column per box, one row per op in execution order
-    (so a box starts where its first op runs). Sets the loop's footprint."""
+    """Measure a coupling loop's body: one column per box, its ops stacked. Sets the loop's
+    footprint."""
     children = op["children"]
-    box_of = {c["id"]: i for i, box in enumerate(boxes) for c in box["ops"]}
     for c in children:
         _measure(c, collapsed)
-        c["_source"] = _find(op, c["exchange"]["source"]) if c.get("exchange") else None
     x = _BOX_PAD
     for i, box in enumerate(boxes):
         box["w"] = max(c["_w"] for c in box["ops"])
         box["x"] = x
         x += box["w"] + 2 * _BOX_PAD + (_BOX_GAP if i < len(boxes) - 1 else 0)
     width = x - _BOX_PAD + _LOOP_RIGHT
-    y = _CTRL_H + _GAP + _BOX_HEAD
-    for k, c in enumerate(children):
-        box = boxes[box_of[c["id"]]]
-        # a new box: room for its header, unless it starts below the previous op anyway
-        if k and box_of[children[k - 1]["id"]] != box_of[c["id"]] and c is box["ops"][0]:
-            y += _BOX_HEAD - _GAP / 2
-        c["_x"], c["_y"] = box["x"] + (box["w"] - c["_w"]) / 2, y
-        y += c["_h"] + _GAP
+    # every box from the same top, its ops stacked: the coupling nodes, each first in its box,
+    # face each other across the gap (the sequence numbers show the order)
+    for box in boxes:
+        y = _CTRL_H + _GAP + _BOX_HEAD
+        for c in box["ops"]:
+            c["_x"], c["_y"] = box["x"] + (box["w"] - c["_w"]) / 2, y
+            y += c["_h"] + _GAP
     for box in boxes:
         box["y"] = min(c["_y"] for c in box["ops"]) - _BOX_HEAD
         box["h"] = max(c["_y"] + c["_h"] for c in box["ops"]) + _BOX_PAD - box["y"]
@@ -273,47 +257,32 @@ def _coupled(op: dict[str, Any], parent: Optional[str], x0: float, y0: float, de
 
 
 def _exchange(op: dict[str, Any], box_of: dict[str, int], nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Into each coupling node, a dashed line in the partner's colour from the partner's op
-    whose data it takes (``exchange.source``), labelled with the data.
+    """One line between the two coupling nodes of each exchange, arrowheads at both ends,
+    labelled with the exchanged data.
 
-    Each label sits at about 75 % of its line, near the coupling node, so the labels of two
-    lines that cross halfway (a pair's exchange) do not cover each other.
+    A coupling node's partner node is the coupling node of its partner region that takes
+    data from this node's region.
     """
-    placed = {n["id"]: n for n in nodes}
-
-    def at(node_id: str) -> tuple[float, float]:
-        """Top-left corner of a node on the canvas (positions are relative to the parent)."""
-        x = y = 0.0
-        cur: Optional[dict[str, Any]] = placed.get(node_id)
-        while cur is not None:
-            x, y = x + cur["position"]["x"], y + cur["position"]["y"]
-            cur = placed.get(cur.get("parentNode", ""))
-        return x, y
-
-    def box(node: dict[str, Any]) -> int:
-        top = next((t for t in op["children"] if t is node or _contains(t, node)), node)
-        return box_of.get(top["id"], 0)
-
-    out = []
-    for c in op["children"]:
-        exchange, source = c.get("exchange"), c.get("_source")
-        if not exchange or source is None or source["id"] not in placed:
+    placed = {n["id"] for n in nodes}
+    couplers = [c for c in op["children"] if c.get("exchange") and c["id"] in placed]
+    out, done = [], set()
+    for c in couplers:
+        partner = next((d for d in couplers if d is not c and d.get("region") == c["exchange"].get("partner")
+                        and d["exchange"].get("partner") == c.get("region")), None)
+        if partner is None or partner["id"] in done:
             continue
-        color = _REGION.color(exchange.get("partner") or source.get("region"))
-        rightwards = box(source) < box(c)
-        (sx, sy), (tx, ty) = at(source["id"]), at(c["id"])
-        dx = (tx - sx) + (-source.get("_w", _AW) if rightwards else c["_w"])  # handle to handle
-        dy = (ty - sy) + (c["_h"] - source.get("_h", _AH)) / 2
-        shift = f"translate({0.25 * dx:.0f}px, {0.25 * dy:.0f}px)"
-        out.append(_edge(source["id"], c["id"], type="default", label=", ".join(exchange.get("data") or ()),
-                         labelShowBg=False,
-                         sourceHandle="r" if rightwards else "ls",
-                         targetHandle="lt" if rightwards else "rt",
+        done.add(c["id"])
+        left, right = (c, partner) if box_of.get(c["id"], 0) <= box_of.get(partner["id"], 0) else (partner, c)
+        names = [*c["exchange"].get("data", ()), *(n for n in partner["exchange"].get("data", ())
+                                                    if n not in c["exchange"].get("data", ()))]
+        color = "#6741d9"
+        arrow = {"type": "arrowclosed", "color": color}
+        out.append(_edge(left["id"], right["id"], type="straight", label=", ".join(names),
+                         sourceHandle="r", targetHandle="lt", labelShowBg=False,
                          style={"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
-                         labelStyle={"fill": color, "fontWeight": 700, "fontSize": "14px", "transform": shift,
+                         labelStyle={"fill": color, "fontWeight": 700, "fontSize": "14px",
                                      "paintOrder": "stroke", "stroke": "white", "strokeWidth": 5},
-                         markerEnd={"type": "arrowclosed", "color": color},
-                         **{"class": "nf-couple"}))
+                         markerStart=arrow, markerEnd=arrow, **{"class": "nf-couple"}))
     return out
 
 

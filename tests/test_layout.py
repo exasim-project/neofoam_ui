@@ -137,23 +137,22 @@ def test_a_coupling_loop_draws_free_solver_boxes_joined_only_by_data_lines():
             assert bx < n["position"]["x"] and n["position"]["x"] + n["width"] < bx + bw
             assert by < n["position"]["y"] and n["position"]["y"] + n["height"] < by + bh
         assert nodes[f"{p}/couple_{region}.x"]["position"]["y"] < nodes[f"{p}/{region}.solve"]["position"]["y"]
-    # serial order top to bottom; the driver's op above, the body below the control node
-    assert nodes[f"{p}/a.solve"]["position"]["y"] < nodes[f"{p}/couple_b.x"]["position"]["y"]
+    # the coupling nodes face each other across the gap; the driver's op above, the body below
+    # the control node
+    assert nodes[f"{p}/couple_a.x"]["position"]["y"] == nodes[f"{p}/couple_b.x"]["position"]["y"]
     assert nodes["time/set_time_step"]["position"]["y"] < nodes[p]["position"]["y"] < _box(nodes, p, 0)[1]
     pairs = {(e["source"], e["target"]): e for e in flow["edges"]}
-    data = {k for k, e in pairs.items() if e.get("class") == "nf-couple"}
-    assert data == {(f"{p}/b.solve", f"{p}/couple_a.x"), (f"{p}/a.solve", f"{p}/couple_b.x")}
-    assert pairs[(f"{p}/b.solve", f"{p}/couple_a.x")]["label"] == "x"
-    assert (pairs[(f"{p}/a.solve", f"{p}/couple_b.x")]["sourceHandle"],
-            pairs[(f"{p}/a.solve", f"{p}/couple_b.x")]["targetHandle"]) == ("r", "lt")
-    # inside each box its own flow; between the boxes only the data lines
+    # between the boxes only one line, coupling node to coupling node, both ways, labelled
+    data = {k: e for k, e in pairs.items() if e.get("class") == "nf-couple"}
+    assert list(data) == [(f"{p}/couple_a.x", f"{p}/couple_b.x")]
+    line = data[(f"{p}/couple_a.x", f"{p}/couple_b.x")]
+    assert line["label"] == "x" and line["markerStart"] and line["markerEnd"]
+    assert (line["sourceHandle"], line["targetHandle"]) == ("r", "lt")
+    # inside each box its own flow: the coupling node into the op it feeds
     body = {f"{p}/{n}" for n in ("couple_a.x", "a.solve", "couple_b.x", "b.solve")}
-    flow_edges = {k for k in pairs if k[0] in body and k[1] in body} - data
+    flow_edges = {k for k in pairs if k[0] in body and k[1] in body} - set(data)
     assert flow_edges == {(f"{p}/couple_a.x", f"{p}/a.solve"), (f"{p}/couple_b.x", f"{p}/b.solve")}
     assert (f"{p}::test", f"{p}/couple_a.x") in pairs and (f"{p}/b.solve", f"{p}::test") in pairs
-    # the two labels of the crossing lines sit apart, each near its coupling node
-    shifts = [pairs[k]["labelStyle"]["transform"] for k in sorted(data)]
-    assert shifts[0] != shifts[1]
 
 
 def test_a_loop_without_coupling_nodes_has_no_region_boxes():
@@ -184,11 +183,10 @@ def test_a_nested_coupling_loop_sits_in_the_box_it_continues():
     assert [nodes[f"outer::box{i}"]["data"]["label"] for i in (0, 1)] == ["b, a", "c"]
     assert [nodes[f"outer/inner::box{i}"]["data"]["label"] for i in (0, 1)] == ["a", "b"]
     edges = {(e["source"], e["target"], e.get("class")) for e in flow["edges"]}
-    # the outer coupling nodes: c's data into b's, the inner loop's (b's) into c's
-    assert {("outer/c.solve", "outer/couple_b.x", "nf-couple"), ("outer/couple_b.x", "outer/inner", None),
-            ("outer/inner", "outer/couple_c.x", "nf-couple"), ("outer/couple_c.x", "outer/c.solve", None),
-            ("outer/inner/b.solve", "outer/inner/couple_a.x", "nf-couple"),
-            ("outer/inner/a.solve", "outer/inner/couple_b.x", "nf-couple")} <= edges
+    # the outer coupling nodes joined to each other, the inner ones too; each feeds its op
+    assert {("outer/couple_b.x", "outer/couple_c.x", "nf-couple"), ("outer/couple_b.x", "outer/inner", None),
+            ("outer/couple_c.x", "outer/c.solve", None),
+            ("outer/inner/couple_a.x", "outer/inner/couple_b.x", "nf-couple")} <= edges
 
 
 def test_a_collapsed_loop_hides_the_exchange_into_it():
