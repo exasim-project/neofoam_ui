@@ -20,6 +20,7 @@ FIELD_CSS = r"""
 .nf-field-bar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; flex-wrap: wrap;
   border-bottom: 1px solid rgba(128,128,128,.2); }
 .nf-field-bar .v-select { flex: 0 1 150px; min-width: 110px; }
+.nf-field-bar .nf-num { flex: 0 0 112px; }
 .nf-field-msg { font-size: 12px; opacity: .7; flex: 1 1 160px; min-width: 0; }
 .nf-field-img { flex: 1 1 auto; min-height: 0; width: 100%; object-fit: contain; display: block; }
 .nf-field-empty { flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
@@ -45,8 +46,14 @@ def field_pane() -> None:
             v3.VSelect(v_model=("fv_comp",), items=("fv_comps",), label="component", density="compact",
                        hide_details=True, variant="outlined", v_show="fv_comps.length")
             v3.VCheckbox(v_model=("fv_live",), label="live", hide_details=True, density="compact",
-                         style="flex: none;", title="update at every time step while running "
-                                                    "(off: only at pauses)")
+                         style="flex: none;", title="update while running (off: only at pauses)")
+            # Live frames: every N time steps, at least s seconds apart (each costs a render).
+            v3.VTextField(v_model_number=("fv_every",), type="number", min=1, label="every n steps",
+                          density="compact", hide_details=True, variant="outlined", v_show="fv_live",
+                          classes="nf-num", title="a live frame at most every n time steps")
+            v3.VTextField(v_model_number=("fv_secs",), type="number", min=0, step=0.1, label="≥ s apart",
+                          density="compact", hide_details=True, variant="outlined", v_show="fv_live",
+                          classes="nf-num", title="and at least this many seconds apart")
             html.Span("{{ fv_msg }}", classes="nf-field-msg")
         html.Img(src=("fv_src",), classes="nf-field-img", v_show="fv_src", alt="in-situ view")
         html.Div("{{ fv_msg }}", classes="nf-field-empty", v_show="!fv_src")

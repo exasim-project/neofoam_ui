@@ -3,15 +3,22 @@
 Launch: ``neofoam-ui [--solver module:Factory] [--port 8080]``. The solver runs
 in a worker process (:mod:`neofoam_ui.worker`); this process only renders and
 sends stepping commands.
+
+The UI should cost the solver next to nothing: with the DAG pane closed (or no browser
+watching) a run sends no per-event messages; the worker never waits for this process
+unless "wait for UI" is on; and state reaches the browser at most :data:`PUSH_EVERY`
+seconds apart while running.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import json
 import os
 import shlex
+import shutil
 import socket
 import sys
 import tempfile
@@ -37,12 +44,20 @@ DEFAULT_SOLVER = "neofoam_ui.toy.heat1d:Heat1D"
 CONSOLE_MAX = 500
 #: Seconds between chart updates while running (each step brings a row per table).
 PLOT_EVERY = 0.5
+#: Seconds between two state pushes to the browser while messages stream in.
+PUSH_EVERY = 1 / 15
+#: Messages that are pushed to the browser right away.
+_URGENT = {"paused", "stopped", "error", "frame", "graph", "sync"}
+DELAY_ENV = "NEOFOAM_UI_DELAY_MS"
+WAIT_ENV = "NEOFOAM_UI_WAIT"
 
 _CSS = r"""
 .nf-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: minmax(0, 1fr) 230px;
   height: calc(100vh - 64px); }
 .nf-canvas { grid-column: 1; grid-row: 1; min-height: 0; display: flex; }
 .nf-diagram { flex: 1 1 0; min-width: 0; position: relative; }
+.nf-idle { flex: 1 1 0; display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 24px; font-size: 13px; opacity: .6; }
 .nf-field { flex: 1 1 0; }
 .nf-side { grid-column: 2; grid-row: 1 / 3; overflow: auto; border-left: 1px solid rgba(128,128,128,.25); }
 .nf-bottom { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: 1fr 1fr; min-height: 0;
@@ -153,8 +168,14 @@ _CSS = r"""
 class StepperApp:
     def __init__(self, server: Any, solver_spec: str, case: Optional[str] = None,
                  python: Optional[str] = None, np: int = 1, mpirun: str = "mpirun",
-                 catalyst: Optional[str] = None) -> None:
+                 catalyst: Optional[str] = None, delay_ms: float = 0.0, wait_ui: bool = False,
+                 sync_host: str = "127.0.0.1") -> None:
         self.server = server
+        #: Defaults of the animation delay and of "wait for UI" (both changeable live).
+        self.delay_ms = max(0.0, float(delay_ms))
+        self.wait_ui = wait_ui
+        #: Address rank 0 listens on for the other ranks of an MPI run.
+        self.sync_host = sync_host
         self.case = case
         #: Interpreter for the worker, e.g. a NeoFOAM venv; neofoam_ui is put on its PYTHONPATH.
         self.python = python or sys.executable
@@ -165,6 +186,7 @@ class StepperApp:
         self.catalyst = catalyst or os.environ.get(CATALYST_ENV)
         #: Images the solver renders in situ, served as ``insitu/<run>/view_*.png``.
         self.insitu_dir = tempfile.mkdtemp(prefix="neofoam_ui_insitu_")
+        atexit.register(shutil.rmtree, self.insitu_dir, True)
         self.server.enable_module({"serve": {"insitu": self.insitu_dir}})
         self._runs = 0
         self._run_dir = ""
@@ -195,6 +217,15 @@ class StepperApp:
         self._plotted = 0.0
         #: Compute time per table since the last flush (shown on its diagram frame).
         self._table_ms: dict[str, float] = {}
+        #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
+        self._viewers = 0
+        self._watching: Optional[bool] = None
+        #: Console lines and the visited nodes, applied to the state at the next push.
+        self._new_logs: list[dict[str, str]] = []
+        self._visited: list[str] = []
+        self._visited_dirty = False
+        self._pushed = 0.0
+        self._push_later: Optional[asyncio.TimerHandle] = None
         self._reset_state()
         self.editor: Any = None
         self.pp_editor: Any = None
@@ -206,11 +237,16 @@ class StepperApp:
         self.server.trigger("nf_key")(self._on_key)
         self.server.trigger("nf_collapse")(self.toggle_collapse)
         self.server.trigger("nf_field")(self.highlight_field)
+        self.server.trigger("nf_viewer")(self.viewer)
         self.state.change("fv_on", "fv_field", "fv_comp", "pp_on")(lambda **_: self._send_view())
         self.state.change("fv_on", "pp_on", "pt_on")(lambda **_: self._fit_pipeline())
         self.state.change("pt_on", "pt_sel")(lambda **_: self._plot(force=True))
         self.state.change("fv_live")(lambda fv_live, **_: self._send({"cmd": "live", "on": bool(fv_live)}))
         self.state.change("delay_ms")(self._on_delay)
+        self.state.change("dag_on")(lambda **_: self._send_watch())
+        self.state.change("dag_on")(lambda **_: self._fit_panes())
+        self.state.change("wait_ui")(lambda wait_ui, **_: self._send({"cmd": "wait", "on": bool(wait_ui)}))
+        self.state.change("fv_every", "fv_secs")(lambda **_: self._send_frames())
         self.state.change("heat_on")(lambda **_: self._refresh_heat())
 
     # -- state ------------------------------------------------------------------------
@@ -227,6 +263,7 @@ class StepperApp:
         s.depth = 0
         s.active_loops = []
         s.visited = []
+        self._visited, self._visited_dirty, self._new_logs = [], False, []
         s.bps = s.bps if isinstance(s.bps, list) else []
         s.collapsed = s.collapsed if isinstance(s.collapsed, list) else []
         s.heat_on = bool(s.heat_on)
@@ -247,7 +284,11 @@ class StepperApp:
         if s.is_mobile is None:
             s.is_mobile = False
         if s.delay_ms is None:
-            s.delay_ms = 150
+            s.delay_ms = self.delay_ms
+        if s.wait_ui is None:
+            s.wait_ui = self.wait_ui
+        # The DAG pane: closed, a run reports no events (the solver runs as without the UI).
+        s.dag_on = True if s.dag_on is None else bool(s.dag_on)
         # Field view: the toggle and the choice survive a restart.
         s.fv_on = bool(s.fv_on)
         s.fv_field = s.fv_field or None
@@ -256,6 +297,9 @@ class StepperApp:
         s.fv_comps = []
         s.fv_src = None
         s.fv_live = True if s.fv_live is None else bool(s.fv_live)
+        # Live frames at most every fv_every time steps and fv_secs seconds apart.
+        s.fv_every = s.fv_every if s.fv_every is not None else 1
+        s.fv_secs = s.fv_secs if s.fv_secs is not None else 0.5
         s.fv_msg = "the field view starts once the solver context exists (after initialization)"
         # Post-processing diagram (drawn from the pipeline Catalyst runs for the field view).
         s.pp_on = bool(s.pp_on)
@@ -281,6 +325,8 @@ class StepperApp:
         src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
         cmd = [self.python, "-u", "-m", "neofoam_ui.worker", self.solver_spec]
+        if self._run_dir:  # the previous run's images
+            shutil.rmtree(os.path.join(self.insitu_dir, self._run_dir), ignore_errors=True)
         if self.catalyst:
             self._runs += 1
             self._run_dir = f"run{self._runs}"
@@ -289,7 +335,7 @@ class StepperApp:
         if self.np > 1:
             from neofoam_ui.parallel import SYNC_ENV  # noqa: PLC0415
 
-            env[SYNC_ENV] = f"127.0.0.1:{_free_port()}"
+            env[SYNC_ENV] = f"{self.sync_host}:{_free_port(self.sync_host)}"
             cmd = [*self.mpirun, "-np", str(self.np), *cmd]
         self.proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -302,9 +348,12 @@ class StepperApp:
         )
         with self.state:
             self.state.connected = True
-        self._send({"cmd": "delay", "seconds": self.state.delay_ms / 1000})
+        self._send({"cmd": "delay", "seconds": float(self.state.delay_ms) / 1000})
+        self._send({"cmd": "wait", "on": bool(self.state.wait_ui)})
         self._send({"cmd": "breakpoints", "ids": list(self.state.bps)})
         self._send({"cmd": "live", "on": bool(self.state.fv_live)})
+        self._send_frames()
+        self._send_watch(force=True)
         self._view_req = None
         self._send_view()
         asynchronous.create_task(self._read_stderr(self.proc))
@@ -319,8 +368,14 @@ class StepperApp:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            with self.state:
-                self._handle(msg)
+            self._handle(msg)
+            if msg["type"] in _URGENT or time.monotonic() - self._pushed >= PUSH_EVERY:
+                self._push()
+            elif self._push_later is None:
+                self._push_later = asyncio.get_running_loop().call_later(PUSH_EVERY, self._push)
+            if msg["type"] == "sync":  # "wait for UI": all before it is handled and pushed
+                self._send({"cmd": "ack", "seq": msg["seq"]})
+        self._push()  # what was still buffered
         with self.state:
             if self.proc is proc:
                 self.state.connected = False
@@ -332,8 +387,42 @@ class StepperApp:
         async for line in proc.stderr:
             if self.proc is not proc:
                 break
-            with self.state:
-                self._console(line.decode(errors="replace").rstrip(), "err")
+            self._console(line.decode(errors="replace").rstrip(), "err")
+            self._push()
+
+    def _push(self) -> None:
+        """Apply the buffered console lines and visited nodes, and push the state to the browser."""
+        if self._push_later is not None:
+            self._push_later.cancel()
+            self._push_later = None
+        self._pushed = time.monotonic()
+        s = self.state
+        if self._new_logs:
+            s.logs = (self._new_logs[::-1] + list(s.logs))[:CONSOLE_MAX]
+            self._new_logs = []
+        if self._visited_dirty:
+            s.visited = list(self._visited)
+            self._visited_dirty = False
+        s.flush()
+
+    def viewer(self, visible: bool) -> None:
+        """A browser tab appeared / became visible (or the reverse): who watches the DAG."""
+        self._viewers = max(0, self._viewers + (1 if visible else -1))
+        self._send_watch()
+
+    def _send_watch(self, force: bool = False) -> None:
+        on = bool(self.state.dag_on) and self._viewers > 0
+        if force or on != self._watching:
+            self._watching = on
+            self._send({"cmd": "watch", "on": on})
+
+    def _send_frames(self) -> None:
+        s = self.state
+        try:
+            every, secs = max(1, int(s.fv_every)), max(0.0, float(s.fv_secs))
+        except (TypeError, ValueError):  # a half-typed number
+            return
+        self._send({"cmd": "frames", "every": every, "seconds": secs})
 
     def _send(self, cmd: dict[str, Any]) -> None:
         if self.proc is None or self.proc.stdin is None or self.proc.returncode is not None:
@@ -356,6 +445,9 @@ class StepperApp:
             self._console(f"✖ {msg['text']}", "err")
         elif kind == "stdout":
             self._console(msg["text"], "out")
+        elif kind == "skipped":  # the worker thinned out progress messages the UI was behind on
+            what = ", ".join(f"{n} {k}" for k, n in msg.items() if k != "type")
+            self._console(f"… not shown while running: {what}", "out")
         elif kind == "breakpoint":
             self._console(f"● breakpoint hit: {self._name(msg['node'])}", "bp")
         elif kind == "running":
@@ -385,7 +477,7 @@ class StepperApp:
         scope = " › ".join(f"{self._name(lid)}#{it}" for lid, it in msg["stack"]) or "—"
         t = msg.get("time")
         prefix = f"[t={t:.4g}] " if isinstance(t, (int, float)) else ""
-        visited = list(self.state.visited)
+        visited = self._visited
         if msg["kind"] == "init":
             self._console(f"{prefix}init ▶ {msg['name']}  ({msg['ms']:.2f} ms)", "init")
             visited.append(msg["node"])
@@ -395,8 +487,8 @@ class StepperApp:
         else:
             self._console(f"{prefix}{scope}  ◇ {msg['name']} test #{msg['iter']} → {msg['result']}", "test")
             if not msg["stack"]:  # new time step: forget what ran in the previous one
-                visited = [v for v in visited if v.startswith("init:")]
-        self.state.visited = visited
+                self._visited = [v for v in visited if v.startswith("init:")]
+        self._visited_dirty = True
 
     def _on_paused(self, msg: dict[str, Any]) -> None:
         ev = msg["event"]
@@ -551,6 +643,12 @@ class StepperApp:
         kept = [n for n in s.pt_sel if n in s.pt_names]
         s.pt_sel = kept or s.pt_names[:1]
 
+    def _fit_panes(self) -> None:
+        """The DAG pane opened or closed: refit it and the pipeline diagram next to it."""
+        if self.editor is not None and self.state.dag_on:
+            self.editor.fit_view()
+        self._fit_pipeline()
+
     def _fit_pipeline(self) -> None:
         """Refit the diagram when its pane opens or the field pane next to it changes its width."""
         if self.pp_editor is not None and self.state.pp_on and self.state.pp_graph:
@@ -581,7 +679,10 @@ class StepperApp:
         return f"◇ {name} test #{ev['iter']}" if ev["kind"] == "test" else name
 
     def _console(self, text: str, cls: str) -> None:
-        self.state.logs = [{"t": text, "c": cls}] + self.state.logs[: CONSOLE_MAX - 1]
+        """Add a console line (shown at the next :meth:`_push`)."""
+        self._new_logs.append({"t": text, "c": cls})
+        if len(self._new_logs) > CONSOLE_MAX:
+            del self._new_logs[: len(self._new_logs) - CONSOLE_MAX]
 
     # -- graph ------------------------------------------------------------------------------
 
@@ -830,6 +931,15 @@ class StepperApp:
             layout.title.set_text("DAG stepper")
             client.Style(_CSS + FIELD_CSS + PIPELINE_CSS + PLOT_CSS)
             # Phones: drawer closed and overlaying instead of pushing the content.
+            # Who watches: a visible tab counts (closed or hidden, a run reports no events).
+            client.ClientTriggers(mounted=(
+                "let shown = window.document.visibilityState !== 'hidden'; if (shown) trigger('nf_viewer', [true]);"
+                " window.document.addEventListener('visibilitychange', () => {"
+                " const now = window.document.visibilityState !== 'hidden';"
+                " if (now !== shown) { shown = now; trigger('nf_viewer', [now]); } });"
+                " window.addEventListener('pagehide', () => { if (shown) { shown = false;"
+                " trigger('nf_viewer', [false]); } })"
+            ))
             client.ClientTriggers(mounted=(
                 "set('is_mobile', window.innerWidth < 900);"
                 " if (window.innerWidth < 900) set('main_drawer', false)"
@@ -862,6 +972,13 @@ class StepperApp:
                     self._button("Skip init", "mdi-fast-forward", "skip_init",
                                  f"{idle} || cur_kind !== 'init'")
                     v3.VDivider(vertical=True, classes="mx-1")
+                    with v3.VBtn(size="small", classes="mx-1 nf-view", click="dag_on = !dag_on",
+                                 variant=("dag_on ? 'tonal' : 'text'",),
+                                 color=("dag_on ? 'primary' : undefined",),
+                                 title="the activity diagram; closed, a run reports no events "
+                                       "and the solver runs as without the UI"):
+                        v3.VIcon("mdi-sitemap-outline", size="small")
+                        html.Span("DAG", classes="nf-btxt ml-1")
                     with v3.VBtn(size="small", classes="mx-1 nf-view", click="fv_on = !fv_on",
                                  variant=("fv_on ? 'tonal' : 'text'",),
                                  color=("fv_on ? 'primary' : undefined",),
@@ -881,10 +998,16 @@ class StepperApp:
                         v3.VIcon("mdi-chart-line", size="small")
                         html.Span("Plots", classes="nf-btxt ml-1")
                     v3.VDivider(vertical=True, classes="mx-1")
-                    html.Span("animation", classes="text-caption mx-2 nf-btxt")
-                    v3.VSlider(v_model=("delay_ms",), min=0, max=600, step=10, hide_details=True,
-                               density="compact", style="min-width: 90px; max-width: 110px;",
-                               title="animation delay while running")
+                    html.Span("delay {{ delay_ms }} ms", classes="text-caption mx-2",
+                              style="white-space: nowrap; min-width: 82px;")
+                    v3.VSlider(v_model=("delay_ms",), min=0, max=1000, step=10, hide_details=True,
+                               density="compact", style="min-width: 90px; max-width: 120px;",
+                               title="pause after every event while running, to follow the token "
+                                     "(0: none; only with the DAG pane open)")
+                    v3.VCheckbox(v_model=("wait_ui",), label="wait for UI", hide_details=True,
+                                 density="compact", classes="ml-2", style="flex: none;",
+                                 title="the solver waits until every event and frame is shown "
+                                       "(slower); off, it never waits and a lagging UI skips some")
                     v3.VCheckbox(v_model=("follow",), label="follow", hide_details=True,
                                  density="compact", classes="ml-2", style="flex: none;")
                     v3.VCheckbox(v_model=("heat_on",), label="timing", hide_details=True,
@@ -921,8 +1044,11 @@ class StepperApp:
             with layout.content:
                 with html.Div(classes=("['nf-grid', { fv: fv_on || pp_on || pt_on }]",)):
                     with html.Div(classes="nf-canvas"):
-                        with html.Div(classes="nf-diagram"):
+                        with html.Div(classes="nf-diagram", v_show="dag_on"):
                             self._canvas()
+                        html.Div("All panes are closed: the solver runs as it would without the UI "
+                                 "(breakpoints and Pause still work).", classes="nf-idle",
+                                 v_show="!dag_on && !fv_on && !pp_on && !pt_on")
                         field_pane()
                         self.pp_editor = pipeline_pane()
                         plot_pane()
@@ -1137,13 +1263,13 @@ def _short_path(path: Optional[str]) -> str:
     return path
 
 
-def _free_port() -> int:
+def _free_port(host: str = "127.0.0.1") -> int:
     with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
+        sock.bind((host, 0))
         return sock.getsockname()[1]
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--solver", default=DEFAULT_SOLVER, help="module:Factory of the solver")
     parser.add_argument("--case", help="case directory the worker runs in (default: cwd)")
@@ -1153,13 +1279,27 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument("--catalyst", metavar="PREFIX",
                         help=f"Catalyst 2 + ParaView install for the in-situ field view "
                              f"(default ${CATALYST_ENV}); ParaView must be built for the worker's Python")
+    parser.add_argument("--delay", type=float, metavar="MS", default=float(os.environ.get(DELAY_ENV) or 0),
+                        help=f"pause after every event while running, in ms (default ${DELAY_ENV} or 0; "
+                             "the toolbar slider changes it live)")
+    parser.add_argument("--wait-ui", action="store_true",
+                        default=os.environ.get(WAIT_ENV, "").lower() in ("1", "true", "yes", "on"),
+                        help=f"the solver waits until the UI showed every event and frame (default ${WAIT_ENV}); "
+                             "off, it never waits and a lagging UI skips progress messages")
+    parser.add_argument("--sync-host", default="127.0.0.1",
+                        help="address rank 0 listens on for the other MPI ranks (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--no-browser", action="store_true")
-    args, _ = parser.parse_known_args(argv)
+    return parser.parse_known_args(argv)[0]
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    args = parse_args(argv)
     server = get_server("neofoam_ui", client_type="vue3")
     StepperApp(server, args.solver, case=args.case, python=args.python, np=args.np,
-               mpirun=args.mpirun, catalyst=args.catalyst)
+               mpirun=args.mpirun, catalyst=args.catalyst, delay_ms=args.delay, wait_ui=args.wait_ui,
+               sync_host=args.sync_host)
     # timeout=0: keep serving when no browser is connected (wslink's default exits after 300 s).
     server.start(port=args.port, host=args.host, open_browser=not args.no_browser, timeout=0)
 
