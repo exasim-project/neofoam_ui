@@ -15,14 +15,19 @@ def _graph():
     return steps, [op_dict(o) for o in ops]
 
 
-def test_placeholder_before_initialization():
-    steps, _ = _graph()
-    flow = build_flow(steps, None)
-    ids = {n["id"] for n in flow["nodes"]}
-    assert "exec:placeholder" in ids and "init:mesh" in ids
+def test_one_view_at_a_time_and_a_placeholder_before_initialization():
+    steps, ops = _graph()
+    assert {n["id"] for n in build_flow(steps, None)["nodes"]} == {"exec:placeholder"}
+    init = {n["id"] for n in build_flow(steps, ops, view="init")["nodes"]}
+    assert "init:mesh" in init and not any(i.startswith("time_loop") for i in init)
+    run = {n["id"] for n in build_flow(steps, ops)["nodes"]}
+    assert "time_loop" in run and not any(i.startswith("init:") for i in run)
+    # no frames: no activity nodes in either view
+    assert not [n for v in ("init", "exec") for n in build_flow(steps, ops, view=v)["nodes"]
+                if n["type"] == "activity"]
 
 
-def test_loops_are_groups_with_decision_and_back_edge():
+def test_a_loop_is_a_control_node_with_decision_and_back_edge():
     steps, ops = _graph()
     flow = build_flow(steps, ops)
     nodes = {n["id"]: n for n in flow["nodes"]}
@@ -59,8 +64,8 @@ def test_collapsed_loop_hides_its_body():
     assert ("time_loop/store_old_time", "time_loop/inner_loop") in edges
     assert ("time_loop/inner_loop", "time_loop/write_output") in edges
     assert all(e["source"] in nodes and e["target"] in nodes for e in flow["edges"])
-    full_h = {n["id"]: n for n in full["nodes"]}["time_loop"]["height"]
-    assert nodes["time_loop"]["height"] < full_h
+    full_end = {n["id"]: n for n in full["nodes"]}["end"]["position"]["y"]
+    assert nodes["end"]["position"]["y"] < full_end
 
 
 def test_nodes_show_their_position():
@@ -123,10 +128,10 @@ def test_a_coupling_loop_draws_free_solver_boxes_joined_only_by_data_lines():
     nodes = {n["id"]: n for n in flow["nodes"]}
     p = "time/loop"
 
-    # the boxes and every op of the body hang off the loop's parent, not the loop
+    # no frames but the region boxes; no node hangs off a loop (but its diamond)
     assert nodes[f"{p}::box0"]["type"] == "region"
     assert [nodes[f"{p}::box{i}"]["data"]["label"] for i in (0, 1)] == ["a", "b"]
-    assert {nodes[i]["parentNode"] for i in (f"{p}::box0", f"{p}::box1", f"{p}/couple_a.x", f"{p}/b.solve")} == {"time"}
+    assert not [n for n in flow["nodes"] if n.get("parentNode") and n["type"] != "decision"]
     # the loop itself is a compact control node with its test
     assert nodes[p]["data"]["control"] and nodes[f"{p}::test"]["parentNode"] == p
     # each coupling node inside its own solver's box, right above the op it feeds
@@ -164,7 +169,6 @@ def test_a_loop_without_coupling_nodes_has_no_region_boxes():
 
     assert not [n for n in flow["nodes"] if n["type"] == "region"]
     assert not [e for e in flow["edges"] if e.get("class") == "nf-couple"]
-    assert not [n for n in flow["nodes"] if n["data"].get("control")]
 
 
 def test_a_nested_coupling_loop_sits_in_the_box_it_continues():
@@ -208,3 +212,54 @@ def test_the_inspector_names_a_coupling_node_s_exchange():
 
     rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_a.x", [])["rows"]}
     assert rows["exchange"] == "x ← b (b.solve), for the op below"
+
+
+def test_the_init_view_puts_each_region_s_steps_in_its_box_below_the_driver_s():
+    from neofoam_ui.engine import InitStep  # noqa: PLC0415
+
+    steps = [InitStep("time", lambda r: None), InitStep("a.mesh", lambda r: None, ["time"], region="a"),
+             InitStep("b.mesh", lambda r: None, ["time"], region="b"),
+             InitStep("b.T", lambda r: None, ["b.mesh"], region="b")]
+    loop = _coupled("loop", ["b", "a"], [("a.solve", "a"), ("b.solve", "b")])
+    assign_ids([loop])
+    flow = build_flow([init_dict(s) for s in steps], [op_dict(loop)], view="init")
+    nodes = {n["id"]: n for n in flow["nodes"]}
+
+    # the regions in the order of the execution view (b, then a)
+    bx, ax = nodes["init::box:b"]["position"]["x"], nodes["init::box:a"]["position"]["x"]
+    assert bx < ax
+    for step, region in (("init:a.mesh", "a"), ("init:b.mesh", "b"), ("init:b.T", "b")):
+        box, n = nodes[f"init::box:{region}"], nodes[step]
+        assert box["position"]["x"] < n["position"]["x"] < box["position"]["x"] + box["width"]
+        assert box["position"]["y"] < n["position"]["y"] < box["position"]["y"] + box["height"]
+    assert nodes["init:time"]["position"]["y"] < nodes["init::box:a"]["position"]["y"]
+    edges = {(e["source"], e["target"]) for e in flow["edges"]}
+    assert edges == {("init:time", "init:a.mesh"), ("init:time", "init:b.mesh"), ("init:b.mesh", "init:b.T")}
+
+
+def test_a_plain_solver_s_init_view_has_no_region_boxes():
+    steps, ops = _graph()
+    flow = build_flow(steps, ops, view="init")
+    assert not [n for n in flow["nodes"] if n["type"] == "region"]
+
+
+def test_the_dag_view_follows_the_run_s_phase_until_the_user_switches():
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
+
+    rebuilt = []
+    pane = SimpleNamespace(_phase=None, app=SimpleNamespace(state=SimpleNamespace(dag_view="init")),
+                           rebuild=lambda: rebuilt.append(pane.app.state.dag_view))
+    follow = lambda phase: _DagPane._follow_phase(pane, phase)  # noqa: E731
+    follow("init")
+    assert pane.app.state.dag_view == "init" and rebuilt == []
+    follow("exec")
+    assert pane.app.state.dag_view == "exec" and rebuilt == ["exec"]
+    pane.app.state.dag_view = "init"  # the user looks at the init view while it runs
+    follow("exec")
+    assert pane.app.state.dag_view == "init"  # holds: no change of phase
+    follow("init")  # a restart: the next change of phase switches again
+    assert pane.app.state.dag_view == "init"
+    follow("exec")
+    assert pane.app.state.dag_view == "exec"

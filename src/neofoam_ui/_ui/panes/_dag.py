@@ -1,5 +1,10 @@
 """The DAG pane: the activity diagram of the run, its token, breakpoints, timing and highlights.
 
+It shows one view at a time, the initialization or the execution (``dag_view``: ``"init"`` /
+``"exec"``, a toolbar toggle). The view follows the run's phase: it switches to ``init`` when
+an init step runs and to ``exec`` when the first execution op does; a choice of the user holds
+until the next change of phase. ``dag_view`` is UI state only, the worker never sees it.
+
 Closed (or no visible browser tab) the worker is told nobody watches (``watch``): a run then
 sends no per-event messages at all. The inspector and the containment tree (drawer) belong
 to it too; the shell places them.
@@ -37,6 +42,9 @@ class _DagPane(BasePane):
         self._visited_dirty = False
         #: The loops drawn collapsed now (the user's ``collapsed`` at the last rebuild).
         self._shown: frozenset[str] = frozenset()
+        #: The run's phase (``"init"`` / ``"exec"``) the view last followed, and the view drawn.
+        self._phase: Optional[str] = None
+        self._drawn: Optional[str] = None
         #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
         self.viewers = 0
         self._watching: Optional[bool] = None
@@ -45,6 +53,7 @@ class _DagPane(BasePane):
         state.change("dag_on")(lambda **_: self.send_watch())
         state.change("dag_on")(lambda **_: self._fit())
         state.change("heat_on")(lambda **_: self._refresh_heat())
+        state.change("dag_view")(lambda **_: self._view_changed())
 
     # -- pane -----------------------------------------------------------------------------
 
@@ -56,6 +65,8 @@ class _DagPane(BasePane):
         s.collapsed = s.collapsed if isinstance(s.collapsed, list) else []
         s.loop_res = {}
         self._shown = frozenset()
+        self._phase = self._drawn = None
+        s.dag_view = "init"
         s.heat_on = bool(s.heat_on)
         s.heat = {}
         s.heat_ms = {}
@@ -126,6 +137,7 @@ class _DagPane(BasePane):
         t = msg.get("time")
         prefix = f"[t={t:.4g}] " if isinstance(t, (int, float)) else ""
         visited = self._visited
+        self._follow_phase("init" if msg["kind"] == "init" else "exec")
         if msg["kind"] == "init":
             console(f"{prefix}init ▶ {msg['name']}  ({msg['ms']:.2f} ms)", "init")
             visited.append(msg["node"])
@@ -151,6 +163,8 @@ class _DagPane(BasePane):
 
     def _on_paused(self, msg: dict[str, Any]) -> None:
         s, ev = self.app.state, msg["event"]
+        if ev["kind"] in ("init", "exec", "test"):
+            self._follow_phase("init" if ev["kind"] == "init" else "exec")
         self._refresh_heat()
         self._refresh_highlight()
         if s.follow and ev["node"]:
@@ -165,10 +179,25 @@ class _DagPane(BasePane):
         s.tree = self.model.reindex(s.solver_name)
         s.regions = self.model.regions()
         collapsed = self._shown = frozenset(s.collapsed or ())
-        self.editor.graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed)
+        view = self._drawn = "init" if s.dag_view == "init" else "exec"
+        self.editor.graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed,
+                                        view)
         if fit:
             self.editor.fit_view()
         self._refresh_bp_list()
+
+    def _follow_phase(self, phase: str) -> None:
+        """The run entered ``phase``: show its view, once per change of phase."""
+        if phase == self._phase:
+            return
+        self._phase = phase
+        if self.app.state.dag_view != phase:
+            self.app.state.dag_view = phase
+            self.rebuild()
+
+    def _view_changed(self) -> None:
+        if self.editor is not None and self.app.state.dag_view != self._drawn:
+            self.rebuild()
 
     def toggle_bp(self, node_id: str) -> None:
         node_id = node_id.removesuffix("::test")
@@ -186,9 +215,15 @@ class _DagPane(BasePane):
         if not node_id:
             return
         node_id = node_id.removesuffix("::test")
-        if node_id.startswith("act:") or node_id in ("start", "exec:placeholder"):
+        if node_id in ("act:init", "act:exec"):  # the tree's headings: show that view
+            self.app.state.dag_view = node_id[4:]
+            return
+        if node_id.startswith("act:") or node_id in ("start", "end", "exec:placeholder"):
             return
         s, index = self.app.state, self.model.index
+        if node_id in index and (index[node_id]["kind"] == "init") != (s.dag_view == "init"):
+            s.dag_view = "init" if index[node_id]["kind"] == "init" else "exec"
+            self.rebuild(fit=False)
         s.selected = node_id
         self._refresh_inspector()
         if pan and node_id in index:

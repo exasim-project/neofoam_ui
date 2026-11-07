@@ -130,6 +130,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
         with CustomNode("final"):
             with html.Div(classes=("['nf-final', { cur: cur_node === 'end' }]",)):
                 Handle(position="top", type="target", id="t")
+                Handle(position="left", type="target", id="lt")  # a loop's [false] exit
 
         with CustomNode("placeholder"):
             with html.Div(classes="nf-node nf-placeholder"):

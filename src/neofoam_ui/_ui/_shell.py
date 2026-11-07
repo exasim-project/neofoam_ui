@@ -68,6 +68,14 @@ def _build(app: StepperApp) -> None:
                 _button(app, "Skip init", "mdi-fast-forward", "skip_init",
                              f"{idle} || cur_kind !== 'init'")
                 v3.VDivider(vertical=True, classes="mx-1")
+                # the DAG's view: one graph at a time; it follows the run's phase
+                with v3.VBtnToggle(v_model=("dag_view",), mandatory=True, density="compact",
+                                   variant="outlined", divided=True, classes="mx-1", v_show="dag_on",
+                                   style="flex: none;",
+                                   title="show the initialization or the execution graph"):
+                    v3.VBtn("Init", value="init", size="small")
+                    v3.VBtn("Execution", value="exec", size="small")
+                v3.VDivider(vertical=True, classes="mx-1")
                 for pane in toggled:
                     _toggle(pane.toggle)
                 v3.VDivider(vertical=True, classes="mx-1")
