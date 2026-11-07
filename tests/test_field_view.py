@@ -332,7 +332,7 @@ def test_view_offers_view_fields_the_stats_table_does_not(fake_catalyst):
 def test_neofoam_view_fields_from_the_mesh_registry(monkeypatch):
     from types import SimpleNamespace
 
-    from neofoam_ui.adapters.neofoam import _FieldsMixin
+    from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
 
     class Field:
         def __init__(self, name, values):

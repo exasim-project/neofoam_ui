@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from neofoam_ui.adapters.neofoam import _Stepper
+from neofoam_ui.adapters.neofoam._observed import _Stepper
 from neofoam_ui.engine import assign_ids
 
 

@@ -217,7 +217,7 @@ def test_only_the_newest_images_are_kept(tmp_path):
 def test_post_processing_rows_are_converted_on_rank_0_only(monkeypatch, rank):
     import test_pptables  # noqa: PLC0415 - its fake PostProcessor
 
-    from neofoam_ui.adapters.neofoam import _FieldsMixin
+    from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
 
     model = types.ModuleType("neofoam.postprocess.model")
     model.PostProcessor = test_pptables.PostProcessor
