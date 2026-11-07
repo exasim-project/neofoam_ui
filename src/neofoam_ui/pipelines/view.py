@@ -85,12 +85,17 @@ def _range(field, index):
     (lo,), (hi,) = _global([lo], [hi])
     return lo, hi
 _camera_set = [False]
+_shown = [None]  # the field whose colour bar is visible
 
 
 def _params(info):
+    """``catalyst/state/parameters`` as a dict (ParaView 6 hands over the whole execute node)."""
+    node = info.catalyst_params
+    if node.has_path("catalyst/state/parameters"):
+        node = node.fetch_existing("catalyst/state/parameters")
     out = {}
-    for item in info.catalyst_params:
-        key, _, value = str(item).partition("=")
+    for i in range(node.number_of_children()):
+        key, _, value = str(node.child(i).value()).partition("=")
         out[key] = value
     return out
 
@@ -145,6 +150,9 @@ def catalyst_execute(info):
     else:
         ColorBy(display, ("CELLS", field, _COMPONENT.get(comp, "Magnitude")))
     lut = GetColorTransferFunction(field)
+    if _shown[0] is not None and _shown[0] != field:  # one colour bar: the previous field's goes
+        GetScalarBar(GetColorTransferFunction(_shown[0]), view).Visibility = 0
+    _shown[0] = field
     lut.ApplyPreset("Viridis (matplotlib)", True)
     index = -1 if comp in (None, "mag") else int(comp)
     lo, hi = _range(field, index)

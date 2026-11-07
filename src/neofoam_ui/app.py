@@ -391,14 +391,16 @@ class StepperApp:
             s.fv_msg = msg["error"]
             s.fv_src = None
             return
+        if self._view_req != (True, *msg.get("view", (msg["field"], msg["component"]))):
+            return  # rendered for an earlier choice (a live frame in flight): keep the user's
         fields = msg["fields"]
         s.fv_fields = [{"title": f["name"] + (" (vector)" if f["ncomp"] == 3 else f" ({f['ncomp']} comp.)" if f["ncomp"] > 1 else ""),
                         "value": f["name"]} for f in fields]
         ncomp = next((f["ncomp"] for f in fields if f["name"] == msg["field"]), 1)
         s.fv_comps = component_items(ncomp)
         # The worker may have picked the field (none chosen yet / not cell-sized): adopt it.
+        # Echoing it back is harmless (the same frame is not rendered twice).
         s.fv_field, s.fv_comp = msg["field"], msg["component"]
-        self._view_req = (True, msg["field"], msg["component"])
         s.fv_src = f"insitu/{self._run_dir}/{msg['file']}"
         t = msg.get("time")
         ranks = f"{self.np} ranks" if self.np > 1 else ""

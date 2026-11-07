@@ -105,6 +105,8 @@ class Solver(Protocol):
 
     # Optional: ``mesh(ctx) -> geometry dict`` (see :mod:`neofoam_ui.geometry`) enables
     # the field view; it is called once, the first time the view is opened.
+    # Optional: ``view_fields(ctx)`` — the fields the view offers, if more than ``fields``
+    # (e.g. model fields that the stats table leaves out).
 
 
 @dataclass
@@ -207,7 +209,10 @@ class Session:
         #: Field stats of the other MPI ranks, merged into :meth:`summary` (set by the worker).
         self.gather: Optional[Callable[[], list[dict[str, dict[str, Any]]]]] = None
         #: Field view: ``(field, component)`` to render at every pause, ``None`` = view closed.
+        #: Replaced as a whole (:meth:`request_view`), so another thread may set it while running.
         self.view: Optional[tuple[Optional[str], str]] = None
+        #: Counts closings of the view: a reopened view renders again even if nothing changed.
+        self._view_epoch = 0
         #: Rank 0 under MPI: makes the other ranks render the same frame (set by the worker).
         self.on_render: Optional[Callable[[dict[str, str]], None]] = None
         #: Also render at every time step while running (not only at pauses).
@@ -445,9 +450,14 @@ class Session:
 
     def set_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
         """Open (``on``) or close the field view; renders the current frame right away."""
-        self.view = (field, component) if on else None
-        self._view_sent = None
+        self.request_view(field, component, on)
         self.send_view()
+
+    def request_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
+        """Open or close the field view from any thread; the next frame (live or pause) shows it."""
+        if not on:
+            self._view_epoch += 1  # before the swap: whoever sees the new view sees the new epoch
+        self.view = (field, component) if on else None
 
     def _cell_fields(self) -> Optional[tuple[dict[str, Any], dict[str, np.ndarray]]]:
         """This rank's geometry (built once) and its cell-sized fields; ``None`` = no geometry."""
@@ -464,17 +474,19 @@ class Session:
         from neofoam_ui.geometry import cell_count  # noqa: PLC0415
 
         n = cell_count(self._geometry)
-        fields = {k: np.asarray(v) for k, v in self.solver.fields(self.ctx).items()}
+        source = getattr(self.solver, "view_fields", None) or self.solver.fields
+        fields = {k: np.asarray(v) for k, v in source(self.ctx).items()}
         return self._geometry, {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
 
     def _view_error(self, text: str) -> None:
-        if self._view_sent != ("error", text):
-            self._view_sent = ("error", text)
+        if self._view_sent != ("error", self._view_epoch, text):
+            self._view_sent = ("error", self._view_epoch, text)
             self.emit({"type": "frame", "file": None, "fields": [], "error": text})
 
     def send_view(self) -> None:
         """Render the viewed field in situ if the view is open and the values changed."""
-        if self.view is None or self.ctx is None:
+        view = self.view  # read once: the command reader may replace it meanwhile
+        if view is None or self.ctx is None:
             return
         from neofoam_ui import catalyst  # noqa: PLC0415
 
@@ -486,7 +498,7 @@ class Session:
         if cells is None:
             return self._view_error(f"{self.solver.name} provides no mesh geometry")
         fields = cells[1]
-        name, comp = self.view
+        name, comp = view
         if name not in fields:
             name = next((k for k in ("U", "p", "T") if k in fields), next(iter(fields), None))
         if name is None:
@@ -495,7 +507,7 @@ class Session:
         ncomp = int(arr.shape[1]) if arr.ndim == 2 else 1
         if ncomp == 1 or comp not in ["mag"] + [str(i) for i in range(ncomp)]:
             comp = "mag"
-        key = (name, comp, _fingerprint(arr))
+        key = (self._view_epoch, name, comp, _fingerprint(arr))
         if key == self._view_sent:
             return
         self._view_sent = key
@@ -507,6 +519,7 @@ class Session:
             return self._view_error(self._insitu_error or "in-situ view failed")
         self.emit({
             "type": "frame", "file": file, "field": name, "component": comp,
+            "view": list(view),  # the request this frame answers (field/component may be a fallback)
             "time": self.solver.scalars(self.ctx).get("time"),
             "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
                        for k, v in fields.items()],

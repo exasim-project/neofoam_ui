@@ -35,6 +35,12 @@ solver rank r (worker)                                 UI (trame)
 - **Catalyst Live:** `NEOFOAM_UI_CATALYST_LIVE=host:port` enables Live in the pipeline and
   renders at every pause even with the pane closed. Connect a ParaView 6.0 GUI (*Catalyst ▸
   Connect*).
+- **Fields offered:** the solver's optional `view_fields(ctx)` (default `fields`). The NeoFOAM
+  adapter adds every `volScalarField`/`volVectorField` on the mesh registry (`k`, `epsilon`,
+  `nut`, …; not `*_0` / `*PrevIter`); the statistics table keeps `ctx.fields`.
+- **Switching while running:** the worker sets `Session.view` from its command reader
+  (`request_view`), so the next live frame shows it; each frame names the request it answers
+  (`view`), and the UI ignores frames for an earlier choice.
 - Another pipeline: `NEOFOAM_UI_CATALYST_SCRIPT=<file>` (a Catalyst-v2 script, channel `grid`,
   parameters `field=…` and `component=mag|0|1|2` via `info.catalyst_params`).
 
@@ -55,6 +61,7 @@ files the cell centres are published as points; the toy's 1D mesh becomes a rect
 | Per-rank bounds/range → IceT gathers images of different sizes → segfault | all-reduce in the pipeline |
 | Vector components as separate arrays → VTK SOA arrays, copied on `GetVoidPointer` | strided conduit schema into the one `(n, 3)` array (AOS, no copy) |
 | ParaView's static destructors call `MPI_Comm_free` after `MPI_Finalize` → mpirun abort | ranks leave with `os._exit` after a clean stop |
+| ParaView 6's `info.catalyst_params` is the whole execute node, not the parameter list → the `field` parameter was ignored, every frame showed `U` | read `catalyst/state/parameters` from it; hide the previous field's colour bar |
 
 ---
 
@@ -96,5 +103,4 @@ and `PARAVIEW_ENABLE_CATALYST=ON` in its `paraview` feedstock).
 - Interactive view in the browser (rotate/zoom): ParaView Live to a desktop works today; in the
   page it would need remote rendering (trame + ParaView) attached to the in-situ pipeline.
 - Dynamic meshes: rebuild the geometry when `mesh.changing()`.
-- Model fields (`k`, `epsilon`, `nut`) via `ctx.models`.
 - The scalar bar title shows the array name, not `|U|`.

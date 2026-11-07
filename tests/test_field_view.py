@@ -15,6 +15,8 @@ from neofoam_ui.engine import Session
 from neofoam_ui.geometry import cell_centres_geometry, polyhedral, read_polymesh
 from neofoam_ui.toy.heat1d import Heat1D
 
+HELPERS = os.path.join(os.path.dirname(__file__), "helpers")
+
 # -- engine: the view protocol ------------------------------------------------------------
 
 
@@ -170,6 +172,124 @@ def test_other_ranks_render_the_same_frame(fake_catalyst):
     assert told == [{"field": "kappa", "component": "mag"}]
     session.finalize_view()
     assert fake_catalyst[-1] == "finalize"
+
+
+def test_view_request_from_another_thread_takes_effect_at_the_next_live_frame():
+    session, messages = session_after_init()
+    session.set_view("T")
+
+    def emit(msg):  # the command reader switching the field while the run is going
+        messages.append(msg)
+        if msg["type"] == "frame" and len(of(messages, "frame")) == 2:
+            session.request_view("kappa")
+
+    session.emit = emit
+    session.advance("run")
+    frames = of(messages, "frame")
+    assert [f["field"] for f in frames[:3]] == ["T", "T", "kappa"]
+    assert all(f["field"] == "kappa" and f["view"] == ["kappa", "mag"] for f in frames[2:])
+    assert messages.index(frames[2]) < messages.index(of(messages, "paused")[-1])
+
+
+def test_reopened_view_renders_again_an_unchanged_one_not():
+    session, messages = session_after_init()
+    session.set_view("T")
+    session.set_view("T")  # same request, same values: no new frame
+    assert len(of(messages, "frame")) == 1
+    session.set_view(None, on=False)
+    session.set_view("T")
+    assert len(of(messages, "frame")) == 2
+
+
+def test_frame_names_the_request_it_answers():
+    session, messages = session_after_init()
+    session.set_view("flux", "2")
+    frame = of(messages, "frame")[-1]
+    assert (frame["field"], frame["component"], frame["view"]) == ("T", "mag", ["flux", "2"])
+
+
+class Extra(Heat1D):
+    """Heat1D with a field only the view offers (like a turbulence model's ``k``)."""
+
+    def view_fields(self, ctx):
+        return {**self.fields(ctx), "k": 2.0 * ctx.fields["T"]}
+
+
+def test_view_offers_view_fields_the_stats_table_does_not(fake_catalyst):
+    session, messages = session_after_init(Extra())
+    session.set_view("k")
+    frame = of(messages, "frame")[-1]
+    assert frame["field"] == "k" and {"name": "k", "ncomp": 1} in frame["fields"]
+    assert "k" in fake_catalyst[-1]["fields"]
+    assert "k" not in {row["field"] for row in session.summary()["fields"]}
+
+
+def test_neofoam_view_fields_from_the_mesh_registry(monkeypatch):
+    from types import SimpleNamespace
+
+    from neofoam_ui.adapters.neofoam import _FieldsMixin
+
+    class Field:
+        def __init__(self, name, values):
+            self._name, self.values = name, np.asarray(values, dtype=float)
+
+        def name(self):
+            return self._name
+
+        def internalField(self):  # noqa: N802 - pybFoam's name
+            return self.values
+
+    registry = {"p": Field("p", [1, 2]), "k": Field("k", [3, 4]), "k_0": Field("k_0", [0, 0]),
+                "pPrevIter": Field("pPrevIter", [0, 0]), "nut": Field("nut", [5, 6])}
+    vectors = {"U": Field("U", [[1, 0, 0], [0, 1, 0]]), "U_0": Field("U_0", [[0, 0, 0]] * 2)}
+
+    def kind(objects):
+        return SimpleNamespace(list_objects=lambda mesh: list(objects),
+                               from_registry=lambda mesh, name: objects[name])
+
+    monkeypatch.setitem(sys.modules, "pybFoam",
+                        SimpleNamespace(volScalarField=kind(registry), volVectorField=kind(vectors)))
+    ctx = SimpleNamespace(mesh=object(), fields={"pressure": registry["p"], "U": vectors["U"]})
+    fields = _FieldsMixin().view_fields(ctx)
+    assert list(fields) == ["pressure", "U", "k", "nut"]  # p is "pressure" already
+    assert fields["k"].tolist() == [3, 4]
+    assert list(_FieldsMixin().fields(ctx)) == ["pressure", "U"]  # the stats table: unchanged
+
+
+def test_worker_switches_the_field_while_running():
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([HELPERS, os.environ.get("PYTHONPATH", "")])}
+    proc = subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "fake_view_toy:ViewHeat"],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+
+    def send(cmd):
+        proc.stdin.write(json.dumps(cmd) + "\n")
+        proc.stdin.flush()
+
+    try:
+        seen = []
+        for line in proc.stdout:
+            seen.append(json.loads(line))
+            if seen[-1]["type"] == "paused" and len(of(seen, "paused")) == 1:
+                send({"cmd": "step", "mode": "skip_init"})
+                send({"cmd": "view", "on": True, "field": "T", "component": "mag"})
+                send({"cmd": "delay", "seconds": 0.02})
+                send({"cmd": "step", "mode": "run"})
+            elif seen[-1]["type"] == "frame" and len(of(seen, "frame")) == 3:
+                send({"cmd": "view", "on": True, "field": "kappa", "component": "mag"})
+            elif seen[-1]["type"] == "paused" and seen[-1]["finished"]:
+                break
+        frames = of(seen, "frame")
+        switch = next(i for i, f in enumerate(frames) if f["field"] == "kappa")
+        assert switch >= 3 and all(f["field"] == "kappa" for f in frames[switch:])
+        # rendered by a live frame of the run, not first at the pause that ended it
+        assert any(m["type"] == "log" for m in seen[seen.index(frames[switch]):])
+        send({"cmd": "stop"})
+        for line in proc.stdout:
+            if json.loads(line)["type"] == "stopped":
+                break
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 def test_worker_reports_unconfigured_view():
@@ -348,6 +468,30 @@ insitu.finalize()
     name = res.stdout.split("FILE ")[1].split()[0]
     png = tmp_path / "out" / name
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@needs_catalyst
+def test_paraview_colours_by_the_requested_field(tmp_path):
+    """The pipeline reads the ``field`` parameter: p and its mirror image render differently."""
+    write_ascii(tmp_path)
+    code = f"""
+import numpy as np
+from neofoam_ui import catalyst
+from neofoam_ui.geometry import polyhedral, read_polymesh
+geom = polyhedral(read_polymesh({str(tmp_path)!r}), 2)
+fields = {{"p": np.array([1.0, 2.0]), "q": np.array([2.0, 1.0])}}
+insitu = catalyst.InSitu({PREFIX!r}, {str(tmp_path / "out")!r})
+for name in ("p", "q"):
+    print("FILE", insitu.execute(geom, fields, 0.5, {{"field": name, "component": "mag"}}))
+insitu.finalize()
+"""
+    python = os.environ.get("NEOFOAM_PYTHON", sys.executable)
+    src = os.path.join(os.path.dirname(__file__), "..", "src")
+    res = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=300,
+                         env={**os.environ, "PYTHONPATH": src})
+    assert res.returncode == 0, res.stderr[-3000:]
+    p, q = [(tmp_path / "out" / part.split()[0]).read_bytes() for part in res.stdout.split("FILE ")[1:]]
+    assert p != q  # an ignored parameter colours both by the default field
 
 
 def test_live_frames_at_every_time_step_while_running():

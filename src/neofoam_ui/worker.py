@@ -164,7 +164,10 @@ def main(argv: list[str] | None = None) -> int:
         elif kind == "step":
             commands.put({"cmd": "step", "mode": str(cmd["mode"]), "node": cmd.get("node")})
         elif kind == "view":
-            commands.put(cmd)
+            # Takes effect at the next live frame of a run; the queued command renders it
+            # right away when paused (and is a no-op after a run already showed it).
+            session.request_view(cmd.get("field"), str(cmd.get("component", "mag")), bool(cmd.get("on", True)))
+            commands.put({"cmd": "view"})
         elif kind == "live":
             session.live_view = bool(cmd["on"])
         else:
@@ -199,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError as exc:  # unknown step mode
                 out({"type": "log_error", "text": str(exc)})
         elif cmd["cmd"] == "view":
-            session.set_view(cmd.get("field"), str(cmd.get("component", "mag")), cmd.get("on", True))
+            session.send_view()
 
 
 if __name__ == "__main__":
