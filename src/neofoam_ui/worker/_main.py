@@ -11,7 +11,10 @@ import threading
 from typing import Any
 
 from neofoam_ui.engine import Session
-from neofoam_ui.parallel import Hub, finish, follow, rank_info
+from neofoam_ui.parallel import rank_info
+from neofoam_ui.parallel._follower import _follow
+from neofoam_ui.parallel._hub import _Hub
+from neofoam_ui.parallel._mpi import _finish
 from neofoam_ui.worker._acks import _Acks
 from neofoam_ui.worker._commands import _handle, _Worker
 from neofoam_ui.worker._out import _Out
@@ -39,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     rank, size = rank_info()
     if rank > 0:
         os.dup2(2, 1)  # mpirun merges every rank's stdout into rank 0's protocol stream
-        return follow(load_solver(argv[0]), rank)
+        return _follow(load_solver(argv[0]), rank)
 
     out = _Out(os.fdopen(os.dup(1), "w"))
     sync = _capture_fd1(out)
@@ -54,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     session.barrier = acks.barrier
     hub = None
     if size > 1:
-        hub = Hub(size - 1)
+        hub = _Hub(size - 1)
         session.set_peers(hub)
     worker = _Worker(session, out, acks, queue.Queue())
 
@@ -79,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             if hub is not None:
                 hub.stop()  # first: the followers finalize together with this rank
             session.finalize_view()
-            finalized = finish(session)  # also when ParaView started MPI in a serial run
+            finalized = _finish(session)  # also when ParaView started MPI in a serial run
             out({"type": "stopped"})
             out.drain()
             _exit(0 if finalized else 1)  # 1: stuck in a collective, let mpirun clean up
