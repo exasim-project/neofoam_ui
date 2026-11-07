@@ -3,13 +3,16 @@
 * **Initialization** (``view="init"``) — the init DAG, layered by longest dependency path:
   the driver's steps (no region) on top, below them one box per region with its own steps,
   in the regions' order of the execution view;
-* **Execution** (``view="exec"``) — the operation tree. There are no frames: a loop is its
+* **Execution** (``view="exec"``) — the operation tree. A multi-region solver is drawn as one
+  box per region, each the full solver as it would run alone: the tree *projected* onto the
+  region — its own ops and every op of no region (the driver's, e.g. ``set_time_step``), in
+  their loops. A shared op (a loop, a driver op) thus appears once per box; each copy has the
+  id ``<op id>@@<region>`` and ``data.ref``, the shared op's id, which the UI binds to (token,
+  selection, breakpoints, pass, residuals). Between the boxes only the coupling nodes of one
+  coupling loop are joined: one line with arrowheads at both ends, labelled with the exchanged
+  data. A solver without regions is one tree, no boxes. There are no frames: a loop is its
   control node (title, pass, residuals, test diamond) above its body, with a ``[true]`` edge
   into the first op, a dashed back edge from the last op and a ``[false]`` exit on the left.
-  A *coupling loop* (a loop whose body holds coupling nodes, ops with an ``exchange``) lays
-  its body out as one box per region, side by side; each box is its solver's part, a
-  coupling node right before the op it feeds. The boxes are joined only between their
-  coupling nodes: one line with arrowheads at both ends, labelled with the exchanged data.
 
 Node positions are absolute, except a loop's diamond, which sits in its control node. A
 *collapsed* loop is drawn as a single node without its body.
@@ -41,14 +44,41 @@ __all__ = ()
 # -- execution activity --------------------------------------------------------------
 
 
-#: Height of a region box's header (its region), its padding around its ops, the width of
-#: the gap between two boxes (room for the data lines and their labels), and the size of a
+#: Height of a region box's header (its region), its padding around its content, the width of
+#: the gap between two boxes (room for the coupling lines and their labels), and the size of a
 #: loop's control node.
 _BOX_HEAD, _BOX_PAD = 30, 14
 _BOX_GAP = 200
 _CTRL_W, _CTRL_H = 400, 104
 #: Space left of a loop's footprint for its ``[false]`` exit edge.
 _EXIT = 24
+#: Separates a shared op's id from the region of its copy (``time_loop@@a``).
+_SEP = "@@"
+
+
+def _ref(op: dict[str, Any]) -> str:
+    """The id of the op ``op`` stands for: its own, or the shared op's for a region's copy."""
+    return str(op.get("ref") or op["id"])
+
+
+def _project(ops: list[dict[str, Any]], region: str) -> list[dict[str, Any]]:
+    """``ops`` as region ``region`` runs them: its own ops and those of no region, in their loops
+    (a loop with nothing left of it is dropped). Copies, with ``ref`` the original's id."""
+    out = []
+    for op in ops:
+        if op["kind"] == "action":
+            if op.get("region") in (None, region):
+                out.append(_copy(op, region, []))
+        else:
+            children = _project(op["children"], region)
+            if children or not op["children"]:
+                out.append(_copy(op, region, children))
+    return out
+
+
+def _copy(op: dict[str, Any], region: str, children: list[dict[str, Any]]) -> dict[str, Any]:
+    plain = {k: v for k, v in op.items() if not k.startswith("_")}
+    return {**plain, "id": f"{op['id']}{_SEP}{region}", "ref": op["id"], "children": children}
 
 
 def _regions_in(op: dict[str, Any]) -> list[str]:
@@ -59,43 +89,12 @@ def _regions_in(op: dict[str, Any]) -> list[str]:
     return seen
 
 
-def _boxes(op: dict[str, Any]) -> Optional[list[dict[str, Any]]]:
-    """A coupling loop's body as region boxes, one per region, in order of first appearance.
-
-    A coupling loop holds coupling nodes (ops with an ``exchange``). An op goes to its region's
-    box; a nested loop (no region of its own) to the box it continues, or else to the box of
-    its first region. ``None``: not a coupling loop, or a body op of no region at all (then the
-    loop is drawn as usual).
-    """
-    if not any(child.get("exchange") for child in op.get("children", [])):
-        return None
-    boxes: list[dict[str, Any]] = []
-    for child in op["children"]:
-        regions = _regions_in(child)
-        if not regions:
-            return None
-        if boxes and boxes[-1]["region"] in regions and not child.get("region"):
-            box = boxes[-1]
-        else:
-            key = child.get("region") or regions[0]
-            box = next((b for b in boxes if b["region"] == key), None)
-            if box is None:
-                box = {"region": key, "regions": [], "ops": []}
-                boxes.append(box)
-        box["ops"].append(child)
-        box["regions"] += [r for r in regions if r not in box["regions"]]
-    return boxes if len(boxes) > 1 else None
-
-
 def _measure(op: dict[str, Any], collapsed: frozenset[str] = frozenset()) -> tuple[float, float]:
     """Size ``op`` (``_w``, ``_h``); an open loop's footprint is its control node over its body."""
-    op["_boxes"] = None
     if op["kind"] == "action":
         op["_w"], op["_h"] = _AW, _AH
-    elif op["id"] in collapsed:
+    elif _ref(op) in collapsed:
         op["_w"], op["_h"] = _AW + 2 * _PAD, _COLLAPSED_H
-    elif (boxes := _boxes(op)) is not None:
-        op["_boxes"] = _plan(op, boxes, collapsed)
     else:
         sizes = [_measure(c, collapsed) for c in op["children"]]
         inner_w = max((w for w, _ in sizes), default=_AW)
@@ -107,7 +106,7 @@ def _measure(op: dict[str, Any], collapsed: frozenset[str] = frozenset()) -> tup
 
 
 def _open(op: dict[str, Any], collapsed: frozenset[str]) -> bool:
-    return op["kind"] == "loop" and op["id"] not in collapsed
+    return op["kind"] == "loop" and _ref(op) not in collapsed
 
 
 def _ops(
@@ -132,8 +131,10 @@ def _ops(
             "position": {"x": x + op["_ctrl_x"] if is_open else x, "y": y},
             "data": {
                 "label": op["name"],
+                # the op it stands for (a region's copy of a shared op: the shared op's id)
+                "ref": _ref(op),
                 "number": op.get("pos") or op.get("number") or "",
-                "collapsed": op["id"] in collapsed,
+                "collapsed": _ref(op) in collapsed,
                 "size": _count(op),
                 "color": _node_color(op, "domain"),
                 "guard": op.get("guard"),
@@ -179,15 +180,12 @@ def _loop_body(op: dict[str, Any], x: float, y: float, nodes: list[dict[str, Any
     nodes.append({
         "id": dec_id, "type": "decision", "parentNode": op["id"],
         "position": {"x": _CTRL_W / 2 - _DIAMOND / 2, "y": _CTRL_H - _DIAMOND - 12},
-        "data": {"loop": op["id"]}, "width": _DIAMOND, "height": _DIAMOND,
+        "data": {"loop": _ref(op)}, "width": _DIAMOND, "height": _DIAMOND,
         "draggable": False, "selectable": False, "connectable": False,
     })
     if not op["children"]:
         return
-    if op["_boxes"]:
-        _coupled(op, x, y, nodes, edges, collapsed)
-    else:
-        _ops(op["children"], x, y + _CTRL_H + _GAP, op["_w"] - _LOOP_RIGHT, nodes, edges, collapsed)
+    _ops(op["children"], x, y + _CTRL_H + _GAP, op["_w"] - _LOOP_RIGHT, nodes, edges, collapsed)
     placed = {n["id"]: n for n in nodes}
     last = placed[op["children"][-1]["id"]]
     right = max(last["position"]["x"] + last["width"], x + op["_ctrl_x"] + _CTRL_W / 2 + _DIAMOND / 2)
@@ -204,54 +202,6 @@ def _exchange_text(exchange: Optional[dict[str, Any]]) -> Optional[str]:
     return f"{data} ← {exchange.get('partner') or exchange['source']}"
 
 
-def _plan(op: dict[str, Any], boxes: list[dict[str, Any]], collapsed: frozenset[str]) -> list[dict[str, Any]]:
-    """Measure a coupling loop's body: one column per box, its ops stacked. Sets the loop's
-    footprint."""
-    children = op["children"]
-    for c in children:
-        _measure(c, collapsed)
-    x = _BOX_PAD
-    for i, box in enumerate(boxes):
-        box["w"] = max(c["_w"] for c in box["ops"])
-        box["x"] = x
-        x += box["w"] + 2 * _BOX_PAD + (_BOX_GAP if i < len(boxes) - 1 else 0)
-    width = x - _BOX_PAD + _LOOP_RIGHT
-    # every box from the same top, its ops stacked: the coupling nodes, each first in its box,
-    # face each other across the gap (the sequence numbers show the order)
-    for box in boxes:
-        y = _CTRL_H + _GAP + _BOX_HEAD
-        for c in box["ops"]:
-            c["_x"], c["_y"] = box["x"] + (box["w"] - c["_w"]) / 2, y
-            y += c["_h"] + _GAP
-    for box in boxes:
-        box["y"] = min(c["_y"] for c in box["ops"]) - _BOX_HEAD
-        box["h"] = max(c["_y"] + c["_h"] for c in box["ops"]) + _BOX_PAD - box["y"]
-    op["_w"] = width
-    op["_h"] = max(box["y"] + box["h"] for box in boxes) + _PAD / 2
-    # the control node: above the boxes, centred over the gaps
-    op["_ctrl_x"] = (boxes[0]["x"] + boxes[0]["w"] + boxes[-1]["x"]) / 2 + _BOX_PAD / 2 - _CTRL_W / 2
-    return boxes
-
-
-def _coupled(op: dict[str, Any], x0: float, y0: float, nodes: list[dict[str, Any]],
-             edges: list[dict[str, Any]], collapsed: frozenset[str]) -> None:
-    """Place a coupling loop's region boxes and their ops at ``(x0, y0)``, below its control node."""
-    boxes = op["_boxes"]
-    box_of: dict[str, int] = {}
-    for i, box in enumerate(boxes):
-        nodes.append(_box(f"{op['id']}::box{i}", ", ".join(box["regions"]), box["region"],
-                          x0 + box["x"] - _BOX_PAD, y0 + box["y"], box["w"] + 2 * _BOX_PAD, box["h"]))
-        for c in box["ops"]:
-            box_of[c["id"]] = i
-    for c in op["children"]:
-        _ops([c], x0 + c["_x"], y0 + c["_y"], c["_w"], nodes, edges, collapsed)
-    # each solver's own flow, inside its box (a coupling node into the op it feeds)
-    for box in boxes:
-        for a, b in zip(box["ops"], box["ops"][1:]):
-            edges.append(_exit(a, b["id"], nodes, collapsed) if a["kind"] == "loop" else _edge(a["id"], b["id"]))
-    edges += _exchange(op, box_of, nodes)
-
-
 def _box(id_: str, label: str, region: str, x: float, y: float, w: float, h: float) -> dict[str, Any]:
     """A region's box: a frame with the region's name and colour, behind its nodes."""
     return {
@@ -262,47 +212,9 @@ def _box(id_: str, label: str, region: str, x: float, y: float, w: float, h: flo
     }
 
 
-def _exchange(op: dict[str, Any], box_of: dict[str, int], nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One line between the two coupling nodes of each exchange, arrowheads at both ends,
-    labelled with the exchanged data.
-
-    A coupling node's partner node is the coupling node of its partner region that takes
-    data from this node's region.
-    """
-    placed = {n["id"] for n in nodes}
-    couplers = [c for c in op["children"] if c.get("exchange") and c["id"] in placed]
-    out, done = [], set()
-    for c in couplers:
-        partner = next((d for d in couplers if d is not c and d.get("region") == c["exchange"].get("partner")
-                        and d["exchange"].get("partner") == c.get("region")), None)
-        if partner is None or partner["id"] in done:
-            continue
-        done.add(c["id"])
-        left, right = (c, partner) if box_of.get(c["id"], 0) <= box_of.get(partner["id"], 0) else (partner, c)
-        names = [*c["exchange"].get("data", ()), *(n for n in partner["exchange"].get("data", ())
-                                                    if n not in c["exchange"].get("data", ()))]
-        color = "#6741d9"
-        arrow = {"type": "arrowclosed", "color": color}
-        out.append(_edge(left["id"], right["id"], type="straight", label=", ".join(names),
-                         sourceHandle="r", targetHandle="lt", labelShowBg=False,
-                         style={"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
-                         labelStyle={"fill": color, "fontWeight": 700, "fontSize": "14px",
-                                     "paintOrder": "stroke", "stroke": "white", "strokeWidth": 5},
-                         markerStart=arrow, markerEnd=arrow, **{"class": "nf-couple"}))
-    return out
-
-
-def _contains(op: dict[str, Any], node: dict[str, Any]) -> bool:
-    return any(c is node or _contains(c, node) for c in op.get("children", []))
-
-
 def _count(op: dict[str, Any]) -> int:
     """Actions inside a loop, at any depth (shown on a collapsed loop)."""
     return sum(1 if c["kind"] == "action" else _count(c) for c in op.get("children", []))
-
-
-def _contains(op: dict[str, Any], node: dict[str, Any]) -> bool:
-    return any(c is node or _contains(c, node) for c in op.get("children", []))
 
 
 def _count(op: dict[str, Any]) -> int:
@@ -318,20 +230,83 @@ def _exec_view(ops: Optional[list[dict[str, Any]]], collapsed: frozenset[str]) -
                       "data": {}, "width": _AW, "height": 70, "style": {"width": f"{_AW}px", "height": "70px"},
                       "draggable": False, "selectable": False})
         return {"nodes": nodes, "edges": edges}
+    regions: list[str] = []
+    for op in ops:
+        regions += [r for r in _regions_in(op) if r not in regions]
+    if not regions:
+        _solver(ops, 0.0, _TOP, "", nodes, edges, collapsed)
+        return {"nodes": nodes, "edges": edges}
+    # one box per region: the solver as it runs alone
+    x = 0.0
+    for region in regions:
+        projected = _project(ops, region)
+        for op in projected:
+            _measure(op, collapsed)
+        w = max(op["_w"] for op in projected) + 2 * _PAD
+        box = len(nodes)
+        nodes.append({"id": f"exec::box:{region}"})  # the box, behind its nodes; sized once placed
+        h = _solver(projected, x + _PAD, _TOP + _BOX_HEAD + _BOX_PAD, f"{_SEP}{region}", nodes, edges, collapsed)
+        nodes[box] = _box(f"exec::box:{region}", region, region, x, _TOP, w, _BOX_HEAD + _BOX_PAD + h + _BOX_PAD)
+        x += w + _BOX_GAP
+    edges += _between(ops, regions, {n["id"] for n in nodes})
+    return {"nodes": nodes, "edges": edges}
+
+
+def _solver(ops: list[dict[str, Any]], x0: float, y0: float, suffix: str, nodes: list[dict[str, Any]],
+            edges: list[dict[str, Any]], collapsed: frozenset[str]) -> float:
+    """One solver's tree from its start to its end node at ``(x0, y0)``; returns its height."""
     for op in ops:
         _measure(op, collapsed)
     width = max(op["_w"] for op in ops)
-    cx = width / 2
-    nodes.append({"id": "start", "type": "initial", "position": {"x": cx - 11, "y": _TOP},
-                  "data": {}, "width": 22, "height": 22, "draggable": False, "selectable": False})
-    y = _TOP + 22 + _GAP
-    first, last = _ops(ops, 0.0, y, width, nodes, edges, collapsed)
+    cx = x0 + width / 2
+    start, end = f"start{suffix}", f"end{suffix}"
+    nodes.append({"id": start, "type": "initial", "position": {"x": cx - 11, "y": y0},
+                  "data": {"ref": "start"}, "width": 22, "height": 22, "draggable": False, "selectable": False})
+    y = y0 + 22 + _GAP
+    first, last = _ops(ops, x0, y, width, nodes, edges, collapsed)
     y += sum(op["_h"] for op in ops) + _GAP * len(ops)
-    nodes.append({"id": "end", "type": "final", "position": {"x": cx - 13, "y": y},
-                  "data": {}, "width": 26, "height": 26, "draggable": False, "selectable": False})
-    edges.append(_edge("start", first))
-    edges.append(_exit(ops[-1], "end", nodes, collapsed) if ops[-1]["kind"] == "loop" else _edge(last, "end"))
-    return {"nodes": nodes, "edges": edges}
+    nodes.append({"id": end, "type": "final", "position": {"x": cx - 13, "y": y},
+                  "data": {"ref": "end"}, "width": 26, "height": 26, "draggable": False, "selectable": False})
+    edges.append(_edge(start, first))
+    edges.append(_exit(ops[-1], end, nodes, collapsed) if ops[-1]["kind"] == "loop" else _edge(last, end))
+    return y + 26 - y0
+
+
+def _between(ops: list[dict[str, Any]], regions: list[str], placed: set[str]) -> list[dict[str, Any]]:
+    """The lines between the region boxes: per coupling loop, one between each pair of coupling
+    nodes (their regions' copies), arrowheads at both ends, labelled with the exchanged data."""
+    out: list[dict[str, Any]] = []
+    for op in ops:
+        if op["kind"] != "loop":
+            continue
+        out += _between(op["children"], regions, placed)
+        couplers = [c for c in op["children"] if c.get("exchange") and c.get("region") in regions]
+        done: set[str] = set()
+        for c in couplers:
+            partner = next((d for d in couplers if d is not c and d.get("region") == c["exchange"].get("partner")
+                            and d["exchange"].get("partner") == c.get("region")), None)
+            if partner is None or partner["id"] in done:
+                continue
+            done.add(c["id"])
+            left, right = sorted((c, partner), key=lambda n: regions.index(n["region"]))
+            source, target = f"{left['id']}{_SEP}{left['region']}", f"{right['id']}{_SEP}{right['region']}"
+            if source in placed and target in placed:
+                out.append(_line(source, target, [*c["exchange"].get("data", ()),
+                                                  *(n for n in partner["exchange"].get("data", ())
+                                                    if n not in c["exchange"].get("data", ()))]))
+    return out
+
+
+def _line(source: str, target: str, data: list[str]) -> dict[str, Any]:
+    """A coupling line between two coupling nodes, arrowheads at both ends."""
+    color = "#6741d9"
+    arrow = {"type": "arrowclosed", "color": color}
+    return _edge(source, target, type="straight", label=", ".join(data),
+                 sourceHandle="r", targetHandle="lt", labelShowBg=False,
+                 style={"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
+                 labelStyle={"fill": color, "fontWeight": 700, "fontSize": "14px",
+                             "paintOrder": "stroke", "stroke": "white", "strokeWidth": 5},
+                 markerStart=arrow, markerEnd=arrow, **{"class": "nf-couple"})
 
 
 # -- initialization activity ------------------------------------------------------------
@@ -368,8 +343,8 @@ def _init_view(steps: list[dict[str, Any]], regions: list[str]) -> dict[str, lis
     driver = [s for s in steps if not s.get("region")]
     regions = [*regions, *(s["region"] for s in steps if s.get("region") and s["region"] not in regions)]
     regions = list(dict.fromkeys(regions))
+    # a region not initialized yet (known from an earlier run) is an empty box
     groups = [(r, [s for s in steps if s.get("region") == r]) for r in regions]
-    groups = [(r, g) for r, g in groups if g]
     top_w, top_h, top = _init_block(driver)
     blocks = [(r, *_init_block(g)) for r, g in groups]
     gap = 60
@@ -381,8 +356,8 @@ def _init_view(steps: list[dict[str, Any]], regions: list[str]) -> dict[str, lis
     y += top_h + (2 * _GAP if top else 0)
     x = (width - boxes_w) / 2
     for region, w, h, placed in blocks:
-        nodes.append(_box(f"init::box:{region}", region, region, x, y, w + 2 * _BOX_PAD,
-                          _BOX_HEAD + h + _BOX_PAD))
+        nodes.append(_box(f"init::box:{region}", region if placed else f"{region} · not initialized yet",
+                          region, x, y, w + 2 * _BOX_PAD, _BOX_HEAD + max(h, _IH) + _BOX_PAD))
         for step, sx, sy in placed:
             nodes.append(_init_node(step, x + _BOX_PAD + sx, y + _BOX_HEAD + sy))
         x += w + 2 * _BOX_PAD + gap
@@ -397,7 +372,7 @@ def _init_view(steps: list[dict[str, Any]], regions: list[str]) -> dict[str, lis
 def _init_node(step: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     return {
         "id": step["id"], "type": "init", "position": {"x": x, "y": y},
-        "data": {"label": step["name"], "color": _node_color(step, "category")},
+        "data": {"label": step["name"], "ref": step["id"], "color": _node_color(step, "category")},
         "width": _IW, "height": _IH, "draggable": False, "selectable": False, "connectable": False,
     }
 
@@ -408,14 +383,16 @@ def _build_flow(
     solver_name: str = "",
     collapsed: frozenset[str] = frozenset(),
     view: str = "exec",
+    regions: tuple[str, ...] = (),
 ) -> dict[str, list[dict[str, Any]]]:
     """One view as a VueFlow graph ``{"nodes": [...], "edges": [...]}``: ``view`` is ``"init"``
     (the initialization) or ``"exec"`` (the execution).
 
-    ``collapsed``: ids of loops drawn without their body.
+    ``collapsed``: ids of loops drawn without their body. ``regions``: regions known before
+    they initialize (e.g. from an earlier run), boxes of the init view from the start.
     """
     if view == "init":
-        order: list[str] = []
+        order: list[str] = list(regions)
         for op in ops or ():
             order += [r for r in _regions_in(op) if r not in order]
         return _init_view(init_steps, order)

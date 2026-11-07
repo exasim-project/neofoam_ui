@@ -13,8 +13,9 @@ if TYPE_CHECKING:
 
 __all__ = ()
 
-#: Background of a node in the timing heat map (``heat`` holds a CSS colour per node id).
-_HEAT = "heat[props.id] ? `background:${heat[props.id]}` : ''"
+#: Background of a node in the timing heat map (``heat`` holds a CSS colour per node id). Nodes
+#: bind to ``data.ref``, the op they stand for: a region box's copy of a shared op binds to it.
+_HEAT = "heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''"
 
 
 def _canvas(pane: _DagPane, minimap: str) -> None:
@@ -25,9 +26,10 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
         with html.Span(v_for="r in regions", key="r.name", classes="nf-region"):
             html.Span(classes="nf-dot", style=("`background:${r.color}`",))
             html.Span("{{ r.name }}")
-    cls_node = "props.id === cur_node && cur_kind !== 'test'"
+    cls_node = "props.data.ref === cur_node && cur_kind !== 'test'"
     with NodeEditor(style="width: 100%; height: 100%;",
-                    node_click=(pane.select, "[$event.node.id]")) as editor:
+                    node_click=(pane.select, "[$event.node.data && ($event.node.data.ref || $event.node.data.loop)"
+                                       " || $event.node.id]")) as editor:
         pane.editor = editor
         Background(gap=16, size=1, pattern_color="#c3c8d2")
         Controls(show_interactive=False)
@@ -35,9 +37,9 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
 
         with CustomNode("action"):
             with html.Div(classes=(
-                "['nf-node', 'nf-action', { cur: " + cls_node + ", sel: props.id === selected,"
-                " done: visited.includes(props.id) && props.id !== cur_node, inj: !!props.data.injected_by,"
-                " cpl: !!props.data.exchange, hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]",
+                "['nf-node', 'nf-action', { cur: " + cls_node + ", sel: props.data.ref === selected,"
+                " done: visited.includes(props.data.ref) && props.data.ref !== cur_node, inj: !!props.data.injected_by,"
+                " cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]",
             ), style=(_HEAT,)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
@@ -46,11 +48,11 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 Handle(position="left", type="source", id="ls")
                 Handle(position="left", type="target", id="lt")
                 Handle(position="right", type="target", id="rt")
-                html.Span(classes=("['nf-bp', { on: bps.includes(props.id) }]",),
-                          raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.id])"'])
+                html.Span(classes=("['nf-bp', { on: bps.includes(props.data.ref) }]",),
+                          raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.ref])"'])
                 html.Span(classes="nf-stripe", style=("`background:${props.data.color}`",))
                 html.Span("{{ props.data.label }}", classes="nf-label")
-                html.Span("{{ heat_ms[props.id] || (props.data.guard ? '[' + props.data.guard + '] '"
+                html.Span("{{ heat_ms[props.data.ref] || (props.data.guard ? '[' + props.data.guard + '] '"
                           " : '') + props.data.number }}", classes="nf-meta")
                 html.Span("⊕ {{ props.data.injected_by }}", classes="nf-badge",
                           v_if="props.data.injected_by")
@@ -58,22 +60,22 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
 
         with CustomNode("init"):
             with html.Div(classes=(
-                "['nf-node', 'nf-init', { cur: " + cls_node + ", sel: props.id === selected,"
-                " done: visited.includes(props.id) && props.id !== cur_node }]",
+                "['nf-node', 'nf-init', { cur: " + cls_node + ", sel: props.data.ref === selected,"
+                " done: visited.includes(props.data.ref) && props.data.ref !== cur_node }]",
             ), style=(_HEAT,)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
-                html.Span(classes=("['nf-bp', { on: bps.includes(props.id) }]",),
-                          raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.id])"'])
+                html.Span(classes=("['nf-bp', { on: bps.includes(props.data.ref) }]",),
+                          raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.ref])"'])
                 html.Span(classes="nf-stripe", style=("`background:${props.data.color}`",))
                 html.Span("{{ props.data.label }}", classes="nf-label")
-                html.Span("{{ heat_ms[props.id] }}", classes="nf-meta", v_if="heat_ms[props.id]")
+                html.Span("{{ heat_ms[props.data.ref] }}", classes="nf-meta", v_if="heat_ms[props.data.ref]")
 
         with CustomNode("loop"):
             with html.Div(classes=(
-                "['nf-node', 'nf-loop', { active: active_loops.includes(props.id),"
-                " control: props.data.control, collapsed: props.data.collapsed, sel: props.data.collapsed && props.id === selected,"
-                " hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]",
+                "['nf-node', 'nf-loop', { active: active_loops.includes(props.data.ref),"
+                " control: props.data.control, collapsed: props.data.collapsed, sel: props.data.collapsed && props.data.ref === selected,"
+                " hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]",
             ), style=("props.data.collapsed ? " + _HEAT + " : ''",)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
@@ -85,19 +87,19 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 with html.Div(classes="nf-loop-title"):
                     html.Span("{{ props.data.collapsed ? '▸' : '▾' }}", classes="nf-tog",
                               title="collapse / expand",
-                              raw_attrs=['@click.stop="trigger(\'nf_collapse\', [props.id])"'])
+                              raw_attrs=['@click.stop="trigger(\'nf_collapse\', [props.data.ref])"'])
                     html.Span("«loop» {{ props.data.number }} {{ props.data.label }}")
-                    html.Span(" · pass {{ loop_iter[props.id] }}", classes="nf-loop-pass",
-                              v_if="loop_iter[props.id]")
-                    html.Span(" · {{ loop_res[props.id] }}", classes="nf-loop-res",
-                              v_if="loop_res[props.id]")
+                    html.Span(" · pass {{ loop_iter[props.data.ref] }}", classes="nf-loop-pass",
+                              v_if="loop_iter[props.data.ref]")
+                    html.Span(" · {{ loop_res[props.data.ref] }}", classes="nf-loop-res",
+                              v_if="loop_res[props.data.ref]")
                 html.Div("test: {{ props.data.test }}", classes="nf-loop-test")
-                html.Div("{{ heat_ms[props.id] ? heat_ms[props.id] + ' · ' : '' }}"
+                html.Div("{{ heat_ms[props.data.ref] ? heat_ms[props.data.ref] + ' · ' : '' }}"
                          "{{ props.data.size }} actions", classes="nf-loop-size",
                          v_if="props.data.collapsed")
-                html.Span(classes=("['nf-bp', { on: bps.includes(props.id) }]",),
+                html.Span(classes=("['nf-bp', { on: bps.includes(props.data.ref) }]",),
                           v_if="props.data.collapsed",
-                          raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.id])"'])
+                          raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.ref])"'])
 
         with CustomNode("decision"):
             with html.Div(classes=(
@@ -222,5 +224,6 @@ def _drawer(drawer: Any) -> None:
         html.Div("▾ / ▸ on a loop: collapse / expand its body")
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
         html.Div("stripe colour: the op's region (multi-region), else its model", v_if="regions.length")
-        html.Div("coupling loop: a box per region; ⇄ coupling nodes in the gaps take the partner's "
-                 "data (dashed, partner's colour) and feed the op beside them", v_if="regions.length")
+        html.Div("multi-region: a box per solver, as it runs alone; shared loops and driver ops "
+                 "appear in every box; ⇄ coupling nodes joined by a line labelled with the data",
+                 v_if="regions.length")

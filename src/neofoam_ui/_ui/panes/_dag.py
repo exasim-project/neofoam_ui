@@ -45,6 +45,11 @@ class _DagPane(BasePane):
         #: The run's phase (``"init"`` / ``"exec"``) the view last followed, and the view drawn.
         self._phase: Optional[str] = None
         self._drawn: Optional[str] = None
+        #: Regions seen in this or an earlier run (kept over restarts): the init view draws
+        #: their boxes before they initialize. The worker does not name them up front.
+        self._regions: list[str] = []
+        #: The node drawn for each op (a shared op in region boxes: its first copy).
+        self._node_of: dict[str, str] = {}
         #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
         self.viewers = 0
         self._watching: Optional[bool] = None
@@ -178,10 +183,15 @@ class _DagPane(BasePane):
         s = self.app.state
         s.tree = self.model.reindex(s.solver_name)
         s.regions = self.model.regions()
+        self._regions += [r["name"] for r in s.regions if r["name"] not in self._regions]
         collapsed = self._shown = frozenset(s.collapsed or ())
         view = self._drawn = "init" if s.dag_view == "init" else "exec"
-        self.editor.graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed,
-                                        view)
+        graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed, view,
+                            tuple(self._regions))
+        self._node_of = {}
+        for n in graph["nodes"]:
+            self._node_of.setdefault((n.get("data") or {}).get("ref") or n["id"], n["id"])
+        self.editor.graph = graph
         if fit:
             self.editor.fit_view()
         self._refresh_bp_list()
@@ -218,7 +228,7 @@ class _DagPane(BasePane):
         if node_id in ("act:init", "act:exec"):  # the tree's headings: show that view
             self.app.state.dag_view = node_id[4:]
             return
-        if node_id.startswith("act:") or node_id in ("start", "end", "exec:placeholder"):
+        if node_id.startswith(("act:", "exec::box", "init::box")) or node_id in ("start", "end", "exec:placeholder"):
             return
         s, index = self.app.state, self.model.index
         if node_id in index and (index[node_id]["kind"] == "init") != (s.dag_view == "init"):
@@ -228,8 +238,9 @@ class _DagPane(BasePane):
         self._refresh_inspector()
         if pan and node_id in index:
             shown = self.model.shown(node_id, self._shown)
-            target = (f"{shown}::test" if index[shown]["kind"] == "loop"
-                      and shown not in self._shown else shown)
+            drawn = self._node_of.get(shown, shown)
+            target = (f"{drawn}::test" if index[shown]["kind"] == "loop"
+                      and shown not in self._shown else drawn)
             self.app.server.js_call(getattr(self.editor, "_NodeEditor__ref"), "fitView",
                                     {"nodes": [target], "duration": 250, "maxZoom": 1.0, "minZoom": 0.5,
                                      "padding": 1.2})

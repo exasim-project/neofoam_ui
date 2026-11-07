@@ -79,21 +79,29 @@ def _build(app: StepperApp) -> None:
                 for pane in toggled:
                     _toggle(pane.toggle)
                 v3.VDivider(vertical=True, classes="mx-1")
-                html.Span("delay {{ delay_ms }} ms", classes="text-caption mx-2",
-                          style="white-space: nowrap; min-width: 82px;")
-                v3.VSlider(v_model=("delay_ms",), min=0, max=1000, step=10, hide_details=True,
-                           density="compact", style="min-width: 90px; max-width: 120px;",
-                           title="pause after every event while running, to follow the token "
-                                 "(0: none; only with the DAG pane open)")
-                v3.VCheckbox(v_model=("wait_ui",), label="wait for UI", hide_details=True,
-                             density="compact", classes="ml-2", style="flex: none;",
-                             title="the solver waits until every event and frame is shown "
-                                   "(slower); off, it never waits and a lagging UI skips some")
-                v3.VCheckbox(v_model=("follow",), label="follow", hide_details=True,
-                             density="compact", classes="ml-2", style="flex: none;")
-                v3.VCheckbox(v_model=("heat_on",), label="timing", hide_details=True,
-                             density="compact", classes="ml-1", style="flex: none;",
-                             title="tint nodes by their summed run time")
+                # run options in a menu, so the toolbar fits 1600 px
+                with v3.VMenu(close_on_content_click=False, location="bottom end"):
+                    with html.Template(v_slot_activator="{ props }"):
+                        with v3.VBtn(v_bind="props", size="small", variant="text", classes="mx-1",
+                                     title="delay, wait for UI, follow, timing"):
+                            v3.VIcon("mdi-tune", size="small")
+                            html.Span("Options", classes="nf-btxt ml-1")
+                    with v3.VCard(classes="pa-3 d-flex flex-column", style="min-width: 280px;"):
+                        with html.Div(classes="d-flex align-center"):
+                            html.Span("delay {{ delay_ms }} ms", classes="text-caption mr-2",
+                                      style="white-space: nowrap; min-width: 82px;")
+                            v3.VSlider(v_model=("delay_ms",), min=0, max=1000, step=10, hide_details=True,
+                                       density="compact", style="min-width: 140px;",
+                                       title="pause after every event while running, to follow the "
+                                             "token (0: none; only with the DAG pane open)")
+                        v3.VCheckbox(v_model=("wait_ui",), label="wait for UI", hide_details=True,
+                                     density="compact",
+                                     title="the solver waits until every event and frame is shown "
+                                           "(slower); off, it never waits and a lagging UI skips some")
+                        v3.VCheckbox(v_model=("follow",), label="follow", hide_details=True,
+                                     density="compact")
+                        v3.VCheckbox(v_model=("heat_on",), label="timing", hide_details=True,
+                                     density="compact", title="tint nodes by their summed run time")
 
         with layout.drawer as drawer:
             app.dag.build_drawer(drawer)

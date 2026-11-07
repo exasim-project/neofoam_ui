@@ -23,6 +23,10 @@ _CSS = r"""
   border-radius: 12px; background: rgba(var(--v-theme-surface), .9); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
 .nf-tools { display: flex; align-items: center; overflow-x: auto; flex: 1 1 auto; min-width: 0; scrollbar-width: none; }
 .nf-tools .v-btn { flex: none; }
+@media (max-width: 1700px) {  /* the whole toolbar fits 1600 px */
+  .nf-tools .v-btn { padding: 0 6px; }
+  .nf-tools > .mx-1 { margin-left: 2px !important; margin-right: 2px !important; }
+}
 @media (max-width: 900px) {
   .nf-grid { grid-template-columns: 1fr; grid-template-rows: 58vh auto auto; height: auto; }
   .nf-canvas { grid-column: 1; grid-row: 1; flex-direction: column; }

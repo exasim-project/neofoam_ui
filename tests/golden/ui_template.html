@@ -124,13 +124,29 @@ Plots
 </span>
 </VBtn>
 <VDivider class="mx-1" vertical />
-<span class="text-caption mx-2" style="white-space: nowrap; min-width: 82px;">
+<VMenu location="bottom end" :closeOnContentClick="false">
+<template v-slot:activator="{ props }">
+<VBtn class="mx-1" title="delay, wait for UI, follow, timing" v-bind="props" size="small" variant="text">
+<VIcon size="small">
+mdi-tune
+</VIcon>
+<span class="nf-btxt ml-1">
+Options
+</span>
+</VBtn>
+</template>
+<VCard class="pa-3 d-flex flex-column" style="min-width: 280px;">
+<div class="d-flex align-center">
+<span class="text-caption mr-2" style="white-space: nowrap; min-width: 82px;">
 delay {{ delay_ms }} ms
 </span>
-<VSlider style="min-width: 90px; max-width: 120px;" title="pause after every event while running, to follow the token (0: none; only with the DAG pane open)" v-model="delay_ms" max="1000" min="0" step="10" density="compact" hideDetails />
-<VCheckbox class="ml-2" style="flex: none;" title="the solver waits until every event and frame is shown (slower); off, it never waits and a lagging UI skips some" v-model="wait_ui" label="wait for UI" density="compact" hideDetails />
-<VCheckbox class="ml-2" style="flex: none;" v-model="follow" label="follow" density="compact" hideDetails />
-<VCheckbox class="ml-1" style="flex: none;" title="tint nodes by their summed run time" v-model="heat_on" label="timing" density="compact" hideDetails />
+<VSlider style="min-width: 140px;" title="pause after every event while running, to follow the token (0: none; only with the DAG pane open)" v-model="delay_ms" max="1000" min="0" step="10" density="compact" hideDetails />
+</div>
+<VCheckbox title="the solver waits until every event and frame is shown (slower); off, it never waits and a lagging UI skips some" v-model="wait_ui" label="wait for UI" density="compact" hideDetails />
+<VCheckbox v-model="follow" label="follow" density="compact" hideDetails />
+<VCheckbox title="tint nodes by their summed run time" v-model="heat_on" label="timing" density="compact" hideDetails />
+</VCard>
+</VMenu>
 </div>
 </VAppBar>
 <VMain >
@@ -148,25 +164,25 @@ delay {{ delay_ms }} ms
 </span>
 </span>
 </div>
-<node-editor :ref="(el) => trame.refs['_node_editor_3'] = el" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" :min-zoom="0.1">
+<node-editor :ref="(el) => trame.refs['_node_editor_3'] = el" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" :min-zoom="0.1">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
 <MiniMap v-show="!is_mobile && !fv_on && !pp_on && !pt_on" pannable zoomable />
 <template v-slot:node-action=props>
-<div :class="['nf-node', 'nf-action', { cur: props.id === cur_node && cur_kind !== 'test', sel: props.id === selected, done: visited.includes(props.id) && props.id !== cur_node, inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]" :style="heat[props.id] ? `background:${heat[props.id]}` : ''">
+<div :class="['nf-node', 'nf-action', { cur: props.data.ref === cur_node && cur_kind !== 'test', sel: props.data.ref === selected, done: visited.includes(props.data.ref) && props.data.ref !== cur_node, inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
 <Handle id="r" position="right" type="source" />
 <Handle id="ls" position="left" type="source" />
 <Handle id="lt" position="left" type="target" />
 <Handle id="rt" position="right" type="target" />
-<span @click.stop="trigger('nf_toggle_bp', [props.id])" :class="['nf-bp', { on: bps.includes(props.id) }]" />
+<span @click.stop="trigger('nf_toggle_bp', [props.data.ref])" :class="['nf-bp', { on: bps.includes(props.data.ref) }]" />
 <span class="nf-stripe" :style="`background:${props.data.color}`" />
 <span class="nf-label">
 {{ props.data.label }}
 </span>
 <span class="nf-meta">
-{{ heat_ms[props.id] || (props.data.guard ? '[' + props.data.guard + '] ' : '') + props.data.number }}
+{{ heat_ms[props.data.ref] || (props.data.guard ? '[' + props.data.guard + '] ' : '') + props.data.number }}
 </span>
 <span class="nf-badge" v-if="props.data.injected_by">
 ⊕ {{ props.data.injected_by }}
@@ -177,21 +193,21 @@ delay {{ delay_ms }} ms
 </div>
 </template>
 <template v-slot:node-init=props>
-<div :class="['nf-node', 'nf-init', { cur: props.id === cur_node && cur_kind !== 'test', sel: props.id === selected, done: visited.includes(props.id) && props.id !== cur_node }]" :style="heat[props.id] ? `background:${heat[props.id]}` : ''">
+<div :class="['nf-node', 'nf-init', { cur: props.data.ref === cur_node && cur_kind !== 'test', sel: props.data.ref === selected, done: visited.includes(props.data.ref) && props.data.ref !== cur_node }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
-<span @click.stop="trigger('nf_toggle_bp', [props.id])" :class="['nf-bp', { on: bps.includes(props.id) }]" />
+<span @click.stop="trigger('nf_toggle_bp', [props.data.ref])" :class="['nf-bp', { on: bps.includes(props.data.ref) }]" />
 <span class="nf-stripe" :style="`background:${props.data.color}`" />
 <span class="nf-label">
 {{ props.data.label }}
 </span>
-<span class="nf-meta" v-if="heat_ms[props.id]">
-{{ heat_ms[props.id] }}
+<span class="nf-meta" v-if="heat_ms[props.data.ref]">
+{{ heat_ms[props.data.ref] }}
 </span>
 </div>
 </template>
 <template v-slot:node-loop=props>
-<div :class="['nf-node', 'nf-loop', { active: active_loops.includes(props.id), control: props.data.control, collapsed: props.data.collapsed, sel: props.data.collapsed && props.id === selected, hlw: hl[props.id] === 'w', hlr: hl[props.id] === 'r' }]" :style="props.data.collapsed ? heat[props.id] ? `background:${heat[props.id]}` : '' : ''">
+<div :class="['nf-node', 'nf-loop', { active: active_loops.includes(props.data.ref), control: props.data.control, collapsed: props.data.collapsed, sel: props.data.collapsed && props.data.ref === selected, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]" :style="props.data.collapsed ? heat[props.data.ref] ? `background:${heat[props.data.ref]}` : '' : ''">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
 <Handle id="r" position="right" type="source" />
@@ -199,26 +215,26 @@ delay {{ delay_ms }} ms
 <Handle id="lt" position="left" type="target" />
 <Handle id="rt" position="right" type="target" />
 <div class="nf-loop-title">
-<span @click.stop="trigger('nf_collapse', [props.id])" class="nf-tog" title="collapse / expand">
+<span @click.stop="trigger('nf_collapse', [props.data.ref])" class="nf-tog" title="collapse / expand">
 {{ props.data.collapsed ? '▸' : '▾' }}
 </span>
 <span >
 «loop» {{ props.data.number }} {{ props.data.label }}
 </span>
-<span class="nf-loop-pass" v-if="loop_iter[props.id]">
- · pass {{ loop_iter[props.id] }}
+<span class="nf-loop-pass" v-if="loop_iter[props.data.ref]">
+ · pass {{ loop_iter[props.data.ref] }}
 </span>
-<span class="nf-loop-res" v-if="loop_res[props.id]">
- · {{ loop_res[props.id] }}
+<span class="nf-loop-res" v-if="loop_res[props.data.ref]">
+ · {{ loop_res[props.data.ref] }}
 </span>
 </div>
 <div class="nf-loop-test">
 test: {{ props.data.test }}
 </div>
 <div class="nf-loop-size" v-if="props.data.collapsed">
-{{ heat_ms[props.id] ? heat_ms[props.id] + ' · ' : '' }}{{ props.data.size }} actions
+{{ heat_ms[props.data.ref] ? heat_ms[props.data.ref] + ' · ' : '' }}{{ props.data.size }} actions
 </div>
-<span @click.stop="trigger('nf_toggle_bp', [props.id])" :class="['nf-bp', { on: bps.includes(props.id) }]" v-if="props.data.collapsed" />
+<span @click.stop="trigger('nf_toggle_bp', [props.data.ref])" :class="['nf-bp', { on: bps.includes(props.data.ref) }]" v-if="props.data.collapsed" />
 </div>
 </template>
 <template v-slot:node-decision=props>
@@ -274,8 +290,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w451-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w452-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w465-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w466-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -360,7 +376,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w492-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w506-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -614,7 +630,7 @@ click a field: ops that wrote (orange) / read (blue) it
 stripe colour: the op's region (multi-region), else its model
 </div>
 <div v-if="regions.length">
-coupling loop: a box per region; ⇄ coupling nodes in the gaps take the partner's data (dashed, partner's colour) and feed the op beside them
+multi-region: a box per solver, as it runs alone; shared loops and driver ops appear in every box; ⇄ coupling nodes joined by a line labelled with the data
 </div>
 </div>
 </VNavigationDrawer>
