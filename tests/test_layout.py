@@ -318,3 +318,34 @@ def test_the_pair_view_keeps_its_shape():
     assert nodes["time/couple/a.solve@@a"]["position"]["y"] == nodes["time/couple/b.solve@@b"]["position"]["y"]
     assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
         ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b")]
+
+
+def test_a_closed_region_box_keeps_only_its_coupling_nodes_on_their_rows():
+    assign_ids(ops := _pair())
+    full = {n["id"]: n for n in build_flow([], [op_dict(o) for o in ops])["nodes"]}
+    flow = build_flow([], [op_dict(o) for o in ops], closed=frozenset({"b"}))
+    nodes = {n["id"]: n for n in flow["nodes"]}
+
+    b = [i for i in nodes if i.endswith("@@b")]
+    assert b == ["time/couple/couple_b.x@@b"]
+    assert nodes["exec::box:b"]["data"]["closed"] and nodes["exec::box:b"]["width"] < full["exec::box:b"]["width"]
+    # still facing its partner, still joined to it
+    assert nodes["time/couple/couple_b.x@@b"]["position"]["y"] == nodes["time/couple/couple_a.x@@a"]["position"]["y"]
+    assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
+        ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b")]
+
+
+def test_a_box_holding_the_token_or_a_breakpoint_opens():
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
+
+    index = {"c/b.solve": {"region": "b"}, "c/a.solve": {"region": "a"}, "c": {}}
+    state = SimpleNamespace(boxes_closed=["a", "b"], cur_node="c", bps=[])
+    pane = SimpleNamespace(app=SimpleNamespace(state=state), model=SimpleNamespace(index=index))
+    shut = lambda: _DagPane._boxes_shut(pane)  # noqa: E731
+    assert shut() == {"a", "b"}  # a shared loop holds the token: no box opens
+    state.cur_node = "c/b.solve"
+    assert shut() == {"a"}
+    state.bps = ["c/a.solve"]
+    assert shut() == set()

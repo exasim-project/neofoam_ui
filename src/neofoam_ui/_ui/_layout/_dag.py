@@ -204,11 +204,12 @@ def _exchange_text(exchange: Optional[dict[str, Any]]) -> Optional[str]:
     return f"{data} ← {exchange.get('partner') or exchange['source']}"
 
 
-def _box(id_: str, label: str, region: str, x: float, y: float, w: float, h: float) -> dict[str, Any]:
+def _box(id_: str, label: str, region: str, x: float, y: float, w: float, h: float,
+         **data: Any) -> dict[str, Any]:
     """A region's box: a frame with the region's name and colour, behind its nodes."""
     return {
         "id": id_, "type": "region", "position": {"x": x, "y": y},
-        "data": {"label": label, "color": _REGION.color(region)},
+        "data": {"label": label, "color": _REGION.color(region), **data},
         "width": w, "height": h, "style": {"width": f"{w}px", "height": f"{h}px"},
         "draggable": False, "selectable": False, "connectable": False,
     }
@@ -224,7 +225,8 @@ def _count(op: dict[str, Any]) -> int:
     return sum(1 if c["kind"] == "action" else _count(c) for c in op.get("children", []))
 
 
-def _exec_view(ops: Optional[list[dict[str, Any]]], collapsed: frozenset[str]) -> dict[str, list[dict[str, Any]]]:
+def _exec_view(ops: Optional[list[dict[str, Any]]], collapsed: frozenset[str],
+               closed: frozenset[str] = frozenset()) -> dict[str, list[dict[str, Any]]]:
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     if not ops:
@@ -241,7 +243,7 @@ def _exec_view(ops: Optional[list[dict[str, Any]]], collapsed: frozenset[str]) -
     regions = _chain_order(ops, regions)
     rows: dict[str, int] = {}
     _rows(ops, {r: 0 for r in regions}, regions, collapsed, rows)
-    _boxes_aligned(ops, regions, rows, collapsed, nodes, edges)
+    _boxes_aligned(ops, regions, rows, collapsed, nodes, edges, closed)
     edges += _between(ops, regions, {n["id"]: n for n in nodes}, nodes)
     return {"nodes": nodes, "edges": edges}
 
@@ -317,8 +319,12 @@ def _depth(ops: list[dict[str, Any]], collapsed: frozenset[str]) -> int:
 
 
 def _boxes_aligned(ops: list[dict[str, Any]], regions: list[str], rows: dict[str, int], collapsed: frozenset[str],
-                   nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
-    """One box per region, side by side: its projected tree in one column, each op on its row."""
+                   nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
+                   closed: frozenset[str] = frozenset()) -> None:
+    """One box per region, side by side: its projected tree in one column, each op on its row.
+
+    A ``closed`` region's box is narrow and holds only its coupling nodes, on their rows, so the
+    coupling lines stay attached."""
     heights: dict[int, float] = {}
 
     def size(ops_: list[dict[str, Any]]) -> None:
@@ -338,16 +344,25 @@ def _boxes_aligned(ops: list[dict[str, Any]], regions: list[str], rows: dict[str
     side = _EXIT + 8 * depth  # room for the exits on the left and the back edges on the right
     column = max(_CTRL_W, _AW + 2 * _PAD)
     width = column + 2 * side + 2 * _BOX_PAD
+    y_of = {ref: row_y[row] for ref, row in rows.items()}
     x = 0.0
     for region in regions:
         projected = _project(ops, region)
-        nodes.append(_box(f"exec::box:{region}", region, region, x, _TOP, width, bottom + 26 + _BOX_PAD - _TOP))
+        height = bottom + 26 + _BOX_PAD - _TOP
+        if region in closed:
+            narrow = _AW + 2 * _BOX_PAD
+            nodes.append(_box(f"exec::box:{region}", region, region, x, _TOP, narrow, height,
+                              toggle=region, closed=True))
+            _place([op for op in _flat(projected) if op.get("exchange")], x + narrow / 2, y_of, collapsed, nodes)
+            x += narrow + _BOX_GAP
+            continue
+        nodes.append(_box(f"exec::box:{region}", region, region, x, _TOP, width, height, toggle=region, closed=False))
         x0 = x + _BOX_PAD + side
         cx = x0 + column / 2
         start, end = f"start{_SEP}{region}", f"end{_SEP}{region}"
         nodes.append({"id": start, "type": "initial", "position": {"x": cx - 11, "y": _TOP + _BOX_HEAD + _BOX_PAD},
                       "data": {"ref": "start"}, "width": 22, "height": 22, "draggable": False, "selectable": False})
-        _place(projected, cx, {ref: row_y[row] for ref, row in rows.items()}, collapsed, nodes)
+        _place(projected, cx, y_of, collapsed, nodes)
         nodes.append({"id": end, "type": "final", "position": {"x": cx - 13, "y": bottom},
                       "data": {"ref": "end"}, "width": 26, "height": 26, "draggable": False, "selectable": False})
         _wire(projected, x0, column, 0, collapsed, nodes, edges)
@@ -355,6 +370,10 @@ def _boxes_aligned(ops: list[dict[str, Any]], regions: list[str], rows: dict[str
         last = projected[-1]
         edges.append(_exit(last, end, nodes, collapsed) if last["kind"] == "loop" else _edge(last["id"], end))
         x += width + _BOX_GAP
+
+
+def _flat(ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [x for op in ops for x in (op, *_flat(op.get("children", [])))]
 
 
 def _place(ops: list[dict[str, Any]], cx: float, y_of: dict[str, float], collapsed: frozenset[str],
@@ -554,16 +573,18 @@ def _build_flow(
     collapsed: frozenset[str] = frozenset(),
     view: str = "exec",
     regions: tuple[str, ...] = (),
+    closed: frozenset[str] = frozenset(),
 ) -> dict[str, list[dict[str, Any]]]:
     """One view as a VueFlow graph ``{"nodes": [...], "edges": [...]}``: ``view`` is ``"init"``
     (the initialization) or ``"exec"`` (the execution).
 
     ``collapsed``: ids of loops drawn without their body. ``regions``: regions known before
     they initialize (e.g. from an earlier run), boxes of the init view from the start.
+    ``closed``: regions whose execution box shows only its coupling nodes.
     """
     if view == "init":
         order: list[str] = list(regions)
         for op in ops or ():
             order += [r for r in _regions_in(op) if r not in order]
         return _init_view(init_steps, order)
-    return _exec_view(ops, collapsed)
+    return _exec_view(ops, collapsed, closed)

@@ -34,7 +34,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
         pane.editor = editor
         Background(gap=16, size=1, pattern_color="#c3c8d2")
         Controls(show_interactive=False)
-        MiniMap(pannable=True, zoomable=True, v_show=minimap)
+        MiniMap(pannable=True, zoomable=True, v_show=f"minimap_on && {minimap}")
 
         with CustomNode("action"):
             with html.Div(classes=(
@@ -124,8 +124,13 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                           raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.loop])"'])
 
         with CustomNode("region"):
-            with html.Div(classes="nf-box", style=("`border-color:${props.data.color}`",)):
+            with html.Div(classes=("['nf-box', { closed: props.data.closed }]",),
+                          style=("`border-color:${props.data.color}`",)):
                 with html.Div(classes="nf-box-head", style=("`color:${props.data.color}`",)):
+                    # an execution box collapses to its header and coupling nodes
+                    html.Span("{{ props.data.closed ? '▸' : '▾' }}", classes="nf-tog", v_if="props.data.toggle",
+                              title="collapse / expand this solver",
+                              raw_attrs=['@click.stop="trigger(\'nf_box\', [props.data.toggle])"'])
                     html.Span(classes="nf-dot", style=("`background:${props.data.color}`",))
                     html.Span("{{ props.data.label }}")
 

@@ -147,6 +147,7 @@ class StepperApp:
         s.fields_rows = []
         s.callstack = []
         s.follow = True
+        s.minimap_on = bool(s.minimap_on)  # off by default; the choice survives a restart
         if s.is_mobile is None:
             s.is_mobile = False
         if s.delay_ms is None:

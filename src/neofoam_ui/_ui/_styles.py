@@ -112,6 +112,8 @@ _CSS = r"""
 .nf-box-head { position: absolute; left: 10px; top: 4px; font-size: 12px; font-weight: 600;
   display: inline-flex; align-items: center; gap: 5px; }
 .vue-flow__node-region { z-index: 0 !important; pointer-events: none; }
+.nf-box-head { pointer-events: auto; }
+.nf-box.closed { border-style: dashed; background: rgba(255,255,255,.25); }
 .nf-loop.control { background: #f3f6ff; border-radius: 18px; }
 .nf-loop.control .nf-loop-title { left: 10px; right: 44px; top: 9px; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; opacity: .9; }

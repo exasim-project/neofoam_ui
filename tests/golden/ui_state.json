@@ -1,6 +1,7 @@
 {
  "state": {
   "active_loops": [],
+  "boxes_closed": [],
   "bp_list": [],
   "bps": [],
   "callstack": [],
@@ -39,6 +40,7 @@
   "loop_iter": {},
   "loop_res": {},
   "main_drawer": true,
+  "minimap_on": false,
   "pp_cat_msg": "",
   "pp_graph": false,
   "pp_ms": {},
@@ -64,6 +66,7 @@
   "wait_ui": false
  },
  "triggers": [
+  "nf_box",
   "nf_collapse",
   "nf_field",
   "nf_key",

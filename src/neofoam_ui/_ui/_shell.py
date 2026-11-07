@@ -83,7 +83,7 @@ def _build(app: StepperApp) -> None:
                 with v3.VMenu(close_on_content_click=False, location="bottom end"):
                     with html.Template(v_slot_activator="{ props }"):
                         with v3.VBtn(v_bind="props", size="small", variant="text", classes="mx-1",
-                                     title="delay, wait for UI, follow, timing"):
+                                     title="delay, wait for UI, follow, timing, minimap"):
                             v3.VIcon("mdi-tune", size="small")
                             html.Span("Options", classes="nf-btxt ml-1")
                     with v3.VCard(classes="pa-3 d-flex flex-column", style="min-width: 280px;"):
@@ -102,6 +102,8 @@ def _build(app: StepperApp) -> None:
                                      density="compact")
                         v3.VCheckbox(v_model=("heat_on",), label="timing", hide_details=True,
                                      density="compact", title="tint nodes by their summed run time")
+                        v3.VCheckbox(v_model=("minimap_on",), label="minimap", hide_details=True,
+                                     density="compact", title="the DAG's minimap")
 
         with layout.drawer as drawer:
             app.dag.build_drawer(drawer)

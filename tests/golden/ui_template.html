@@ -126,7 +126,7 @@ Plots
 <VDivider class="mx-1" vertical />
 <VMenu location="bottom end" :closeOnContentClick="false">
 <template v-slot:activator="{ props }">
-<VBtn class="mx-1" title="delay, wait for UI, follow, timing" v-bind="props" size="small" variant="text">
+<VBtn class="mx-1" title="delay, wait for UI, follow, timing, minimap" v-bind="props" size="small" variant="text">
 <VIcon size="small">
 mdi-tune
 </VIcon>
@@ -145,6 +145,7 @@ delay {{ delay_ms }} ms
 <VCheckbox title="the solver waits until every event and frame is shown (slower); off, it never waits and a lagging UI skips some" v-model="wait_ui" label="wait for UI" density="compact" hideDetails />
 <VCheckbox v-model="follow" label="follow" density="compact" hideDetails />
 <VCheckbox title="tint nodes by their summed run time" v-model="heat_on" label="timing" density="compact" hideDetails />
+<VCheckbox title="the DAG's minimap" v-model="minimap_on" label="minimap" density="compact" hideDetails />
 </VCard>
 </VMenu>
 </div>
@@ -167,7 +168,7 @@ delay {{ delay_ms }} ms
 <node-editor :ref="(el) => trame.refs['_node_editor_3'] = el" :class="ex_hot.map(k => 'hot-' + k)" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" :min-zoom="0.1">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
-<MiniMap v-show="!is_mobile && !fv_on && !pp_on && !pt_on" pannable zoomable />
+<MiniMap v-show="minimap_on && !is_mobile && !fv_on && !pp_on && !pt_on" pannable zoomable />
 <template v-slot:node-action=props>
 <div :class="['nf-node', 'nf-action', { cur: props.data.ref === cur_node && cur_kind !== 'test', sel: props.data.ref === selected, done: visited.includes(props.data.ref) && props.data.ref !== cur_node, inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
 <Handle id="t" position="top" type="target" />
@@ -257,8 +258,11 @@ test: {{ props.data.test }}
 </div>
 </template>
 <template v-slot:node-region=props>
-<div class="nf-box" :style="`border-color:${props.data.color}`">
+<div :class="['nf-box', { closed: props.data.closed }]" :style="`border-color:${props.data.color}`">
 <div class="nf-box-head" :style="`color:${props.data.color}`">
+<span @click.stop="trigger('nf_box', [props.data.toggle])" class="nf-tog" title="collapse / expand this solver" v-if="props.data.toggle">
+{{ props.data.closed ? '▸' : '▾' }}
+</span>
 <span class="nf-dot" :style="`background:${props.data.color}`" />
 <span >
 {{ props.data.label }}
@@ -300,8 +304,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w473-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w474-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w477-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w478-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -386,7 +390,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w514-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w518-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>

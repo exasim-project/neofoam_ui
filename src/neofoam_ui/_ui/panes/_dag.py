@@ -50,6 +50,12 @@ class _DagPane(BasePane):
         self._regions: list[str] = []
         #: The node drawn for each op (a shared op in region boxes: its first copy).
         self._node_of: dict[str, str] = {}
+        #: The region boxes each op has a copy in (execution view), the box the view follows,
+        #: and the boxes drawn closed now (the user's ``boxes_closed`` but those the token or a
+        #: breakpoint is in).
+        self._boxes_of: dict[str, list[str]] = {}
+        self._followed: Optional[str] = None
+        self._closed: frozenset[str] = frozenset()
         #: The coupling line of each coupling node (its key), and the line's two regions.
         self._line_of: dict[str, str] = {}
         self._line_sides: dict[str, tuple[str, str]] = {}
@@ -71,6 +77,7 @@ class _DagPane(BasePane):
         self._visited, self._visited_dirty = [], False
         s.bps = s.bps if isinstance(s.bps, list) else []
         s.collapsed = s.collapsed if isinstance(s.collapsed, list) else []
+        s.boxes_closed = s.boxes_closed if isinstance(s.boxes_closed, list) else []
         s.loop_res = {}
         self._shown = frozenset()
         self._phase = self._drawn = None
@@ -103,6 +110,7 @@ class _DagPane(BasePane):
         server.trigger("nf_toggle_bp")(self.toggle_bp)
         server.trigger("nf_select")(self.select)
         server.trigger("nf_collapse")(self.toggle_collapse)
+        server.trigger("nf_box")(self.toggle_box)
         server.trigger("nf_field")(self.highlight_field)
 
     def build_inspector(self) -> None:
@@ -174,6 +182,8 @@ class _DagPane(BasePane):
 
     def _on_paused(self, msg: dict[str, Any]) -> None:
         s, ev = self.app.state, msg["event"]
+        if self._boxes_shut() != self._closed:  # the token entered or left a closed box
+            self.rebuild(fit=False)
         if ev["kind"] in ("init", "exec", "test"):
             self._follow_phase("init" if ev["kind"] == "init" else "exec")
         # the line of a coupling node next to run is hot; any other pause cools it
@@ -196,11 +206,15 @@ class _DagPane(BasePane):
         self._regions += [r["name"] for r in s.regions if r["name"] not in self._regions]
         collapsed = self._shown = frozenset(s.collapsed or ())
         view = self._drawn = "init" if s.dag_view == "init" else "exec"
+        self._closed = self._boxes_shut()
         graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed, view,
-                            tuple(self._regions))
-        self._node_of, self._line_of, self._line_sides = {}, {}, {}
+                            tuple(self._regions), self._closed)
+        self._node_of, self._line_of, self._line_sides, self._boxes_of = {}, {}, {}, {}
         for n in graph["nodes"]:
-            self._node_of.setdefault((n.get("data") or {}).get("ref") or n["id"], n["id"])
+            ref = (n.get("data") or {}).get("ref") or n["id"]
+            self._node_of.setdefault(ref, n["id"])
+            if "@@" in n["id"] and "::" not in n["id"]:
+                self._boxes_of.setdefault(ref, []).append(f"exec::box:{n['id'].rsplit('@@', 1)[1]}")
             if n["type"] == "exlabel":
                 data = n["data"]
                 self._line_sides[data["key"]] = (data["left"], data["right"])
@@ -248,6 +262,8 @@ class _DagPane(BasePane):
             bps.append(node_id)
         self.app.state.bps = bps
         self.app.send({"cmd": "breakpoints", "ids": bps})
+        if self._boxes_shut() != self._closed:  # a breakpoint opens its box
+            self.rebuild(fit=False)
         self._refresh_bp_list()
         self._refresh_inspector()
 
@@ -268,12 +284,37 @@ class _DagPane(BasePane):
         self._refresh_inspector()
         if pan and node_id in index:
             shown = self.model.shown(node_id, self._shown)
+            boxes = self._boxes_of.get(shown)
+            if boxes:  # region boxes: show the box holding it (a shared op: the one followed)
+                box = self._followed if self._followed in boxes else boxes[0]
+                self._followed = box
+                self.app.server.js_call(getattr(self.editor, "_NodeEditor__ref"), "fitView",
+                                        {"nodes": [box], "duration": 250, "maxZoom": 1.0, "minZoom": 0.2,
+                                         "padding": 0.06})
+                return
             drawn = self._node_of.get(shown, shown)
             target = (f"{drawn}::test" if index[shown]["kind"] == "loop"
                       and shown not in self._shown else drawn)
             self.app.server.js_call(getattr(self.editor, "_NodeEditor__ref"), "fitView",
                                     {"nodes": [target], "duration": 250, "maxZoom": 1.0, "minZoom": 0.5,
                                      "padding": 1.2})
+
+    def _boxes_shut(self) -> frozenset[str]:
+        """The region boxes drawn closed: the user's, but those the token or a breakpoint is in."""
+        s, index = self.app.state, self.model.index
+        inside = {index.get(n, {}).get("region") for n in [s.cur_node, *(s.bps or ())] if n}
+        return frozenset(s.boxes_closed or ()) - inside
+
+    def toggle_box(self, region: str) -> None:
+        """Close a region's box to its coupling nodes, or open it again."""
+        s = self.app.state
+        closed = list(s.boxes_closed or ())
+        if region in closed:
+            closed.remove(region)
+        else:  # (a box holding the token or a breakpoint stays open until they leave)
+            closed.append(region)
+        s.boxes_closed = closed
+        self.rebuild(fit=False)
 
     def toggle_collapse(self, loop_id: str) -> None:
         collapsed = list(self.app.state.collapsed)
