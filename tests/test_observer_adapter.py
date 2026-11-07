@@ -191,7 +191,7 @@ def test_a_coupling_loop_names_its_exchange_and_scheme():
 
     class CouplingOp:
         parallel = False
-        sides = [SimpleNamespace(field="a.x"), SimpleNamespace(field="b.y")]
+        sides = [SimpleNamespace(field="x", label="a.x"), SimpleNamespace(field="b.y")]
 
         def _next_pass(self, ctx):
             return False

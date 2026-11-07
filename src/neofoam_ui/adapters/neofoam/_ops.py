@@ -40,14 +40,15 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
 def _couples(loop: Any) -> list[tuple[str, str, str]]:
     """A NeoFOAM ``CouplingOp``'s exchange: each side's send op to its partner's receive op.
 
-    The two sides attached to one coupling (``loop.sides``, each wrapping the solution of a
-    field such as ``a.x``) are partners; their ops are named ``send_<field>`` and
-    ``receive_<field>`` by the coupling. The data is named after the field without its region.
+    The two sides attached to one coupling (``loop.sides``) are partners; the coupling names
+    their ops ``receive_<label>`` / ``send_<label>``, the label being the field they wrap as
+    the driver sees it (``a.x``; ``label``, else the side's ``field``). The data is named after
+    the field without its region.
     """
     sides = getattr(loop, "sides", None)
     if not isinstance(sides, list) or len(sides) != 2:
         return []
-    fields = [str(getattr(side, "field", "")) for side in sides]
+    fields = [str(getattr(side, "label", None) or getattr(side, "field", "")) for side in sides]
     return [(f"send_{fields[i]}", f"receive_{fields[1 - i]}", fields[i].rsplit(".", 1)[-1])
             for i in range(2)]
 
