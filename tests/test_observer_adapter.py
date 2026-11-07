@@ -201,3 +201,20 @@ def test_a_coupling_loop_names_its_exchange_and_scheme():
     op = _convert(loop, {})
     assert op.test == "CouplingOp() · serial"
     assert op.couples == [("send_a.x", "receive_b.y", "x"), ("send_b.y", "receive_a.x", "y")]
+
+
+def test_a_coupling_loop_test_reports_the_residuals_of_the_last_pass():
+    loop = FakeOp("loop", [], iterations=1)
+    loop.func = SimpleNamespace(func=lambda ctx: None, residuals={})
+    session = RegionSession()
+    session.records = []
+    session.record = lambda kind, node, name, ms, **extra: session.records.append((kind, node, extra))
+    stepper = _Stepper(session, lambda event: None)
+    stepper.operations(SimpleNamespace(ops=[loop]))
+    stepper.before_loop_test(loop, None, 1)
+    stepper.after_loop_test(loop, None, 1, True)
+    loop.func.residuals = {"x": 0.25}
+    stepper.before_loop_test(loop, None, 2)
+    stepper.after_loop_test(loop, None, 2, False)
+
+    assert [r[2].get("residuals") for r in session.records if r[0] == "test"] == [None, {"x": 0.25}]

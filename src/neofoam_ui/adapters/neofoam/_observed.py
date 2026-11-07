@@ -166,8 +166,12 @@ class _Stepper:
         if node is None:
             return
         ms = (time.perf_counter() - self.t0) * 1e3
+        extra = {}
+        residuals = getattr(op.func, "residuals", None)  # a NeoFOAM CouplingOp: the last pass's
+        if isinstance(residuals, dict) and residuals:
+            extra["residuals"] = {str(k): float(v) for k, v in residuals.items()}
         self.s.record("test", node, self.names[node], ms, stack=tuple(self.stack),
-                      iter=iteration, result=result)
+                      iter=iteration, result=result, **extra)
         if result:
             self.stack.append((node, iteration))
 
