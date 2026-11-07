@@ -62,6 +62,15 @@ _CSS = r"""
   .nf-side { grid-column: 1; grid-row: 3; border-left: 0; border-top: 1px solid rgba(128,128,128,.25); }
   .nf-btxt, .nf-wide { display: none; }
   .v-toolbar-title { flex: none !important; min-width: 0 !important; }
+  /* the toolbar scrolls sideways: Run…Restart, then the pane toggles, then stepping */
+  .nf-tools > * { order: 2; }
+  .nf-tools > :nth-child(-n+4) { order: 0; }
+  .nf-tools > .nf-view { order: 1; }
+  /* the field image at its own aspect, not letterboxed into a fixed height */
+  .nf-grid.fv .nf-field:not(.nf-pp) { height: auto; }
+  .nf-grid.fv .nf-field-img { flex: none; height: auto; }
+  .nf-grid.fv .nf-field-empty { min-height: 30vh; }
+  .v-footer { display: none; }
 }
 .nf-h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .65; padding: 8px 12px 4px;
   position: sticky; top: 0; background: rgb(var(--v-theme-surface)); z-index: 1; }
@@ -759,13 +768,13 @@ class StepperApp:
                     self._button("Skip init", "mdi-fast-forward", "skip_init",
                                  f"{idle} || cur_kind !== 'init'")
                     v3.VDivider(vertical=True, classes="mx-1")
-                    with v3.VBtn(size="small", classes="mx-1", click="fv_on = !fv_on",
+                    with v3.VBtn(size="small", classes="mx-1 nf-view", click="fv_on = !fv_on",
                                  variant=("fv_on ? 'tonal' : 'text'",),
                                  color=("fv_on ? 'primary' : undefined",),
                                  title="show a solver field on the mesh, refreshed at every pause"):
                         v3.VIcon("mdi-palette", size="small")
                         html.Span("Field", classes="nf-btxt ml-1")
-                    with v3.VBtn(size="small", classes="mx-1", click="pp_on = !pp_on",
+                    with v3.VBtn(size="small", classes="mx-1 nf-view", click="pp_on = !pp_on",
                                  variant=("pp_on ? 'tonal' : 'text'",),
                                  color=("pp_on ? 'primary' : undefined",),
                                  title="show the post-processing (Catalyst/ParaView) pipeline as a diagram"):
