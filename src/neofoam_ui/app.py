@@ -37,6 +37,7 @@ from neofoam_ui.fieldview import FIELD_CSS, component_items, field_pane
 from neofoam_ui.layout import build_flow, build_pipeline_flow, domain_color
 from neofoam_ui.pipelineview import PIPELINE_CSS, pipeline_pane
 from neofoam_ui.plotview import PLOT_CSS, TableHistory, plot_pane
+from neofoam_ui.protocol import CATALYST_LIVE_ENV, DELAY_ENV, UI_URGENT, WAIT_ENV
 
 __all__ = ["StepperApp", "main"]
 
@@ -47,9 +48,7 @@ PLOT_EVERY = 0.5
 #: Seconds between two state pushes to the browser while messages stream in.
 PUSH_EVERY = 1 / 15
 #: Messages that are pushed to the browser right away.
-_URGENT = {"paused", "stopped", "error", "frame", "graph", "sync"}
-DELAY_ENV = "NEOFOAM_UI_DELAY_MS"
-WAIT_ENV = "NEOFOAM_UI_WAIT"
+_URGENT = UI_URGENT
 
 _CSS = r"""
 .nf-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: minmax(0, 1fr) 230px;
@@ -191,7 +190,7 @@ class StepperApp:
         self._runs = 0
         self._run_dir = ""
         #: Render at every pause even with the pane closed (a ParaView is attached via Live).
-        self.live = os.environ.get("NEOFOAM_UI_CATALYST_LIVE", "off") != "off"
+        self.live = os.environ.get(CATALYST_LIVE_ENV, "off") != "off"
         self.state = server.state
         self.ctrl = server.controller
         self.solver_spec = solver_spec

@@ -53,6 +53,7 @@ from typing import Any, Callable, Optional, TextIO
 
 from neofoam_ui.engine import Session
 from neofoam_ui.parallel import Hub, finish, follow, rank_info, relay
+from neofoam_ui.protocol import LOSSY, WORKER_URGENT
 
 #: Seconds after a ``stop`` before the worker exits even if the solver is stuck.
 STOP_GRACE = 20.0
@@ -69,11 +70,10 @@ def load_solver(spec: str) -> Any:
 
 
 #: Messages that only show progress: thinned out while the UI lags behind (see :class:`_Out`).
-LOSSY = {"log": 40, "running": 1, "stdout": 200}  # kept per batch: the newest n
 #: Messages built for sending only (not shared with the session): serialised by the writer.
 _FRESH = {*LOSSY, "pptable"}
 #: Messages written at once; the others wait up to :data:`BATCH` s to go out together.
-URGENT = {"paused", "sync", "stopped", "error", "log_error", "breakpoint", "frame", "graph"}
+URGENT = WORKER_URGENT
 #: Seconds the writer (and the fd 1 pump) collect before they wake up again: every wake-up
 #: takes the GIL from the solver thread, so a few dozen a second, not one per message.
 BATCH = 0.02

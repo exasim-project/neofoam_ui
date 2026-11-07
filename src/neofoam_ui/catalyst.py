@@ -38,9 +38,10 @@ import numpy as np
 
 __all__ = ["ENV", "OUT_ENV", "InSitu", "blueprint", "configured", "custom_script", "describe_pipeline"]
 
-ENV = "NEOFOAM_UI_CATALYST"
-OUT_ENV = "NEOFOAM_UI_CATALYST_OUT"
-SCRIPT_ENV = "NEOFOAM_UI_CATALYST_SCRIPT"
+from neofoam_ui.protocol import CATALYST_ENV as ENV
+from neofoam_ui.protocol import CATALYST_OUT_ENV as OUT_ENV
+from neofoam_ui.protocol import CATALYST_SCRIPT_ENV as SCRIPT_ENV
+
 CHANNEL = "grid"
 PIPELINE = os.path.join(os.path.dirname(__file__), "pipelines", "view.py")
 

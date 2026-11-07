@@ -36,10 +36,10 @@ import traceback
 from typing import Any, Iterator, Optional
 
 from neofoam_ui.engine import Event, Session
+from neofoam_ui.protocol import SYNC_ENV
 
 __all__ = ["SYNC_ENV", "Hub", "finalize_mpi", "finish", "follow", "rank_info", "relay"]
 
-SYNC_ENV = "NEOFOAM_UI_SYNC"
 
 _RANK_ENV = (
     ("OMPI_COMM_WORLD_RANK", "OMPI_COMM_WORLD_SIZE"),

@@ -41,6 +41,7 @@ import numpy as np
 
 from neofoam_ui.engine import Event, InitStep, Op, Session, ThreadedProgram
 from neofoam_ui.parallel import rank_info
+from neofoam_ui.protocol import MODE_ENV
 
 __all__ = ["NeoFoamSolver", "ObservedNeoFoamSolver", "has_observer", "incompressible_fluid"]
 
@@ -461,7 +462,7 @@ def _source(func: Any) -> Optional[str]:
 
 
 def _observed() -> bool:
-    mode = os.environ.get("NEOFOAM_UI_MODE", "")
+    mode = os.environ.get(MODE_ENV, "")
     if mode not in ("", "tree", "observed"):
         raise ValueError(f"NEOFOAM_UI_MODE must be 'tree' or 'observed', got {mode!r}")
     if mode == "observed" and not has_observer():
