@@ -29,152 +29,16 @@ import json
 import time
 import traceback
 import zlib
-from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Literal, Optional, Protocol
+from typing import Any, Callable, Iterator, Literal, Optional
 
 import numpy as np
 
-__all__ = [
-    "Event",
-    "InitStep",
-    "Op",
-    "Session",
-    "Solver",
-    "ThreadedProgram",
-    "assign_ids",
-    "topological_order",
-]
+from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
+from neofoam_ui.engine._protocols import Solver
+from neofoam_ui.engine._threaded import ThreadedProgram
+from neofoam_ui.engine._wire import _init_dict, _op_dict
 
-
-@dataclass
-class Op:
-    """One node of the execution graph: an action, or a loop with children."""
-
-    name: str
-    kind: Literal["action", "loop"]
-    #: Action body ``f(ctx)``, or the loop predicate ``f(ctx) -> bool``.
-    func: Callable[[Any], Any]
-    children: list[Op] = field(default_factory=list)
-    domain: Optional[str] = None
-    number: Optional[str] = None
-    #: Loop predicate as shown in the diagram, e.g. ``"time < endTime"``.
-    test: Optional[str] = None
-    #: Guard shown on the action, e.g. ``"finalIter()"``.
-    guard: Optional[str] = None
-    #: Name of the optional model that injected this op through the resolver.
-    injected_by: Optional[str] = None
-    reads: list[str] = field(default_factory=list)
-    writes: list[str] = field(default_factory=list)
-    doc: str = ""
-    #: ``file:line`` shown in the inspector; derived from ``func`` when empty.
-    source: Optional[str] = None
-    id: str = ""
-    #: Position in the tree, ``"1.4.2"`` (set by :func:`assign_ids`).
-    pos: str = ""
-
-
-@dataclass
-class InitStep:
-    """One node of the initialization DAG (mirrors neofoam's ``InitStep``)."""
-
-    name: str
-    func: Callable[[dict[str, Any]], Any]
-    depends_on: list[str] = field(default_factory=list)
-    category: Optional[str] = None
-    doc: str = ""
-    source: Optional[str] = None
-
-    @property
-    def id(self) -> str:
-        return f"init:{self.name}"
-
-
-class Solver(Protocol):
-    """What the stepper needs from a solver.
-
-    A solver may instead provide ``program(session) -> Iterator[Event]`` and drive
-    itself (see :class:`ThreadedProgram`); then only ``scalars`` and ``fields`` are
-    used, and ``init_steps`` / ``create_context`` / ``execution_graph`` are not.
-    """
-
-    name: str
-
-    def init_steps(self) -> list[InitStep]: ...
-
-    def create_context(self, results: dict[str, Any]) -> Any:
-        """Build the run context from the init-step results (keyed by step name)."""
-
-    def execution_graph(self, ctx: Any) -> list[Op]: ...
-
-    def scalars(self, ctx: Any) -> dict[str, Any]: ...
-
-    def fields(self, ctx: Any) -> dict[str, np.ndarray]: ...
-
-    # Optional: ``mesh(ctx) -> geometry dict`` (see :mod:`neofoam_ui.geometry`) enables
-    # the field view; it is called once, the first time the view is opened.
-    # Optional: ``view_fields(ctx)`` — the fields the view offers, if more than ``fields``
-    # (e.g. model fields that the stats table leaves out).
-    # Optional: ``observe(value, emit)`` — offered every init-step result, e.g. to hook the
-    # post-processing tables (``pptable`` messages, see :mod:`neofoam_ui.pptables`).
-
-
-@dataclass
-class Event:
-    """The point the engine is paused before."""
-
-    kind: Literal["init", "exec", "test", "end"]
-    node: Optional[str] = None
-    depth: int = 0
-    iter: Optional[int] = None
-    #: Enclosing loops, outermost first, as ``(loop id, iteration)``.
-    stack: tuple[tuple[str, int], ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "node": self.node,
-            "depth": self.depth,
-            "iter": self.iter,
-            "stack": [list(s) for s in self.stack],
-        }
-
-
-def assign_ids(ops: list[Op], prefix: str = "", pos: str = "") -> None:
-    """Give every op a path id (``time_loop/inner_loop/solve``) and a position (``1.4.2``).
-
-    Repeated names get ``#2``, ``#3``.
-    """
-    seen: dict[str, int] = {}
-    for i, op in enumerate(ops, 1):
-        seen[op.name] = seen.get(op.name, 0) + 1
-        suffix = f"#{seen[op.name]}" if seen[op.name] > 1 else ""
-        op.id = f"{prefix}{op.name}{suffix}"
-        op.pos = f"{pos}{i}"
-        assign_ids(op.children, op.id + "/", op.pos + ".")
-
-
-def topological_order(steps: list[InitStep]) -> list[InitStep]:
-    """Kahn's algorithm, stable in declaration order; an already valid order is kept as is."""
-    by_name = {s.name: s for s in steps}
-    for s in steps:
-        for dep in s.depends_on:
-            if dep not in by_name:
-                raise ValueError(f"init step {s.name!r} depends on unknown step {dep!r}")
-    position = {s.name: i for i, s in enumerate(steps)}
-    if all(position[d] < position[s.name] for s in steps for d in s.depends_on):
-        return list(steps)
-    done: set[str] = set()
-    order: list[InitStep] = []
-    pending = list(steps)
-    while pending:
-        ready = [s for s in pending if all(d in done for d in s.depends_on)]
-        if not ready:
-            raise ValueError("cycle in init steps: " + ", ".join(s.name for s in pending))
-        for s in ready:
-            order.append(s)
-            done.add(s.name)
-            pending.remove(s)
-    return order
+__all__ = ()
 
 
 def _fingerprint(arr: np.ndarray) -> int:
@@ -184,13 +48,13 @@ def _fingerprint(arr: np.ndarray) -> int:
 #: Commands that advance the engine; ``None`` = until breakpoint / end / pause.
 Mode = Literal["into", "over", "out", "time_step", "skip_init", "run", "run_to"]
 #: Free runs: a self-driving solver passes the events they would not stop at on its own thread.
-FREE_MODES = ("run", "run_to", "time_step", "skip_init")
+_FREE_MODES = ("run", "run_to", "time_step", "skip_init")
 #: ``written_by`` of a field changed by a free run (its writer was not tracked).
 UNTRACKED = "not tracked while running"
 #: Seconds between two ``running`` messages of a free run without delay (the DAG's token).
-RUNNING_EVERY = 0.1
+_RUNNING_EVERY = 0.1
 #: Seconds after which a live frame reads the ParaView pipeline back again (colour range etc.).
-DESCRIBE_EVERY = 5.0
+_DESCRIBE_EVERY = 5.0
 
 
 class Session:
@@ -302,7 +166,7 @@ class Session:
     def set_ops(self, ops: list[Op]) -> None:
         self.ops = ops
         assign_ids(self.ops)
-        self.emit({"type": "graph", "activity": "exec", "ops": [op_dict(o) for o in self.ops]})
+        self.emit({"type": "graph", "activity": "exec", "ops": [_op_dict(o) for o in self.ops]})
 
     def observe_result(self, value: Any) -> None:
         """Offer an init-step result to the solver's optional ``observe(value, emit)``."""
@@ -392,7 +256,7 @@ class Session:
 
     def start(self) -> None:
         """Announce the init graph and the first pause."""
-        self.emit({"type": "graph", "activity": "init", "steps": [init_dict(s) for s in self.init]})
+        self.emit({"type": "graph", "activity": "init", "steps": [_init_dict(s) for s in self.init]})
         self._paused()
 
     def advance(self, mode: Mode, target: Optional[str] = None, track: Optional[bool] = None) -> None:
@@ -446,7 +310,7 @@ class Session:
     @staticmethod
     def _free_run(mode: Mode, start: Event) -> bool:
         """Run, run to, next time step, skip init — and stepping over the time loop (to the end)."""
-        return mode in FREE_MODES or (mode == "over" and start.kind == "test" and start.depth == 0)
+        return mode in _FREE_MODES or (mode == "over" and start.kind == "test" and start.depth == 0)
 
     def _arm(self, mode: Optional[Mode], target: Optional[str]) -> None:
         """A free run lets the solver thread pass the events it would not stop at (:meth:`set_free`).
@@ -513,7 +377,7 @@ class Session:
             time.sleep(self.delay)
             return
         now = time.monotonic()
-        if now - self._running_at >= RUNNING_EVERY:
+        if now - self._running_at >= _RUNNING_EVERY:
             self._running_at = now
             self.emit({"type": "running", "event": ev.to_dict()})
 
@@ -749,10 +613,10 @@ class Session:
 
     def _describe(self, params: dict[str, str]) -> None:
         """Read the pipeline back when it may have changed: the first frame, another field or
-        component, or :data:`DESCRIBE_EVERY` seconds on (colour range); else only the timings."""
+        component, or :data:`_DESCRIBE_EVERY` seconds on (colour range); else only the timings."""
         now = time.monotonic()
         last = self._described
-        if self.pipeline is None or last is None or last[0] != params or now - last[1] >= DESCRIBE_EVERY:
+        if self.pipeline is None or last is None or last[0] != params or now - last[1] >= _DESCRIBE_EVERY:
             self.pipeline = self.insitu.describe()
             self._described = (dict(params), now)
             return
@@ -781,140 +645,3 @@ class Session:
                 "writes_seen": {k: sorted(v) for k, v in self.writes_seen.items()},
             }
         )
-
-
-class _Stopped(BaseException):
-    """Unwinds a solver thread whose program was closed."""
-
-
-class ThreadedProgram:
-    """Turns a solver that calls back into the stepper into an event generator.
-
-    ``target()`` runs in a thread; whenever it calls :meth:`pause` with an
-    :class:`Event`, that event is yielded and the thread blocks until the
-    session asks for the next one. An exception in ``target`` is re-raised
-    from the generator; ``target`` returning ends it with an ``end`` event.
-    Closing the generator unwinds the blocked thread.
-
-    The thread outlives ``target`` so that :meth:`call` can still run code on
-    it — MPI must be finalized on the thread that initialised it.
-    """
-
-    def __init__(self, target: Callable[[], Any]) -> None:
-        import queue  # noqa: PLC0415
-        import threading  # noqa: PLC0415
-
-        self._target = target
-        self._events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
-        #: True = resume, False = unwind / end, a callable = run it here and keep waiting.
-        self._resume: queue.Queue[Any] = queue.Queue(maxsize=1)
-        self._thread = threading.Thread(target=self._main, name="solver", daemon=True)
-        #: What ``target`` returned.
-        self.result: Any = None
-        #: ``skip(event)`` true: :meth:`pause` returns at once, the event is not handed over.
-        self.skip: Optional[Callable[[Event], bool]] = None
-
-    def _main(self) -> None:
-        try:
-            self.result = self._target()
-        except _Stopped:
-            return
-        except BaseException as exc:  # noqa: BLE001 - handed to the session
-            self._events.put(("error", exc))
-        else:
-            self._events.put(("done", None))
-        while self._wait() is True:  # serve call() until closed
-            pass
-
-    def _wait(self) -> bool:
-        """Block for the session's word, running any calls handed over meanwhile."""
-        while True:
-            cmd = self._resume.get()
-            if isinstance(cmd, bool):
-                return cmd
-            cmd()
-
-    def pause(self, event: Event) -> None:
-        """Called from the solver thread: stop here until the session moves on."""
-        skip = self.skip
-        if skip is not None and skip(event):
-            return
-        self._events.put(("event", event))
-        if not self._wait():
-            raise _Stopped
-
-    def call(self, fn: Callable[[], Any], timeout: Optional[float] = None) -> bool:
-        """Run ``fn`` on the solver thread while it is paused or finished.
-
-        Returns False if it did not complete within ``timeout`` (e.g. the solver
-        thread is stuck inside an operation).
-        """
-        import threading  # noqa: PLC0415
-
-        if not self._thread.is_alive():
-            return False
-        done = threading.Event()
-
-        def run() -> None:
-            try:
-                fn()
-            except Exception:  # noqa: BLE001 - must not kill the solver thread
-                traceback.print_exc()
-            finally:
-                done.set()
-
-        self._resume.put(run)
-        return done.wait(timeout)
-
-    def __iter__(self) -> Iterator[Event]:
-        self._thread.start()
-        while True:
-            kind, value = self._events.get()
-            if kind == "error":
-                raise value
-            if kind == "done":
-                yield Event("end")
-                return
-            try:
-                yield value
-            except GeneratorExit:
-                self._resume.put(False)
-                raise
-            self._resume.put(True)
-
-
-def op_dict(op: Op) -> dict[str, Any]:
-    return {
-        "id": op.id,
-        "name": op.name,
-        "kind": op.kind,
-        "domain": op.domain,
-        "number": op.number,
-        "pos": op.pos,
-        "test": op.test,
-        "guard": op.guard,
-        "injected_by": op.injected_by,
-        "reads": op.reads,
-        "writes": op.writes,
-        "doc": op.doc,
-        "source": op.source or _source(op.func),
-        "children": [op_dict(c) for c in op.children],
-    }
-
-
-def init_dict(step: InitStep) -> dict[str, Any]:
-    return {
-        "id": step.id,
-        "name": step.name,
-        "depends_on": [f"init:{d}" for d in step.depends_on],
-        "category": step.category,
-        "doc": step.doc,
-        "source": step.source or _source(step.func),
-    }
-
-
-def _source(func: Callable[..., Any]) -> Optional[str]:
-    code = getattr(func, "__code__", None)
-    if code is None:
-        return None
-    return f"{code.co_filename}:{code.co_firstlineno}"

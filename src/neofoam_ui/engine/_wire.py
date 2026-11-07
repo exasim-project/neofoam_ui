@@ -1,0 +1,46 @@
+"""The graph as the worker sends it (``graph`` messages)."""
+
+from __future__ import annotations
+
+from typing import Any, Callable, Optional
+
+from neofoam_ui.engine._graph import InitStep, Op
+
+__all__ = ()
+
+
+def _op_dict(op: Op) -> dict[str, Any]:
+    return {
+        "id": op.id,
+        "name": op.name,
+        "kind": op.kind,
+        "domain": op.domain,
+        "number": op.number,
+        "pos": op.pos,
+        "test": op.test,
+        "guard": op.guard,
+        "injected_by": op.injected_by,
+        "reads": op.reads,
+        "writes": op.writes,
+        "doc": op.doc,
+        "source": op.source or _source(op.func),
+        "children": [_op_dict(c) for c in op.children],
+    }
+
+
+def _init_dict(step: InitStep) -> dict[str, Any]:
+    return {
+        "id": step.id,
+        "name": step.name,
+        "depends_on": [f"init:{d}" for d in step.depends_on],
+        "category": step.category,
+        "doc": step.doc,
+        "source": step.source or _source(step.func),
+    }
+
+
+def _source(func: Callable[..., Any]) -> Optional[str]:
+    code = getattr(func, "__code__", None)
+    if code is None:
+        return None
+    return f"{code.co_filename}:{code.co_firstlineno}"

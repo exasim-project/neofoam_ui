@@ -241,7 +241,7 @@ def test_frame_names_the_request_it_answers():
 
 
 def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst, monkeypatch):
-    from neofoam_ui import engine
+    from neofoam_ui.engine import _session as engine
 
     session, messages = session_after_init(Extra())
     session.set_view("T")
@@ -257,7 +257,7 @@ def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst, monkey
     session.set_view("k")  # another field: read back
     assert of(messages, "frame")[-1]["pipeline"]["nodes"][1]["settings"] == [["size", "640×480"]]
     FakeInSitu.pipeline["nodes"][1]["settings"] = [["size", "1×1"]]
-    monkeypatch.setattr(engine, "DESCRIBE_EVERY", 0.0)  # and again after a while
+    monkeypatch.setattr(engine, "_DESCRIBE_EVERY", 0.0)  # and again after a while
     session.advance("time_step")
     assert of(messages, "frame")[-1]["pipeline"]["nodes"][1]["settings"] == [["size", "1×1"]]
 

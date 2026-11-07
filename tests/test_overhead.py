@@ -12,7 +12,7 @@ import types
 
 import pytest
 
-from neofoam_ui import engine
+from neofoam_ui.engine import _session as engine
 from neofoam_ui.engine import UNTRACKED, Session
 from neofoam_ui.toy.heat1d import Heat1D
 

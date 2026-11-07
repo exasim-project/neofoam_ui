@@ -1,4 +1,6 @@
-from neofoam_ui.engine import Session, assign_ids, init_dict, op_dict, topological_order
+from neofoam_ui.engine import Session, assign_ids, topological_order
+from neofoam_ui.engine._wire import _init_dict as init_dict
+from neofoam_ui.engine._wire import _op_dict as op_dict
 from neofoam_ui.layout import build_flow
 from neofoam_ui.toy.heat1d import Heat1D
 
