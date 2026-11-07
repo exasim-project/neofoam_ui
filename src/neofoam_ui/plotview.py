@@ -29,6 +29,7 @@ PLOT_CSS = r"""
 .nf-pt { flex: 1 1 0; }
 .nf-pt-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 6px; }
 .nf-pt-chart { border-bottom: 1px solid rgba(128,128,128,.15); padding: 2px 0 4px; }
+.nf-field-bar .v-select.nf-pt-sel { flex: 1 1 260px; max-width: 100%; }
 .nf-pt-note { font-size: 11px; opacity: .65; padding: 0 8px 2px; }
 """
 
@@ -93,9 +94,10 @@ class TableHistory:
     def names(self) -> list[str]:
         return self.declared + [n for n in self.tables if n not in self.declared]
 
-    def charts(self) -> list[dict[str, Any]]:
-        """One ``{"name", "data", "layout", "note", "ms"}`` per table, in declaration order."""
-        return [self._chart(name, self.tables.get(name)) for name in self.names()]
+    def charts(self, names: Optional[list[str]] = None) -> list[dict[str, Any]]:
+        """One ``{"name", "data", "layout", "note", "ms"}`` per table (``names`` only), in declaration order."""
+        chosen = self.names() if names is None else [n for n in self.names() if n in names]
+        return [self._chart(name, self.tables.get(name)) for name in chosen]
 
     def _chart(self, name: str, table: Optional[_Table]) -> dict[str, Any]:
         layout = {
@@ -145,6 +147,9 @@ def plot_pane() -> None:
         with html.Div(classes="nf-field-bar"):
             v3.VIcon("mdi-chart-line", size="small")
             html.Span("Post-processing tables", classes="text-body-2 font-weight-medium")
+            v3.VSelect(v_model=("pt_sel",), items=("pt_names",), label="tables", multiple=True,
+                       chips=True, closable_chips=True, density="compact", hide_details=True,
+                       variant="outlined", disabled=("!pt_names.length",), classes="nf-pt-sel")
             html.Span("{{ pt_msg }}", classes="nf-field-msg")
         # v_if: the charts are created when the pane opens, so plotly sizes them to it.
         with html.Div(classes="nf-pt-list", v_if="pt_on && pt_charts.length"):
@@ -154,4 +159,5 @@ def plot_pane() -> None:
                 plotly.Figure(state_variable_name="ptc", display_mode_bar=False, responsive=True,
                               style=("`height: ${ptc.layout.height}px`",))
                 html.Div("{{ ptc.note }}", v_if="ptc.note", classes="nf-pt-note")
-        html.Div("{{ pt_msg }}", classes="nf-field-empty", v_show="!pt_charts.length")
+        html.Div("{{ pt_names.length && !pt_sel.length ? 'pick tables to plot' : pt_msg }}",
+                 classes="nf-field-empty", v_show="!pt_charts.length")

@@ -349,11 +349,17 @@ def test_app_draws_tables_and_plots_their_rows():
         assert s.pt_charts == []  # the Plots pane is closed: nothing sent
         s.pt_on = True
         app._plot(force=True)
-        assert [c["name"] for c in s.pt_charts] == ["p_mean", "U_bins"]
+        # the select box offers every table; the first is chosen, only chosen ones are charted
+        assert s.pt_names == ["p_mean", "U_bins"] and s.pt_sel == ["p_mean"]
+        assert [c["name"] for c in s.pt_charts] == ["p_mean"]
         assert s.pt_charts[0]["data"][0]["y"] == [1.0]
+        s.pt_sel = ["U_bins", "p_mean"]
+        app._plot(force=True)
+        assert [c["name"] for c in s.pt_charts] == ["p_mean", "U_bins"]  # declaration order
         assert s.pp_ms["pp:act:p_mean"] == "0.5 ms"
         app._reset_state()  # what a restart does
         assert s.pt_charts == [] and app.history.charts() == [] and s.pt_on
+        assert s.pt_sel == ["U_bins", "p_mean"]  # the choice survives
 
 
 def test_no_tables_says_so():

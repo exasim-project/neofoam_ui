@@ -208,7 +208,7 @@ class StepperApp:
         self.server.trigger("nf_field")(self.highlight_field)
         self.state.change("fv_on", "fv_field", "fv_comp", "pp_on")(lambda **_: self._send_view())
         self.state.change("fv_on", "pp_on", "pt_on")(lambda **_: self._fit_pipeline())
-        self.state.change("pt_on")(lambda **_: self._plot(force=True))
+        self.state.change("pt_on", "pt_sel")(lambda **_: self._plot(force=True))
         self.state.change("fv_live")(lambda fv_live, **_: self._send({"cmd": "live", "on": bool(fv_live)}))
         self.state.change("delay_ms")(self._on_delay)
         self.state.change("heat_on")(lambda **_: self._refresh_heat())
@@ -268,6 +268,8 @@ class StepperApp:
         # Plots of the post-processing tables: the toggle survives a restart, the history not.
         s.pt_on = bool(s.pt_on)
         s.pt_charts = []
+        s.pt_names = []
+        s.pt_sel = list(s.pt_sel or [])  # the chosen tables survive a restart
         s.pt_msg = "the tables' rows appear after the first post_process (once initialized)"
         self.history.clear()
 
@@ -493,6 +495,7 @@ class StepperApp:
         self._draw_pipeline()
         self._pp_status()
         self.history.declare([t["name"] for t in self._pp_tables])
+        self._table_names()
         self.state.pt_msg = (f"{len(self._pp_tables)} tables declared · rows after each post_process"
                              if self._pp_tables else
                              "this case declares no post-processing tables "
@@ -530,13 +533,23 @@ class StepperApp:
         if self._table_ms:
             s.pp_ms = {**s.pp_ms, **{f"pp:act:{k}": _fmt_ms(v) for k, v in self._table_ms.items()}}
             self._table_ms = {}
+        if len(self.history.names()) != len(s.pt_names):
+            self._table_names()
         if not s.pt_on or not self.history.names():
             return
-        s.pt_charts = self.history.charts()
+        s.pt_charts = self.history.charts(s.pt_sel)
         t = self.history.time
         ranks = f"reduced over {self.np} ranks" if self.np > 1 else ""
-        parts = [f"{len(s.pt_charts)} tables", f"t = {t:.6g}" if t is not None else "no rows yet", ranks]
+        parts = [f"{len(s.pt_charts)} of {len(s.pt_names)} tables",
+                 f"t = {t:.6g}" if t is not None else "no rows yet", ranks]
         s.pt_msg = " · ".join(p for p in parts if p)
+
+    def _table_names(self) -> None:
+        """The select box's tables; keeps the choice that still exists, else the first table."""
+        s = self.state
+        s.pt_names = self.history.names()
+        kept = [n for n in s.pt_sel if n in s.pt_names]
+        s.pt_sel = kept or s.pt_names[:1]
 
     def _fit_pipeline(self) -> None:
         """Refit the diagram when its pane opens or the field pane next to it changes its width."""
