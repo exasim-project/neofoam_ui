@@ -15,6 +15,12 @@ Execution is a generator that **pauses before** every event:
 :class:`Session` advances that generator according to the stepping commands
 (into / over / out / next time step / run / run to), honouring breakpoints and
 a pause request, and reports what happened through a callback.
+
+Cost while running: the single steps (into / over / out) record which fields each
+action changed (a checksum of every field after every action); the free runs (run,
+run to, next time step) do not, and with the DAG pane closed (:attr:`Session.watch`)
+they also send nothing per event — what remains is the pause check per event and
+the open panes' own data (frames at their interval, post-processing rows).
 """
 
 from __future__ import annotations
@@ -177,6 +183,14 @@ def _fingerprint(arr: np.ndarray) -> int:
 
 #: Commands that advance the engine; ``None`` = until breakpoint / end / pause.
 Mode = Literal["into", "over", "out", "time_step", "skip_init", "run", "run_to"]
+#: Free runs: a self-driving solver passes the events they would not stop at on its own thread.
+FREE_MODES = ("run", "run_to", "time_step", "skip_init")
+#: ``written_by`` of a field changed by a free run (its writer was not tracked).
+UNTRACKED = "not tracked while running"
+#: Seconds between two ``running`` messages of a free run without delay (the DAG's token).
+RUNNING_EVERY = 0.1
+#: Seconds after which a live frame reads the ParaView pipeline back again (colour range etc.).
+DESCRIBE_EVERY = 5.0
 
 
 class Session:
@@ -191,8 +205,24 @@ class Session:
         self.solver = solver
         self.emit = emit
         self.breakpoints: set[str] = set()
-        #: Seconds to wait between events while running (animation); 0 = no events in between.
+        #: Seconds to wait between events while running (animation); 0 = no sleep.
         self.delay = 0.0
+        #: The DAG pane is open (set by the UI): free runs report their events (``log``,
+        #: ``running``) and animate; closed, they send nothing per event and never sleep.
+        self.watch = True
+        #: "Wait for UI": with :attr:`barrier` set, block at every time step (every event
+        #: with a delay) and after every frame until the UI has shown what came before.
+        self.wait_ui = False
+        self.barrier: Optional[Callable[[], None]] = None
+        #: The current advance is a single step (tracks writes, logs every event).
+        self.stepping = True
+        #: A free run changed fields without tracking: their writer is :data:`UNTRACKED`.
+        self._untracked = False
+        self._prints_stale = False
+        self._running_at = 0.0
+        #: MPI rank 0: hands the free-run parameters (:meth:`set_free`) to the other ranks.
+        self.on_resume: Optional[Callable[[Optional[dict[str, Any]]], None]] = None
+        self._free: Optional[dict[str, Any]] = None
         self.pause_requested = False
         self.stop_requested = False
         self.ctx: Any = None
@@ -218,8 +248,15 @@ class Session:
         self._view_epoch = 0
         #: Rank 0 under MPI: makes the other ranks render the same frame (set by the worker).
         self.on_render: Optional[Callable[[dict[str, str]], None]] = None
-        #: Also render at every time step while running (not only at pauses).
+        #: Also render at time steps while running (not only at pauses): at most every
+        #: :attr:`frame_every` time steps and :attr:`frame_seconds` seconds apart.
         self.live_view = True
+        self.frame_every = 1
+        self.frame_seconds = 0.5
+        self._steps_since_frame = 0
+        self._frame_at = 0.0
+        #: Rendered frames kept on disk (older PNGs of this session are deleted).
+        self.keep_frames = 20
         self.insitu: Any = None  # neofoam_ui.catalyst.InSitu, started on the first frame
         self._insitu_error: Optional[str] = None
         self._geometry: Any = None  # None = not built yet, False = solver has no geometry
@@ -228,6 +265,7 @@ class Session:
         self.pipeline: Optional[dict[str, Any]] = None
         self._pipeline_sent: Optional[str] = None
         self._describe_failed = False  # reported once, then no more diagrams
+        self._described: Optional[tuple[Any, float]] = None  # (params, when) of the last read-back
         program = getattr(solver, "program", None)
         if program is not None:  # the solver drives itself and fills self.init
             self.init: list[InitStep] = []
@@ -256,7 +294,10 @@ class Session:
 
     def set_context(self, ctx: Any) -> None:
         self.ctx = ctx
-        self._prints = self._field_prints()
+        if self.stepping:
+            self._prints = self._field_prints()
+        else:
+            self._prints_stale = True
 
     def set_ops(self, ops: list[Op]) -> None:
         self.ops = ops
@@ -320,6 +361,8 @@ class Session:
         return {k: _fingerprint(v) for k, v in self.solver.fields(self.ctx).items()}
 
     def _track_writes(self, node: str, op_name: str) -> None:
+        if not self.stepping:  # a free run: no checksums, see advance()
+            return
         now = self._field_prints()
         self.last_writes = [k for k, v in now.items() if self._prints.get(k) != v]
         for k in self.last_writes:
@@ -329,6 +372,8 @@ class Session:
         self._prints = now
 
     def _log(self, kind: str, node: str, name: str, **extra: Any) -> None:
+        if not (self.stepping or self.watch):  # a free run nobody watches
+            return
         stack = extra.pop("stack", ())
         self.emit(
             {
@@ -350,13 +395,24 @@ class Session:
         self.emit({"type": "graph", "activity": "init", "steps": [init_dict(s) for s in self.init]})
         self._paused()
 
-    def advance(self, mode: Mode, target: Optional[str] = None) -> None:
-        """Execute the current event, then keep going until ``mode`` says stop."""
+    def advance(self, mode: Mode, target: Optional[str] = None, track: Optional[bool] = None) -> None:
+        """Execute the current event, then keep going until ``mode`` says stop.
+
+        Only the single steps (into, over, out; or ``track``) checksum the fields after each
+        action to see what it wrote; a free run (:meth:`_free_run`) leaves its writes
+        :data:`UNTRACKED`.
+        ``run_to`` is a single step while its target is near: it stops tracking at the
+        second time step it starts.
+        """
         if self.finished:
             return
         start = self.event
         until = self._until(mode, start, target)
         self.pause_requested = False
+        free = self._free_run(mode, start)
+        self._begin(not free or mode == "run_to" if track is None else track)
+        self._arm(mode if free else None, target)
+        steps = 0
         while True:
             try:
                 self.event = next(self._gen)
@@ -374,12 +430,102 @@ class Session:
                 if ev.node in self.breakpoints and not until(ev):
                     self.emit({"type": "breakpoint", "node": ev.node})
                 break
-            if self.live_view and ev.kind == "test" and not ev.stack:  # new time step: live frame
-                self.send_view()
-            if self.delay > 0:
-                self.emit({"type": "running", "event": ev.to_dict()})
-                time.sleep(self.delay)
+            if ev.kind == "test" and not ev.stack:  # new time step
+                steps += 1
+                if mode == "run_to" and steps == 2 and track is None:
+                    self._begin(False)  # a far target: a free run from here on
+                if self.live_view:
+                    self._live_frame()
+                if self.watch and self.wait_ui and self.barrier is not None:
+                    self.barrier()
+                self._arm(mode if free else None, target)  # breakpoints / delay changed meanwhile
+            if self.watch:
+                self._running(ev)
         self._paused()
+
+    @staticmethod
+    def _free_run(mode: Mode, start: Event) -> bool:
+        """Run, run to, next time step, skip init — and stepping over the time loop (to the end)."""
+        return mode in FREE_MODES or (mode == "over" and start.kind == "test" and start.depth == 0)
+
+    def _arm(self, mode: Optional[Mode], target: Optional[str]) -> None:
+        """A free run lets the solver thread pass the events it would not stop at (:meth:`set_free`).
+
+        Not while animating (delay with the DAG pane open): then every event comes here.
+        """
+        params = None
+        if mode is not None and not (self.watch and self.delay > 0):
+            params = {"mode": mode, "target": target, "bps": sorted(self.breakpoints)}
+        if params != self._free:
+            if self.on_resume is not None:
+                self.on_resume(params)
+            self.set_free(params)
+
+    def set_free(self, params: Optional[dict[str, Any]]) -> None:
+        """Pass the events of a free run on the solver thread, without a hand-over each.
+
+        ``params`` (``mode``, ``target``, ``bps``; ``None`` = hand over every event) fix what
+        is passed: every event but a time step's loop test, the run's target and the
+        breakpoints given. Under MPI each rank gets the same ``params`` and so passes the
+        same events; a Pause, a Stop and new breakpoints then take effect at the next time
+        step. A serial run also stops right at the event after a Pause or Stop.
+        """
+        self._free = params
+        thread = self.program_thread
+        if thread is None:  # tree mode: the events come here cheaply anyway
+            return
+        if params is None:
+            thread.skip = None
+            return
+        until = self._until(params["mode"], self.event, params.get("target"))
+        bps = frozenset(params["bps"])
+        alone = self.on_resume is None and self.gather is None  # no other ranks to keep in step
+
+        def skip(ev: Event) -> bool:
+            if (ev.kind == "test" and not ev.stack) or until(ev) or ev.node in bps:
+                return False
+            if alone and (self.pause_requested or self.stop_requested):
+                return False
+            if self.watch:
+                self._running(ev)
+            return True
+
+        thread.skip = skip
+
+    def _begin(self, stepping: bool) -> None:
+        """Start tracking writes (fresh checksums after a free run), or stop for a free run."""
+        self.stepping = stepping
+        if not stepping:
+            self._prints_stale = True
+            self._untracked = True
+            self.last_writes = []
+            self.last_written_by.clear()  # stale: the run will overwrite fields untracked
+        elif self._prints_stale and self.ctx is not None:
+            self._prints = self._field_prints()
+            self._prints_stale = False
+
+    def _running(self, ev: Event) -> None:
+        """The DAG's token while running: every event with a delay, else a few times a second."""
+        if self.delay > 0:
+            self.emit({"type": "running", "event": ev.to_dict()})
+            if self.wait_ui and self.barrier is not None:
+                self.barrier()
+            time.sleep(self.delay)
+            return
+        now = time.monotonic()
+        if now - self._running_at >= RUNNING_EVERY:
+            self._running_at = now
+            self.emit({"type": "running", "event": ev.to_dict()})
+
+    def _live_frame(self) -> None:
+        """A frame at this time step if :attr:`frame_every` steps and :attr:`frame_seconds` passed."""
+        self._steps_since_frame += 1
+        if self.view is None or self._steps_since_frame < max(1, self.frame_every):
+            return
+        if time.monotonic() - self._frame_at < self.frame_seconds:
+            return
+        self._steps_since_frame = 0
+        self.send_view()
 
     @staticmethod
     def _until(mode: Mode, start: Event, target: Optional[str]) -> Callable[[Event], bool]:
@@ -426,7 +572,7 @@ class Session:
                 "max": float(a.max()) if a.size else None,
                 "sum": float(a.sum()),
                 "n": int(a.size),
-                "written_by": self.last_written_by.get(name, "init"),
+                "written_by": self.last_written_by.get(name, UNTRACKED if self._untracked else "init"),
                 "changed": name in self.last_writes,
             }
         return stats
@@ -496,6 +642,14 @@ class Session:
         fields = {k: np.asarray(v) for k, v in source(self.ctx).items()}
         return self._geometry, {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
 
+    def _published(self, fields: dict[str, np.ndarray], params: dict[str, str]) -> dict[str, np.ndarray]:
+        """What goes to Catalyst: the viewed field for the default pipeline, all for another script."""
+        from neofoam_ui import catalyst  # noqa: PLC0415
+
+        if catalyst.custom_script() or params.get("field") not in fields:
+            return fields
+        return {params["field"]: fields[params["field"]]}
+
     def _view_error(self, text: str) -> None:
         if self._view_sent != ("error", self._view_epoch, text):
             self._view_sent = ("error", self._view_epoch, text)
@@ -529,6 +683,7 @@ class Session:
         if key == self._view_sent:
             return
         self._view_sent = key
+        self._frame_at = time.monotonic()
         params = {"field": name, "component": comp}
         if self.on_render is not None:
             self.on_render(params)
@@ -551,6 +706,11 @@ class Session:
                 frame["pipeline"] = graph
             frame["pipeline_ms"] = self.pipeline.get("ms", {})
         self.emit(frame)
+        prune = getattr(self.insitu, "prune", None)
+        if prune is not None:
+            prune(self.keep_frames)
+        if self.wait_ui and self.barrier is not None:
+            self.barrier()
 
     def render(self, params: dict[str, str], describe: bool = False) -> Optional[str]:
         """Hand this rank's cells and fields to Catalyst (collective); the image file name.
@@ -568,10 +728,10 @@ class Session:
             if self.insitu is None:
                 self.insitu = InSitu()
             time_value = self.solver.scalars(self.ctx).get("time") or 0.0
-            out[0] = self.insitu.execute(cells[0], cells[1], time_value, params)
+            out[0] = self.insitu.execute(cells[0], self._published(cells[1], params), time_value, params)
             if describe and not self._describe_failed and hasattr(self.insitu, "describe"):
                 try:
-                    self.pipeline = self.insitu.describe()
+                    self._describe(params)
                 except Exception:  # noqa: BLE001 - a frame without its diagram is still a frame
                     self.pipeline, self._describe_failed = None, True
                     self.emit({"type": "stdout", "text": "pipeline diagram: " + traceback.format_exc()})
@@ -586,6 +746,19 @@ class Session:
         if self._insitu_error is None:
             self.in_solver_thread(guarded)
         return out[0]
+
+    def _describe(self, params: dict[str, str]) -> None:
+        """Read the pipeline back when it may have changed: the first frame, another field or
+        component, or :data:`DESCRIBE_EVERY` seconds on (colour range); else only the timings."""
+        now = time.monotonic()
+        last = self._described
+        if self.pipeline is None or last is None or last[0] != params or now - last[1] >= DESCRIBE_EVERY:
+            self.pipeline = self.insitu.describe()
+            self._described = (dict(params), now)
+            return
+        ms = getattr(self.insitu, "ms", None)
+        if isinstance(ms, dict):
+            self.pipeline = {**self.pipeline, "ms": {k: round(v, 3) for k, v in ms.items()}}
 
     def finalize_view(self) -> None:
         """``catalyst_finalize`` (collective) on the solver thread, if a frame was rendered."""
@@ -638,6 +811,8 @@ class ThreadedProgram:
         self._thread = threading.Thread(target=self._main, name="solver", daemon=True)
         #: What ``target`` returned.
         self.result: Any = None
+        #: ``skip(event)`` true: :meth:`pause` returns at once, the event is not handed over.
+        self.skip: Optional[Callable[[Event], bool]] = None
 
     def _main(self) -> None:
         try:
@@ -661,6 +836,9 @@ class ThreadedProgram:
 
     def pause(self, event: Event) -> None:
         """Called from the solver thread: stop here until the session moves on."""
+        skip = self.skip
+        if skip is not None and skip(event):
+            return
         self._events.put(("event", event))
         if not self._wait():
             raise _Stopped

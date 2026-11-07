@@ -101,7 +101,7 @@ class _FieldsMixin:
         """Hook NeoFOAM's ``PostProcessor`` (init step ``post_processor``) when it is built.
 
         Every table the case declares then reports its rows after each ``post_process``
-        (:func:`neofoam_ui.pptables.observe`); the CSV files are written as before.
+        (:func:`neofoam_ui.pptables.observe`, on rank 0 only); the CSV files are written as before.
         """
         try:
             from neofoam.postprocess.model import PostProcessor  # noqa: PLC0415
@@ -112,7 +112,8 @@ class _FieldsMixin:
 
             if getattr(value, "_tables", None):
                 _ensure_neon()
-
+            if rank_info()[0] > 0:  # only rank 0's rows reach the UI: the others convert none
+                return
             if not observe(value, emit):
                 emit({"type": "stdout", "text": "post-processing tables: this NeoFOAM's "
                                                 "PostProcessor cannot be observed"})

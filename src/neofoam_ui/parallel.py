@@ -5,14 +5,18 @@ Rank 0 is the ordinary worker (stdin/stdout protocol to the UI). The others
 are *followers*: they connect to rank 0 over a socket (``NEOFOAM_UI_SYNC=host:port``,
 set by the UI) and run the same solver, but only advance when rank 0 does —
 one ``go`` per event — so all ranks pause at the same event and a step never
-leaves a rank behind in a collective. At each pause rank 0 collects the
+leaves a rank behind in a collective. In a free run (Run, Run to, Next time step)
+every rank gets the same parameters once (``free``) and passes the events in
+between on its own; only the time steps' loop tests, the target and the
+breakpoints still take a ``go``. At each pause rank 0 collects the
 followers' field statistics, so the UI shows global min / max / mean.
 
 Rank 0 → follower, one JSON object per line::
 
-    {"op": "go"}      # resume past the current event
+    {"op": "go", "track": false}   # resume past the current event (tracking writes or not)
     {"op": "stats"}   # reply with Session.field_stats()
     {"op": "render", "params": {...}}   # in-situ frame: Session.render (collective)
+    {"op": "free", "params": {...}}     # a free run: Session.set_free (null: none)
     {"op": "stop"}
 
 The rank is read from the launcher's environment (Open MPI, MPICH / PMI);
@@ -128,8 +132,8 @@ class Hub:
         print(f"neofoam_ui: rank {peer[0]} {why}; no longer followed", file=sys.stderr, flush=True)
         self._peers.remove(peer)
 
-    def go(self) -> None:
-        self._send({"op": "go"})
+    def go(self, track: bool = True) -> None:
+        self._send({"op": "go", "track": track})
 
     def stats(self) -> list[dict[str, dict[str, Any]]]:
         """Each follower's field stats; a rank that is gone or does not answer is dropped."""
@@ -146,6 +150,10 @@ class Hub:
                 self._drop(peer, "did not answer")
         return replies
 
+    def free(self, params: Optional[dict[str, Any]]) -> None:
+        """The free-run parameters of rank 0 (:meth:`Session.set_free`), for every follower."""
+        self._send({"op": "free", "params": params})
+
     def render(self, params: dict[str, str]) -> None:
         """Make every follower render the frame rank 0 is about to render."""
         self._send({"op": "render", "params": params})
@@ -157,10 +165,14 @@ class Hub:
             pass
 
 
-def relay(events: Iterator[Event], hub: Hub) -> Iterator[Event]:
-    """Rank 0's event generator: release the followers before each resume."""
+def relay(events: Iterator[Event], hub: Hub, session: Optional[Session] = None) -> Iterator[Event]:
+    """Rank 0's event generator: release the followers before each resume.
+
+    The followers track writes when rank 0 does (``session.stepping``): a free run costs
+    them no checksums either.
+    """
     while True:
-        hub.go()
+        hub.go(session.stepping if session is not None else True)
         try:
             yield next(events)
         except StopIteration:
@@ -169,6 +181,12 @@ def relay(events: Iterator[Event], hub: Hub) -> Iterator[Event]:
 
 class _Follower(Session):
     def _paused(self) -> None:  # nobody is listening
+        pass
+
+    def _log(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def _arm(self, *args: Any) -> None:  # rank 0 sets the free run (``free``), not each ``go``
         pass
 
 
@@ -199,8 +217,9 @@ def follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
         op = msg["op"]
         if session is None:  # created on the first message: rank 0 is ready by then
             session = _Follower(solver, emit)
+            session.watch = False
         if op == "go":
-            session.advance("into")
+            session.advance("into", track=bool(msg.get("track", True)))
         elif op == "stats":
             try:
                 stats = session.field_stats()
@@ -211,6 +230,8 @@ def follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
             stream.flush()
         elif op == "render":
             session.render(msg["params"])
+        elif op == "free":
+            session.set_free(msg["params"])
         elif op == "stop":
             finalized = True
             if session is not None:

@@ -22,6 +22,7 @@ HELPERS = os.path.join(os.path.dirname(__file__), "helpers")
 
 class FakeInSitu:
     calls: list = []
+    ms: dict = {}
 
     def __init__(self):
         self.step = 0
@@ -51,6 +52,7 @@ PIPELINE = {
 @pytest.fixture(autouse=True)
 def fake_catalyst(monkeypatch, tmp_path):
     FakeInSitu.calls = []
+    FakeInSitu.ms = {}
     FakeInSitu.pipeline = json.loads(json.dumps(PIPELINE))
     monkeypatch.setenv(catalyst.ENV, "/nowhere")
     monkeypatch.setenv(catalyst.OUT_ENV, str(tmp_path))
@@ -98,8 +100,9 @@ def test_frames_only_when_values_change(fake_catalyst):
     call = renders(fake_catalyst)[0]
     assert call["params"] == {"field": "T", "component": "mag"}
     assert call["geom"]["kind"] == "line"
-    # every cell-sized field goes to Catalyst (flux lives on the 41 faces)
-    assert set(call["fields"]) == {"T", "T_old", "kappa", "source_mask"}
+    # the default pipeline gets the viewed field only; the view offers every cell-sized one
+    # (flux lives on the 41 faces)
+    assert set(call["fields"]) == {"T"}
     assert {f["name"] for f in frame["fields"]} == {"T", "T_old", "kappa", "source_mask"}
 
     session.advance("into")  # set_time_step: T unchanged -> no new frame
@@ -109,6 +112,13 @@ def test_frames_only_when_values_change(fake_catalyst):
     assert len(frames) == 2 and frames[-1]["file"] == "view_000001.png"
     # each frame precedes the pause it belongs to
     assert messages[-1]["type"] == "paused" and messages[-2] is frames[-1]
+
+
+def test_another_pipeline_script_gets_every_field(fake_catalyst, monkeypatch):
+    monkeypatch.setenv(catalyst.SCRIPT_ENV, "/my/pipeline.py")
+    session, _ = session_after_init()
+    session.set_view("T")
+    assert set(renders(fake_catalyst)[0]["fields"]) == {"T", "T_old", "kappa", "source_mask"}
 
 
 def test_switching_field_and_closing():
@@ -202,6 +212,7 @@ def test_view_request_from_another_thread_takes_effect_at_the_next_live_frame():
             session.request_view("kappa")
 
     session.emit = emit
+    session.frame_seconds = 0
     session.advance("run")
     frames = of(messages, "frame")
     assert [f["field"] for f in frames[:3]] == ["T", "T", "kappa"]
@@ -229,18 +240,26 @@ def test_frame_names_the_request_it_answers():
 # -- post-processing diagram: the pipeline read back after each execute ------------------------
 
 
-def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst):
-    session, messages = session_after_init()
+def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst, monkeypatch):
+    from neofoam_ui import engine
+
+    session, messages = session_after_init(Extra())
     session.set_view("T")
     first = of(messages, "frame")[-1]
     assert first["pipeline"] == PIPELINE and "ms" not in first["pipeline"]
     assert first["pipeline_ms"] == {"total": 2.5, "pv1": 0.5}
-    session.advance("time_step")  # same pipeline: only the timings
+    FakeInSitu.ms = {"total": 1.5}
+    session.advance("time_step")  # same request: not read back, the timings of the execute
     frame = of(messages, "frame")[-1]
-    assert "pipeline" not in frame and frame["pipeline_ms"]["total"] == 2.5
+    assert "pipeline" not in frame and fake_catalyst.count("describe") == 1
+    assert frame["pipeline_ms"] == {"total": 1.5}
     FakeInSitu.pipeline["nodes"][1]["settings"] = [["size", "640×480"]]  # e.g. a colour range moved
-    session.advance("time_step")
+    session.set_view("k")  # another field: read back
     assert of(messages, "frame")[-1]["pipeline"]["nodes"][1]["settings"] == [["size", "640×480"]]
+    FakeInSitu.pipeline["nodes"][1]["settings"] = [["size", "1×1"]]
+    monkeypatch.setattr(engine, "DESCRIBE_EVERY", 0.0)  # and again after a while
+    session.advance("time_step")
+    assert of(messages, "frame")[-1]["pipeline"]["nodes"][1]["settings"] == [["size", "1×1"]]
 
 
 def test_only_the_deciding_rank_reads_the_pipeline_back(fake_catalyst):
@@ -568,6 +587,7 @@ insitu.finalize()
 def test_live_frames_at_every_time_step_while_running():
     session, messages = session_after_init()
     session.set_view("T")
+    session.frame_seconds = 0
     n = len(of(messages, "frame"))
     session.breakpoints = set()
     session.advance("run")

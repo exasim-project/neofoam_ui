@@ -17,7 +17,8 @@ Configuration (environment of the worker):
   ``lib/python3.X/site-packages``. ParaView must be built for this interpreter
   (shared Python modules, same NumPy major, same MPI as the solver).
 * ``NEOFOAM_UI_CATALYST_OUT`` — directory for the images (set by the UI).
-* ``NEOFOAM_UI_CATALYST_SCRIPT`` — another pipeline script (optional).
+* ``NEOFOAM_UI_CATALYST_SCRIPT`` — another pipeline script (optional). The default
+  pipeline gets only the viewed field; another script gets every cell field.
 
 Collective: under MPI every rank must call :meth:`InSitu.execute` for the same
 pause, on the thread that initialised MPI.
@@ -35,7 +36,7 @@ from typing import Any, Iterator, Optional
 
 import numpy as np
 
-__all__ = ["ENV", "OUT_ENV", "InSitu", "blueprint", "configured", "describe_pipeline"]
+__all__ = ["ENV", "OUT_ENV", "InSitu", "blueprint", "configured", "custom_script", "describe_pipeline"]
 
 ENV = "NEOFOAM_UI_CATALYST"
 OUT_ENV = "NEOFOAM_UI_CATALYST_OUT"
@@ -46,6 +47,11 @@ PIPELINE = os.path.join(os.path.dirname(__file__), "pipelines", "view.py")
 
 def configured() -> bool:
     return bool(os.environ.get(ENV)) and bool(os.environ.get(OUT_ENV))
+
+
+def custom_script() -> bool:
+    """A pipeline script other than the stepper's own (it may use any field)."""
+    return bool(os.environ.get(SCRIPT_ENV))
 
 
 _FE_ALL_EXCEPT = 0x3D  # glibc x86: invalid | divbyzero | overflow | underflow | inexact
@@ -170,6 +176,7 @@ class InSitu:
         with _no_fp_traps():
             self._catalyst.initialize(init)
         self.step = 0
+        self._pruned = 0  # images below this step are deleted
         #: Milliseconds of the last execute: ``total`` and per pipeline node (see :meth:`describe`).
         self.ms: dict[str, float] = {}
         self._timed: set[str] = set()  # nodes with timing observers
@@ -194,6 +201,13 @@ class InSitu:
         name = f"view_{self.step:06d}.png"
         self.step += 1
         return name
+
+    def prune(self, keep: int) -> None:
+        """Delete this session's images but the newest ``keep`` (rank 0 writes them)."""
+        for step in range(self._pruned, max(self._pruned, self.step - max(1, keep))):
+            with contextlib.suppress(OSError):
+                os.remove(os.path.join(self.out_dir, f"view_{step:06d}.png"))
+            self._pruned = step + 1
 
     def describe(self) -> dict[str, Any]:
         """The live ParaView pipeline after the last execute (call on one rank, solver thread).

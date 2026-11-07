@@ -55,12 +55,13 @@ def _has_observer() -> bool:
     return subprocess.run([PYTHON, "-c", probe], env=_env(), capture_output=True).returncode == 0
 
 
+@pytest.mark.parametrize("step", ["step", "run"])
 @pytest.mark.parametrize("ui_mode", ["tree", "observed"])
-def test_stepping_matches_plain_run(tmp_path, ui_mode):
+def test_stepping_matches_plain_run(tmp_path, ui_mode, step):
     if ui_mode == "observed" and not _has_observer():
         pytest.skip("this NeoFOAM has no execution observer")
     plain = _run(_pitzdaily(tmp_path / "a"), "plain", tmp_path / "plain.npz")
-    stepped = _run(_pitzdaily(tmp_path / "b"), "step", tmp_path / "step.npz",
+    stepped = _run(_pitzdaily(tmp_path / "b"), step, tmp_path / "step.npz",
                    NEOFOAM_UI_MODE=ui_mode)
     assert set(plain) == {"U", "p", "phi"}
     for name in plain:
@@ -118,3 +119,66 @@ def test_post_processing_tables_reach_the_ui(tmp_path, ui_mode):
         # the CSV puts the group labels first; the values follow
         for row, labels, line in zip(last["values"], last["groups"], lines[-n_rows:]):
             assert [float(v) for v in line[1 + len(labels):]] == pytest.approx(row, rel=1e-12), name
+
+
+def test_mpi_free_runs_keep_the_ranks_in_step(tmp_path):
+    """mpirun -np 2, observed: free runs (events passed on each rank), a breakpoint, a Pause,
+    single steps; every pause has the stats of both ranks, and the run ends cleanly."""
+    import json  # noqa: PLC0415
+
+    if not _has_observer() or not shutil.which("mpirun"):
+        pytest.skip("needs the execution observer and mpirun")
+    case = _pitzdaily(tmp_path)
+    for entry, value in (("numberOfSubdomains", "2"), ("method", "scotch")):
+        subprocess.run(["foamDictionary", "-entry", entry, "-set", value, "system/decomposeParDict"],
+                       cwd=case, check=True, capture_output=True)
+    subprocess.run(["decomposePar", "-force"], cwd=case, check=True, capture_output=True)
+    with __import__("socket").socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    proc = subprocess.Popen(["mpirun", "-np", "2", PYTHON, "-u", "-m", "neofoam_ui.worker",
+                             "neofoam_ui.adapters.neofoam:incompressible_fluid"],
+                            cwd=case, env=_env(NEOFOAM_UI_MODE="observed", NEOFOAM_UI_SYNC=f"127.0.0.1:{port}"),
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=open(tmp_path / "stderr", "w"), text=True)
+    graph = []
+
+    def send(cmd):
+        proc.stdin.write(json.dumps(cmd) + "\n")
+        proc.stdin.flush()
+
+    def paused():
+        for line in proc.stdout:
+            msg = json.loads(line)
+            if msg["type"] == "graph" and msg["activity"] == "exec":
+                graph.extend(msg["ops"])
+            if msg["type"] == "paused":
+                return msg
+        raise AssertionError("the worker ended")
+
+    try:
+        paused()
+        send({"cmd": "step", "mode": "skip_init"})
+        paused()
+        loop = next(op for op in graph if op["kind"] == "loop")
+        inner = [c for c in loop["children"] if c["kind"] == "action"][-1]  # late in a time step
+        send({"cmd": "breakpoints", "ids": [inner["id"]]})
+        send({"cmd": "step", "mode": "run"})
+        bp = paused()
+        send({"cmd": "breakpoints", "ids": []})
+        send({"cmd": "step", "mode": "time_step"})
+        step = paused()
+        send({"cmd": "step", "mode": "into"})
+        into = paused()
+        send({"cmd": "step", "mode": "run"})
+        end = paused()
+        assert bp["event"]["node"] == inner["id"]
+        assert step["event"]["kind"] == "test" and step["event"]["depth"] == 0
+        assert into["event"]["node"] != step["event"]["node"]
+        assert end["finished"] and not end["failed"]
+        send({"cmd": "stop"})
+        assert proc.wait(timeout=60) == 0
+        assert "no longer followed" not in (tmp_path / "stderr").read_text()  # both ranks in step
+    finally:
+        proc.kill()
+        proc.wait()

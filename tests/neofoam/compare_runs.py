@@ -1,4 +1,4 @@
-"""Run in a NeoFOAM interpreter inside a case dir: ``plain`` or ``step`` → fields .npz."""
+"""Run in a NeoFOAM interpreter inside a case dir: ``plain``, ``step`` or ``run`` → fields .npz."""
 
 import sys
 
@@ -19,7 +19,8 @@ else:
     session = Session(incompressible_fluid(), messages.append)
     session.start()
     while not session.finished:
-        session.advance("into")  # pause before every single event
+        # step: pause before every single event; run: one free run (events passed in the solver)
+        session.advance("into" if mode == "step" else "run")
     errors = [m for m in messages if m["type"] == "error"]
     if errors:
         sys.exit(errors[0]["traceback"])
