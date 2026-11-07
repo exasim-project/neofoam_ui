@@ -242,3 +242,20 @@ def test_a_coupling_loop_test_reports_the_residuals_of_the_last_pass():
     stepper.after_loop_test(loop, None, 2, False)
 
     assert [r[2].get("residuals") for r in session.records if r[0] == "test"] == [None, {"x": 0.25}]
+
+
+def test_a_coupling_node_reports_what_its_partner_sends():
+    import numpy as np  # noqa: PLC0415
+
+    from neofoam_ui.adapters.neofoam._observed import _exchanged  # noqa: PLC0415
+
+    sides = [SimpleNamespace(kinds={"x": "Array"}, region="a",
+                             side=SimpleNamespace(send=lambda: SimpleNamespace(x=np.array([1.5])))),
+             SimpleNamespace(kinds={"x": "Array"}, region="b",
+                             side=SimpleNamespace(send=lambda: SimpleNamespace(x=np.array([0.5, 1.0]))))]
+    node = FakeOp("couple_b.x")
+    node.func = SimpleNamespace(func=SimpleNamespace(coupling=SimpleNamespace(sides=sides), index=1))
+    assert _exchanged(node) == {"from": "a", "to": "b", "data": {"x": "1.5"}}
+    node.func.func.index = 0
+    assert _exchanged(node) == {"from": "b", "to": "a", "data": {"x": "mean 0.75 (n=2)"}}
+    assert _exchanged(FakeOp("a.solve_x")) is None

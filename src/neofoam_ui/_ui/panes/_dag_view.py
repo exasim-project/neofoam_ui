@@ -27,7 +27,8 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
             html.Span(classes="nf-dot", style=("`background:${r.color}`",))
             html.Span("{{ r.name }}")
     cls_node = "props.data.ref === cur_node && cur_kind !== 'test'"
-    with NodeEditor(style="width: 100%; height: 100%;",
+    # hot-<key>: the coupling line <key> exchanges now (see _styles: its dashes move)
+    with NodeEditor(style="width: 100%; height: 100%;", classes=("ex_hot.map(k => 'hot-' + k)",),
                     node_click=(pane.select, "[$event.node.data && ($event.node.data.ref || $event.node.data.loop)"
                                        " || $event.node.id]")) as editor:
         pane.editor = editor
@@ -76,7 +77,8 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 "['nf-node', 'nf-loop', { active: active_loops.includes(props.data.ref),"
                 " control: props.data.control, collapsed: props.data.collapsed, sel: props.data.collapsed && props.data.ref === selected,"
                 " hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]",
-            ), style=("props.data.collapsed ? " + _HEAT + " : ''",)):
+            ), style=("props.data.collapsed ? " + _HEAT + " : ''",),
+               title=("props.data.control && props.data.test ? 'test: ' + props.data.test : ''",)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
                 # a loop in a region box: its data goes to a coupling node, which may feed it
@@ -88,18 +90,26 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                     html.Span("{{ props.data.collapsed ? '▸' : '▾' }}", classes="nf-tog",
                               title="collapse / expand",
                               raw_attrs=['@click.stop="trigger(\'nf_collapse\', [props.data.ref])"'])
-                    html.Span("«loop» {{ props.data.number }} {{ props.data.label }}")
+                    html.Span("{{ props.data.control ? '' : '«loop» ' }}{{ props.data.number }} {{ props.data.label }}")
                     html.Span(" · pass {{ loop_iter[props.data.ref] }}", classes="nf-loop-pass",
                               v_if="loop_iter[props.data.ref]")
                     html.Span(" · {{ loop_res[props.data.ref] }}", classes="nf-loop-res",
                               v_if="loop_res[props.data.ref]")
-                html.Div("test: {{ props.data.test }}", classes="nf-loop-test")
+                html.Div("test: {{ props.data.test }}", classes="nf-loop-test", v_if="!props.data.control")
                 html.Div("{{ heat_ms[props.data.ref] ? heat_ms[props.data.ref] + ' · ' : '' }}"
                          "{{ props.data.size }} actions", classes="nf-loop-size",
                          v_if="props.data.collapsed")
                 html.Span(classes=("['nf-bp', { on: bps.includes(props.data.ref) }]",),
                           v_if="props.data.collapsed",
                           raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.ref])"'])
+
+        with CustomNode("exlabel"):
+            # the data on a coupling line: what each side sends, filled in while stepping
+            with html.Div(classes=("['nf-exlabel', { hot: ex_hot.includes(props.data.key) }]",)):
+                html.Div("{{ (ex_vals[props.data.key] || {})[props.data.left] || props.data.data }} →",
+                         classes="nf-ex-r")
+                html.Div("← {{ (ex_vals[props.data.key] || {})[props.data.right] || props.data.data }}",
+                         classes="nf-ex-l")
 
         with CustomNode("decision"):
             with html.Div(classes=(
@@ -215,15 +225,13 @@ def _drawer(drawer: Any) -> None:
                       style=("n.kind === 'activity' ? 'font-weight:600; opacity:.75' : ''",))
     html.Div("Legend", classes="nf-h mt-2")
     with html.Div(classes="text-caption px-3", style="line-height: 1.9; opacity: .8;"):
-        html.Div("▭ action (SequentialOp)")
-        html.Div("▢ loop node (IterativeOp), ◇ loop test")
-        html.Div("dashed ▭ ⊕ injected by an optional model")
-        html.Div("red = next to execute (token)")
-        html.Div("green = executed this time step")
+        html.Div("▭ action · red = next (token) · green = ran this time step")
+        html.Div("( loop ◇ ) loop: pass · residuals; ◇ its test (hover: the test); ▾/▸ collapse")
         html.Div("● breakpoint — click the gutter left of a node")
-        html.Div("▾ / ▸ on a loop: collapse / expand its body")
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
-        html.Div("stripe colour: the op's region (multi-region), else its model", v_if="regions.length")
-        html.Div("multi-region: a box per solver, as it runs alone; shared loops and driver ops "
-                 "appear in every box; ⇄ coupling nodes joined by a line labelled with the data",
-                 v_if="regions.length")
+        html.Div("dashed ▭ ⊕ injected by an optional model")
+        with html.Div(v_if="regions.length"):
+            html.Div("▢ a box per solver (its region's colour), as it runs alone")
+            html.Div("loops and driver ops appear in every box: copies of one shared node")
+            html.Div("⇄ coupling node: hands its op the partner's data")
+            html.Div("- - coupling line: what each side sends (x = … →); red, moving: exchanging now")

@@ -11,7 +11,8 @@
   selection, breakpoints, pass, residuals). Between the boxes only the coupling nodes of one
   coupling loop are joined: one line with arrowheads at both ends, labelled with the exchanged
   data. A solver without regions is one tree, no boxes. There are no frames: a loop is its
-  control node (title, pass, residuals, test diamond) above its body, with a ``[true]`` edge
+  compact control node (one line: title, pass, residuals; the test diamond at its right end)
+  above its body, with a ``[true]`` edge
   into the first op, a dashed back edge from the last op and a ``[false]`` exit on the left.
 
 Node positions are absolute, except a loop's diamond, which sits in its control node. A
@@ -49,7 +50,7 @@ __all__ = ()
 #: loop's control node.
 _BOX_HEAD, _BOX_PAD = 30, 14
 _BOX_GAP = 200
-_CTRL_W, _CTRL_H = 400, 104
+_CTRL_W, _CTRL_H = 320, 36
 #: Space left of a loop's footprint for its ``[false]`` exit edge.
 _EXIT = 24
 #: Separates a shared op's id from the region of its copy (``time_loop@@a``).
@@ -179,7 +180,8 @@ def _loop_body(op: dict[str, Any], x: float, y: float, nodes: list[dict[str, Any
     dec_id = f"{op['id']}::test"
     nodes.append({
         "id": dec_id, "type": "decision", "parentNode": op["id"],
-        "position": {"x": _CTRL_W / 2 - _DIAMOND / 2, "y": _CTRL_H - _DIAMOND - 12},
+        # a compact control node: one line, the diamond at its right end
+        "position": {"x": _CTRL_W - _DIAMOND - 4, "y": (_CTRL_H - _DIAMOND) / 2},
         "data": {"loop": _ref(op)}, "width": _DIAMOND, "height": _DIAMOND,
         "draggable": False, "selectable": False, "connectable": False,
     })
@@ -188,7 +190,7 @@ def _loop_body(op: dict[str, Any], x: float, y: float, nodes: list[dict[str, Any
     _ops(op["children"], x, y + _CTRL_H + _GAP, op["_w"] - _LOOP_RIGHT, nodes, edges, collapsed)
     placed = {n["id"]: n for n in nodes}
     last = placed[op["children"][-1]["id"]]
-    right = max(last["position"]["x"] + last["width"], x + op["_ctrl_x"] + _CTRL_W / 2 + _DIAMOND / 2)
+    right = max(last["position"]["x"] + last["width"], x + op["_ctrl_x"] + _CTRL_W)
     edges.append(_edge(dec_id, op["children"][0]["id"], label="[true]"))
     edges.append(_edge(op["children"][-1]["id"], dec_id, sourceHandle="r", targetHandle="r",
                        pathOptions={"offset": max(x + op["_w"] - _LOOP_RIGHT / 2 - right, 12), "borderRadius": 8},
@@ -248,7 +250,7 @@ def _exec_view(ops: Optional[list[dict[str, Any]]], collapsed: frozenset[str]) -
         h = _solver(projected, x + _PAD, _TOP + _BOX_HEAD + _BOX_PAD, f"{_SEP}{region}", nodes, edges, collapsed)
         nodes[box] = _box(f"exec::box:{region}", region, region, x, _TOP, w, _BOX_HEAD + _BOX_PAD + h + _BOX_PAD)
         x += w + _BOX_GAP
-    edges += _between(ops, regions, {n["id"] for n in nodes})
+    edges += _between(ops, regions, {n["id"]: n for n in nodes}, nodes)
     return {"nodes": nodes, "edges": edges}
 
 
@@ -272,14 +274,17 @@ def _solver(ops: list[dict[str, Any]], x0: float, y0: float, suffix: str, nodes:
     return y + 26 - y0
 
 
-def _between(ops: list[dict[str, Any]], regions: list[str], placed: set[str]) -> list[dict[str, Any]]:
+def _between(ops: list[dict[str, Any]], regions: list[str], placed: dict[str, dict[str, Any]],
+             out_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The lines between the region boxes: per coupling loop, one between each pair of coupling
-    nodes (their regions' copies), arrowheads at both ends, labelled with the exchanged data."""
+    nodes (their regions' copies), arrowheads at both ends. Each line gets a key (``cl-<n>``,
+    its edge class) and a label node in its middle (``exlabel``) with the exchanged data, which
+    the UI fills with the values while the run steps (``ex_vals``) and highlights (``ex_hot``)."""
     out: list[dict[str, Any]] = []
     for op in ops:
         if op["kind"] != "loop":
             continue
-        out += _between(op["children"], regions, placed)
+        out += _between(op["children"], regions, placed, out_nodes)
         couplers = [c for c in op["children"] if c.get("exchange") and c.get("region") in regions]
         done: set[str] = set()
         for c in couplers:
@@ -290,23 +295,34 @@ def _between(ops: list[dict[str, Any]], regions: list[str], placed: set[str]) ->
             done.add(c["id"])
             left, right = sorted((c, partner), key=lambda n: regions.index(n["region"]))
             source, target = f"{left['id']}{_SEP}{left['region']}", f"{right['id']}{_SEP}{right['region']}"
-            if source in placed and target in placed:
-                out.append(_line(source, target, [*c["exchange"].get("data", ()),
-                                                  *(n for n in partner["exchange"].get("data", ())
-                                                    if n not in c["exchange"].get("data", ()))]))
+            if source not in placed or target not in placed:
+                continue
+            key = str(sum(1 for n in out_nodes if n["type"] == "exlabel"))
+            data = [*c["exchange"].get("data", ()), *(n for n in partner["exchange"].get("data", ())
+                                                      if n not in c["exchange"].get("data", ()))]
+            out.append(_line(source, target, key))
+            s, tgt = placed[source], placed[target]
+            x0, x1 = s["position"]["x"] + s["width"], tgt["position"]["x"]
+            out_nodes.append({
+                "id": f"exlabel:{key}", "type": "exlabel",
+                "position": {"x": x0 + 8, "y": s["position"]["y"] - 30},
+                "data": {"key": key, "data": ", ".join(data), "left": left["region"], "right": right["region"],
+                         "nodes": [left["id"], right["id"]]},
+                "width": max(x1 - x0 - 16, 40), "height": 28,
+                "style": {"width": f"{max(x1 - x0 - 16, 40)}px", "height": "28px"},
+                "draggable": False, "selectable": False, "connectable": False,
+            })
     return out
 
 
-def _line(source: str, target: str, data: list[str]) -> dict[str, Any]:
-    """A coupling line between two coupling nodes, arrowheads at both ends."""
+def _line(source: str, target: str, key: str) -> dict[str, Any]:
+    """A coupling line between two coupling nodes, arrowheads at both ends (class ``cl-<key>``)."""
     color = "#6741d9"
     arrow = {"type": "arrowclosed", "color": color}
-    return _edge(source, target, type="straight", label=", ".join(data),
-                 sourceHandle="r", targetHandle="lt", labelShowBg=False,
+    return _edge(source, target, type="straight",
+                 sourceHandle="r", targetHandle="lt",
                  style={"stroke": color, "strokeWidth": 2, "strokeDasharray": "7 5"},
-                 labelStyle={"fill": color, "fontWeight": 700, "fontSize": "14px",
-                             "paintOrder": "stroke", "stroke": "white", "strokeWidth": 5},
-                 markerStart=arrow, markerEnd=arrow, **{"class": "nf-couple"})
+                 markerStart=arrow, markerEnd=arrow, **{"class": f"nf-couple cl-{key}"})
 
 
 # -- initialization activity ------------------------------------------------------------

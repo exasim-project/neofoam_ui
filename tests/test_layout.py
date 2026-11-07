@@ -144,14 +144,20 @@ def test_each_region_box_is_the_full_solver_with_copies_of_the_shared_loops():
     # nothing of the other region in a box
     assert not [i for i in nodes if i.endswith("@@a") and ("b.solve" in i or "couple_b" in i)]
     # between the boxes only the line between the coupling nodes, both ways, labelled
-    couple = [e for e in flow["edges"] if e.get("class") == "nf-couple"]
-    assert [(e["source"], e["target"], e["label"]) for e in couple] == [
-        ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b", "x")]
+    couple = [e for e in flow["edges"] if "nf-couple" in e.get("class", "")]
+    assert [(e["source"], e["target"], e["class"]) for e in couple] == [
+        ("time/couple/couple_a.x@@a", "time/couple/couple_b.x@@b", "nf-couple cl-0")]
     assert couple[0]["markerStart"] and couple[0]["markerEnd"]
-    a_box = {i for i in nodes if i.endswith("@@a")}
+    # its data label sits between the two coupling nodes, keyed for the values and the highlight
+    label = nodes["exlabel:0"]
+    assert label["data"] == {"key": "0", "data": "x", "left": "a", "right": "b",
+                             "nodes": ["time/couple/couple_a.x", "time/couple/couple_b.x"]}
+    a_right = nodes["time/couple/couple_a.x@@a"]["position"]["x"] + nodes["time/couple/couple_a.x@@a"]["width"]
+    assert a_right < label["position"]["x"] < nodes["time/couple/couple_b.x@@b"]["position"]["x"]
+    a_box = {i for i in nodes if i.endswith("@@a")}  # (the label node belongs to no box)
     b_box = {i for i in nodes if i.endswith("@@b")}
     crossing = [e for e in flow["edges"] if (e["source"].split("::")[0] in a_box)
-                != (e["target"].split("::")[0] in a_box) and e.get("class") != "nf-couple"]
+                != (e["target"].split("::")[0] in a_box) and "nf-couple" not in e.get("class", "")]
     assert not crossing and a_box and b_box
     # the coupling nodes face each other
     assert nodes["time/couple/couple_a.x@@a"]["position"]["y"] == nodes["time/couple/couple_b.x@@b"]["position"]["y"]
@@ -180,7 +186,7 @@ def test_a_nested_coupling_loop_is_projected_into_each_region_s_box():
     nodes = {n["id"] for n in flow["nodes"]}
 
     assert {"outer@@a", "outer/inner@@a", "outer@@c"} <= nodes and "outer/inner@@c" not in nodes
-    couple = {(e["source"], e["target"]) for e in flow["edges"] if e.get("class") == "nf-couple"}
+    couple = {(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")}
     # boxes in order of first appearance: b (outer's coupling node), a, c; lines run left to right
     assert couple == {("outer/couple_b.x@@b", "outer/couple_c.x@@c"),
                       ("outer/inner/couple_b.x@@b", "outer/inner/couple_a.x@@a")}
@@ -191,7 +197,7 @@ def test_a_collapsed_loop_hides_the_exchange_into_it():
                  collapsed=frozenset({"loop"}))
     assert {n["id"] for n in flow["nodes"]} >= {"loop@@a", "loop@@b"}
 
-    assert not [e for e in flow["edges"] if e.get("class") == "nf-couple"]
+    assert not [e for e in flow["edges"] if "nf-couple" in e.get("class", "")]
 
 
 def test_the_inspector_names_a_coupling_node_s_exchange():
@@ -269,3 +275,19 @@ def test_the_init_view_draws_known_regions_before_they_initialize():
     assert nodes["init::box:a"]["data"]["label"] == "a"
     assert nodes["init::box:b"]["data"]["label"] == "b · not initialized yet"
     assert nodes["init::box:a"]["position"]["x"] < nodes["init::box:b"]["position"]["x"]
+
+
+def test_the_dag_pane_shows_what_a_coupling_node_hands_over_and_heats_its_line():
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
+
+    state = SimpleNamespace(ex_vals={}, ex_hot=[])
+    pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"c/couple_b.x": "0", "c/couple_a.x": "0"})
+    exchanged = lambda msg: _DagPane._exchanged(pane, msg)  # noqa: E731
+    exchanged({"node": "c/couple_b.x", "exchange": {"from": "a", "to": "b", "data": {"x": "1.5"}}})
+    assert state.ex_hot == ["0"] and state.ex_vals == {"0": {"a": "x = 1.5"}}
+    exchanged({"node": "c/couple_a.x", "exchange": {"from": "b", "to": "a", "data": {"x": "0.75"}}})
+    assert state.ex_vals == {"0": {"a": "x = 1.5", "b": "x = 0.75"}}
+    exchanged({"node": "c/a.solve"})
+    assert state.ex_hot == []

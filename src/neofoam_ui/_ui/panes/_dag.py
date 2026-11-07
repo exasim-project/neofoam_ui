@@ -50,6 +50,9 @@ class _DagPane(BasePane):
         self._regions: list[str] = []
         #: The node drawn for each op (a shared op in region boxes: its first copy).
         self._node_of: dict[str, str] = {}
+        #: The coupling line of each coupling node (its key), and the line's two regions.
+        self._line_of: dict[str, str] = {}
+        self._line_sides: dict[str, tuple[str, str]] = {}
         #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
         self.viewers = 0
         self._watching: Optional[bool] = None
@@ -72,6 +75,7 @@ class _DagPane(BasePane):
         self._shown = frozenset()
         self._phase = self._drawn = None
         s.dag_view = "init"
+        s.ex_vals, s.ex_hot = {}, []
         s.heat_on = bool(s.heat_on)
         s.heat = {}
         s.heat_ms = {}
@@ -143,6 +147,8 @@ class _DagPane(BasePane):
         prefix = f"[t={t:.4g}] " if isinstance(t, (int, float)) else ""
         visited = self._visited
         self._follow_phase("init" if msg["kind"] == "init" else "exec")
+        if msg["kind"] == "exec":
+            self._exchanged(msg)
         if msg["kind"] == "init":
             console(f"{prefix}init ▶ {msg['name']}  ({msg['ms']:.2f} ms)", "init")
             visited.append(msg["node"])
@@ -170,6 +176,10 @@ class _DagPane(BasePane):
         s, ev = self.app.state, msg["event"]
         if ev["kind"] in ("init", "exec", "test"):
             self._follow_phase("init" if ev["kind"] == "init" else "exec")
+        # the line of a coupling node next to run is hot; any other pause cools it
+        key = self._line_of.get(ev["node"] or "") if ev["kind"] == "exec" else None
+        if (s.ex_hot or []) != ([key] if key else []):
+            s.ex_hot = [key] if key else []
         self._refresh_heat()
         self._refresh_highlight()
         if s.follow and ev["node"]:
@@ -188,9 +198,14 @@ class _DagPane(BasePane):
         view = self._drawn = "init" if s.dag_view == "init" else "exec"
         graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed, view,
                             tuple(self._regions))
-        self._node_of = {}
+        self._node_of, self._line_of, self._line_sides = {}, {}, {}
         for n in graph["nodes"]:
             self._node_of.setdefault((n.get("data") or {}).get("ref") or n["id"], n["id"])
+            if n["type"] == "exlabel":
+                data = n["data"]
+                self._line_sides[data["key"]] = (data["left"], data["right"])
+                for ref in data["nodes"]:
+                    self._line_of[ref] = data["key"]
         self.editor.graph = graph
         if fit:
             self.editor.fit_view()
@@ -204,6 +219,21 @@ class _DagPane(BasePane):
         if self.app.state.dag_view != phase:
             self.app.state.dag_view = phase
             self.rebuild()
+
+    def _exchanged(self, msg: dict[str, Any]) -> None:
+        """A coupling node ran: its line is hot, and shows what its partner sends (``exchange``)."""
+        s = self.app.state
+        key = self._line_of.get(msg["node"])
+        hot = [key] if key else []
+        if (s.ex_hot or []) != hot:
+            s.ex_hot = hot
+        exchange = msg.get("exchange")
+        if key is None or not exchange:
+            return
+        text = " ".join(f"{name} = {value}" for name, value in exchange.get("data", {}).items())
+        vals = dict((s.ex_vals or {}).get(key, {}))
+        vals[str(exchange.get("from"))] = text
+        s.ex_vals = {**(s.ex_vals or {}), key: vals}
 
     def _view_changed(self) -> None:
         if self.editor is not None and self.app.state.dag_view != self._drawn:

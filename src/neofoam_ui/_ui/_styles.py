@@ -112,9 +112,32 @@ _CSS = r"""
 .nf-box-head { position: absolute; left: 10px; top: 4px; font-size: 12px; font-weight: 600;
   display: inline-flex; align-items: center; gap: 5px; }
 .vue-flow__node-region { z-index: 0 !important; pointer-events: none; }
-.nf-loop.control { background: #f3f6ff; border-radius: 12px; }
-.nf-loop.control .nf-loop-title { right: 10px; white-space: normal; line-height: 1.35; }
-.nf-loop.control .nf-loop-test { top: 30px; left: 10px; }
+.nf-loop.control { background: #f3f6ff; border-radius: 18px; }
+.nf-loop.control .nf-loop-title { left: 10px; right: 44px; top: 9px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; opacity: .9; }
+.nf-exlabel { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; font: 600 11px ui-monospace, Menlo, monospace; color: #6741d9; line-height: 13px;
+  pointer-events: none; }
+.nf-exlabel.hot { color: #e0362c; font-size: 12px; }
+.vue-flow__node-exlabel { pointer-events: none; }
+.hot-0 .vue-flow__edge.cl-0 path.vue-flow__edge-path,
+.hot-1 .vue-flow__edge.cl-1 path.vue-flow__edge-path,
+.hot-2 .vue-flow__edge.cl-2 path.vue-flow__edge-path,
+.hot-3 .vue-flow__edge.cl-3 path.vue-flow__edge-path,
+.hot-4 .vue-flow__edge.cl-4 path.vue-flow__edge-path,
+.hot-5 .vue-flow__edge.cl-5 path.vue-flow__edge-path,
+.hot-6 .vue-flow__edge.cl-6 path.vue-flow__edge-path,
+.hot-7 .vue-flow__edge.cl-7 path.vue-flow__edge-path,
+.hot-8 .vue-flow__edge.cl-8 path.vue-flow__edge-path,
+.hot-9 .vue-flow__edge.cl-9 path.vue-flow__edge-path,
+.hot-10 .vue-flow__edge.cl-10 path.vue-flow__edge-path,
+.hot-11 .vue-flow__edge.cl-11 path.vue-flow__edge-path,
+.hot-12 .vue-flow__edge.cl-12 path.vue-flow__edge-path,
+.hot-13 .vue-flow__edge.cl-13 path.vue-flow__edge-path,
+.hot-14 .vue-flow__edge.cl-14 path.vue-flow__edge-path,
+.hot-15 .vue-flow__edge.cl-15 path.vue-flow__edge-path {
+  stroke: #e0362c !important; stroke-width: 3.5 !important; animation: nfdash .5s linear infinite; }
+@keyframes nfdash { to { stroke-dashoffset: -24; } }
 .nf-action.cpl { border-style: dashed; border-color: #6741d9; background: #f4f0ff; }
 .nf-cpl { position: absolute; top: -9px; right: 10px; font-size: 10px; background: #6741d9; color: #fff;
   border-radius: 8px; padding: 0 6px; line-height: 16px; white-space: nowrap; }

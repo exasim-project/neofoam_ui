@@ -143,7 +143,11 @@ class _Stepper:
         if node is None:
             return
         ms = (time.perf_counter() - self.t0) * 1e3
-        self.s.record("exec", node, self.names[node], ms, stack=tuple(self.stack))
+        extra = {}
+        exchange = _exchanged(op)
+        if exchange:
+            extra["exchange"] = exchange
+        self.s.record("exec", node, self.names[node], ms, stack=tuple(self.stack), **extra)
 
     def before_loop_test(self, op: Any, ctx: Any, iteration: int) -> None:
         self.test_node = None
@@ -193,6 +197,38 @@ class _Stepper:
               "group_columns": [], "groups": [[]],
               "values": [[float(outcome.passes), 1.0 if outcome.converged else 0.0,
                           *(float(v) for v in residuals.values())]]})
+
+
+def _exchanged(op: Any) -> Optional[dict[str, Any]]:
+    """After a NeoFOAM coupling node ran: what its partner sends now, ``{"from", "to", "data"}``.
+
+    Read through the partner side's public ``send()`` (no framework hook gives the data the node
+    handed over): for a serial coupling's second side this is that data; otherwise it is the
+    partner's current data before relaxation and mapping. Each value summarised as text.
+    ``None`` for any other op, or when the data cannot be read.
+    """
+    func = getattr(getattr(op, "func", None), "func", None)
+    sides = getattr(getattr(func, "coupling", None), "sides", None)
+    index = getattr(func, "index", None)
+    if not isinstance(sides, list) or len(sides) != 2 or index not in (0, 1):
+        return None
+    side, partner = sides[index], sides[1 - index]
+    try:
+        sent = partner.side.send()
+        data = {str(name): _summary(getattr(sent, name)) for name in getattr(side, "kinds", {}) or ()}
+    except Exception:  # noqa: BLE001 - a view must never break the run
+        return None
+    return {"from": getattr(partner, "region", None), "to": getattr(side, "region", None), "data": data}
+
+
+def _summary(value: Any) -> str:
+    """One number as ``1.5``, an array as its mean and size."""
+    import numpy as np  # noqa: PLC0415
+
+    array = np.asarray(value, dtype=float)
+    if array.size == 1:
+        return f"{float(array.ravel()[0]):.4g}"
+    return f"mean {float(array.mean()):.4g} (n={array.size})"
 
 
 def _init_name(step: Any, name: Optional[str] = None) -> str:

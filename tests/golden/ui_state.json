@@ -12,6 +12,8 @@
   "dag_view": "init",
   "delay_ms": 0.0,
   "depth": 0,
+  "ex_hot": [],
+  "ex_vals": {},
   "failed": false,
   "fields_rows": [],
   "finished": false,
