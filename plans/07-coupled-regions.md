@@ -15,7 +15,7 @@ To open a case, run `scripts/probe.sh <case>`, where `<case>` is pair, chain, â€
 ## Framework design as it stands (NeoFOAM, `feat/coupling-decorators`)
 
 - A BC declares its side with `@coupled(field=...)` (`@coupled.sends` / `.receives` / `.coordinates`, one pydantic model per direction) and registers only its coupling node `<region>.couple_<patch>`. The case's `exchanges:` pairs the nodes and picks the mapping; the framework checks the models crosswise, puts `map_<exchange>_to_<region>` (a `MappingNode`) before each coupling node and builds one `CouplingOp` per group of exchanges sharing a region.
-- Read API the adapter uses: a coupling node's `CouplingNode.side` / `.partner` / `.exchange` (`ExchangeSide`: `region`, `patch`, `op`, `receives`, `mapped`, `points`; `Exchange.mapping.kind`), and the observer hook `coupling_exchanged(coupling, side, data)`. The adapter hides the mapping nodes (the chip stands for them).
+- Read API the adapter uses: a coupling node's `CouplingNode.side` / `.partner` / `.exchange` (`ExchangeSide`: `region`, `patch`, `op`, `receives`, `mapped`, `points`; `Exchange.mapping.kind`), and the observer hook `coupling_exchanged(coupling, side, data)`. The mapping node belongs to the receiving region; in the stepper each mapping op is its own chip on the coupling line (one per way, next to the coupling node it feeds): token, breakpoints and selection sit on it.
 
 ## Framework design before `feat/coupling-decorators`
 

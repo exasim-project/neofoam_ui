@@ -10,15 +10,12 @@ from neofoam_ui.engine import Exchange, Op, PointMapping
 __all__ = ()
 
 
-def _is_mapping_node(op: Any) -> bool:
-    """A NeoFOAM mapping node (``map_<exchange>_to_<region>``): the coupling line's mapping chip
-    stands for it, so the stepper does not show it as a node of its own."""
-    return type(getattr(getattr(op, "func", None), "func", None)).__name__ == "MappingNode"
-
-
-def _visible(ops: list[Any]) -> list[Any]:
-    """The ops the stepper shows (all but the mapping nodes)."""
-    return [op for op in ops if not _is_mapping_node(op)]
+def _maps(func: Any) -> Optional[str]:
+    """A NeoFOAM mapping node's (``MappingNode``) coupling node: the name of the node it feeds."""
+    if type(func).__name__ != "MappingNode":
+        return None
+    node = getattr(getattr(func, "side", None), "node", None)
+    return None if node is None else str(node)
 
 
 def _convert(op: Any, injected: dict[int, str]) -> Op:
@@ -43,9 +40,9 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
             test = f"{predicate.__name__}()"
         else:
             test = type(predicate).__name__ + "()"
-        return Op(name, "loop", op.func, [_convert(c, injected) for c in _visible(op.sub_operations)],
+        return Op(name, "loop", op.func, [_convert(c, injected) for c in op.sub_operations],
                   test=test, **common)
-    return Op(name, "action", op.run, guard=guard, exchange=_exchange(target), **common)
+    return Op(name, "action", op.run, guard=guard, exchange=_exchange(target), maps=_maps(target), **common)
 
 
 def _exchange(func: Any) -> Optional[Exchange]:
@@ -55,6 +52,8 @@ def _exchange(func: Any) -> Optional[Exchange]:
     ``exchange`` (NeoFOAM's public read API); ``partner.op`` is the op the partner's node runs
     before, the data the fields this side receives. ``None`` for any other op.
     """
+    if type(func).__name__ != "CouplingNode":  # (a MappingNode has a side and partner too)
+        return None
     side, partner = getattr(func, "side", None), getattr(func, "partner", None)
     source = getattr(partner, "op", None)
     if side is None or not source:

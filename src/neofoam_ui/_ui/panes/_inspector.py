@@ -36,6 +36,9 @@ def _inspector_model(model: _RunModel, sel: Optional[str], bps: Iterable[str]) -
             rows.append({"k": "guard", "v": f"[{info['guard']}]"})
         if info.get("injected_by"):
             rows.append({"k": "injected by", "v": f"⊕ model {info['injected_by']}"})
+        if info.get("maps"):
+            rows.append({"k": "mapping node", "v": f"maps the partner's data onto the points of "
+                         f"{info['maps']}, which runs next"})
         if info.get("exchange"):
             ex = info["exchange"]
             rows.append({"k": "exchange", "v": f"{', '.join(ex.get('data') or ())} ← "

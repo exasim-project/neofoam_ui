@@ -75,6 +75,9 @@ class Op:
     region: Optional[str] = None
     #: A coupling node's data exchange (``None``: not a coupling node).
     exchange: Optional[Exchange] = None
+    #: A mapping node: the name of the coupling node it maps the partner's data for (it runs
+    #: right before it). Drawn on the coupling line, not in a region box.
+    maps: Optional[str] = None
 
 
 @dataclass

@@ -8,7 +8,7 @@ from typing import Any, Callable, Iterator, Optional
 import numpy as np
 
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase
-from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source, _visible
+from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source
 from neofoam_ui.engine import Event, InitStep, Op, ProgramContext, ThreadedProgram
 from neofoam_ui.engine._wire import _init_dict
 
@@ -103,12 +103,12 @@ class _Stepper:
 
     def operations(self, operations: Any) -> None:
         injected: dict[int, str] = {}
-        ops = [_convert(op, injected) for op in _visible(operations.ops)]
+        ops = [_convert(op, injected) for op in operations.ops]
         self.s.set_ops(ops)  # assigns the ids
         self.nodes.clear()
 
         def index(raw: list[Any], conv: list[Op], parent: str) -> None:
-            for r, c in zip(_visible(raw), conv):
+            for r, c in zip(raw, conv):
                 self.nodes.setdefault(id(r), []).append((parent, c.id))
                 self.names[c.id] = c.name
                 if c.kind == "loop":
@@ -238,6 +238,8 @@ def _exchanged(op: Any, handed: dict[int, Any]) -> Optional[dict[str, Any]]:
     text. ``None`` for any other op, or when nothing was reported.
     """
     func = getattr(getattr(op, "func", None), "func", None)
+    if type(func).__name__ != "CouplingNode":
+        return None
     side, partner = getattr(func, "side", None), getattr(func, "partner", None)
     if side is None or partner is None or id(side) not in handed:
         return None

@@ -224,7 +224,7 @@ class _DagPane(BasePane):
             if n["type"] == "exmap":
                 data = n["data"]
                 self._line_sides[data["key"]] = (data["left"], data["right"])
-                for ref in data["nodes"]:
+                for ref in [*data["nodes"], *([data["ref"]] if data.get("ref") else [])]:
                     self._line_of[ref] = data["key"]
         self.editor.graph = graph
         if fit:

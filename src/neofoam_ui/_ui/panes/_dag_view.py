@@ -110,13 +110,25 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
             # the mapping kind, lit while the exchange runs. Hover (a tap focuses it) shows the
             # rest in a popover, live: each side's points and, per way, what the sending side
             # sends now, else the fields, marked mapped / as is / ? (see _styles)
-            with html.Div(classes=("['nf-exmap', { hot: ex_hot.includes(props.data.key), unk: !props.data.kind }]",),
+            # A solver's mapping op (``data.ref``) is this chip: the token, a breakpoint and the
+            # selection sit on it; ◂ / ▸ points at the coupling node it feeds, which runs next.
+            with html.Div(classes=("['nf-exmap', { hot: ex_hot.includes(props.data.key), unk: !props.data.kind,"
+                                   " cur: props.data.ref && props.data.ref === cur_node && cur_kind !== 'test',"
+                                   " sel: props.data.ref && props.data.ref === selected,"
+                                   " done: props.data.ref && visited.includes(props.data.ref)"
+                                   " && props.data.ref !== cur_node }]",),
                           tabindex="0"):
                 Handle(position="left", type="target", id="lt")
                 Handle(position="right", type="source", id="r")
+                html.Span(classes=("['nf-bp', { on: bps.includes(props.data.ref) }]",), v_if="props.data.ref",
+                          raw_attrs=['@click.stop="trigger(\'nf_toggle_bp\', [props.data.ref])"'])
+                html.Span("◂", classes="nf-map-into", v_if="props.data.into === 'left'")
                 html.Span("≈", classes="nf-map-icon")
                 html.Span("{{ props.data.kind || '?' }}", classes="nf-map-kind")
+                html.Span("▸", classes="nf-map-into", v_if="props.data.into === 'right'")
                 with html.Div(classes="nf-map-tip"):
+                    html.Div("{{ props.data.number }} {{ props.data.label }} · runs before the coupling node it"
+                             " feeds", classes="nf-map-op", v_if="props.data.ref")
                     with html.Div(classes="nf-map-head"):
                         html.Span("⇆ mapping", classes="nf-map-title")
                         html.Span("{{ props.data.kind || 'unknown: the solver does not tell' }}",
@@ -262,6 +274,8 @@ def _drawer(drawer: Any) -> None:
             html.Div("▢ a box per solver (its region's colour), as it runs alone")
             html.Div("loops and driver ops appear in every box: copies of one shared node")
             html.Div("⇄ coupling node: hands its op the partner's data")
+            html.Div("◂ ≈ ▸ a mapping node per way, next to the coupling node it feeds (runs right before it);"
+                     " step onto it, put a breakpoint on it")
             html.Div("- - coupling line, through the interface's ≈ mapping chip (its kind; hover or tap:"
                      " how the data goes onto the partner's points, mapped or as is, the points per side,"
                      " what each side sends); red, moving: exchanging now")

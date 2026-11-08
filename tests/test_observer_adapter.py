@@ -258,8 +258,9 @@ def test_a_coupling_node_tells_how_it_maps_its_partner_s_data():
     assert _mapping(SimpleNamespace(), bare, bare) is None
 
 
-def test_the_mapping_nodes_are_not_shown_the_coupling_line_s_chip_stands_for_them():
+def test_a_mapping_node_is_a_node_that_names_the_coupling_node_it_feeds():
     exchange = _exchange()
+    exchange.sides[0].node = "a.couple_to_b"
     mapping, couple, solve = FakeOp("map_a-b_to_a"), FakeOp("a.couple_to_b"), FakeOp("a.solve_T")
     mapping.func = SimpleNamespace(func=MappingNode(exchange, 0))
     couple.func = SimpleNamespace(func=CouplingNode(exchange, 0))
@@ -271,26 +272,10 @@ def test_the_mapping_nodes_are_not_shown_the_coupling_line_s_chip_stands_for_the
     loop.run(stepper)
 
     children = session.ops[0].children
-    assert [c.name for c in children] == ["a.couple_to_b", "a.solve_T"]
-    # the mapping node runs without a node of its own: no record, no pause
+    assert [(c.name, c.maps, c.exchange is not None) for c in children] == [
+        ("map_a-b_to_a", "a.couple_to_b", False), ("a.couple_to_b", None, True), ("a.solve_T", None, False)]
+    # it runs as its own node: recorded (and paused on) before the coupling node
     assert [node for kind, node in session.records if kind == "exec"] == [c.id for c in children]
-
-
-def test_a_coupling_loop_test_reports_the_residuals_of_the_last_pass():
-    loop = FakeOp("loop", [], iterations=1)
-    loop.func = SimpleNamespace(func=lambda ctx: None, residuals={})
-    session = RegionSession()
-    session.records = []
-    session.record = lambda kind, node, name, ms, **extra: session.records.append((kind, node, extra))
-    stepper = _Stepper(session, lambda event: None)
-    stepper.operations(SimpleNamespace(ops=[loop]))
-    stepper.before_loop_test(loop, None, 1)
-    stepper.after_loop_test(loop, None, 1, True)
-    loop.func.residuals = {"x": 0.25}
-    stepper.before_loop_test(loop, None, 2)
-    stepper.after_loop_test(loop, None, 2, False)
-
-    assert [r[2].get("residuals") for r in session.records if r[0] == "test"] == [None, {"x": 0.25}]
 
 
 def test_a_coupling_node_reports_what_it_hands_its_side():

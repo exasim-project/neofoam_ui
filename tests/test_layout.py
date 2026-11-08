@@ -464,3 +464,45 @@ def test_the_inspector_shows_a_coupling_node_s_mapping():
     assert rows["mapping"] == "nearest-neighbor, 3 → 4 points; mapped T, as is h"
     rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_b.q", [])["rows"]}
     assert "mapping" not in rows
+
+
+def _pair_with_mapping_ops():
+    """The pair as NeoFOAM steps it: before each coupling node the mapping op that feeds it."""
+    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
+
+    body = []
+    for r, partner in (("a", "b"), ("b", "a")):
+        body += [Op(f"map_a-b_to_{r}", "action", lambda ctx: None, region=r, maps=f"{r}.couple"),
+                 Op(f"{r}.couple", "action", lambda ctx: None, region=r,
+                    exchange=Exchange(f"{partner}.solve", ("x",), partner)),
+                 Op(f"{r}.solve", "action", lambda ctx: None, region=r)]
+    return [Op("loop", "loop", lambda ctx: False, body)]
+
+
+def test_a_mapping_op_is_its_own_chip_on_the_line_next_to_the_coupling_node_it_feeds():
+    flow = _flow(_pair_with_mapping_ops())
+    nodes = {n["id"]: n for n in flow["nodes"]}
+
+    # not in a box (no copy), and the box rows hold no gap for it
+    assert not [i for i in nodes if i.startswith("loop/map_") and "@@" in i]
+    for r in "ab":
+        couple, solve = nodes[f"loop/{r}.couple@@{r}"], nodes[f"loop/{r}.solve@@{r}"]
+        assert couple["position"]["y"] < solve["position"]["y"]
+    # one chip per way, the mapping op's own node (token, breakpoint, selection bind to it)
+    into_a, into_b = nodes["loop/map_a-b_to_a"], nodes["loop/map_a-b_to_b"]
+    assert (into_a["type"], into_a["data"]["ref"], into_a["data"]["into"]) == ("exmap", "loop/map_a-b_to_a", "left")
+    assert (into_b["data"]["ref"], into_b["data"]["into"], into_b["data"]["number"]) == (
+        "loop/map_a-b_to_b", "right", "1.4")
+    assert into_a["data"]["key"] == into_b["data"]["key"] == "0"
+    # in the gap, each next to the coupling node it feeds: a ◂ [→ a] ── [→ b] ▸ b
+    a_right = nodes["exec::box:a"]["position"]["x"] + nodes["exec::box:a"]["width"]
+    b_left = nodes["exec::box:b"]["position"]["x"]
+    assert a_right < into_a["position"]["x"] < into_a["position"]["x"] + into_a["width"] \
+        < into_b["position"]["x"] < into_b["position"]["x"] + into_b["width"] < b_left
+    # one line through both chips, arrowheads at the coupling nodes only
+    couple = [e for e in flow["edges"] if "nf-couple" in e.get("class", "")]
+    assert [(e["source"], e["target"]) for e in couple] == [
+        ("loop/a.couple@@a", "loop/map_a-b_to_a"), ("loop/map_a-b_to_a", "loop/map_a-b_to_b"),
+        ("loop/map_a-b_to_b", "loop/b.couple@@b")]
+    assert couple[0]["markerStart"] and "markerEnd" not in couple[0]
+    assert "markerStart" not in couple[1] and "markerEnd" not in couple[1] and couple[2]["markerEnd"]
