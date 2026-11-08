@@ -14,9 +14,11 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+from neofoam_ui import catalyst
 from neofoam_ui.engine._protocols import RenderBackend, Renderer
 from neofoam_ui.engine._regions import _regions_of
 from neofoam_ui.engine._tracking import _fingerprint
+from neofoam_ui.geometry import cell_count
 
 if TYPE_CHECKING:
     from neofoam_ui.engine._session import Session
@@ -30,23 +32,18 @@ _DESCRIBE_EVERY = 5.0
 class _CatalystBackend:
     """The default :class:`RenderBackend`: Catalyst 2 + ParaView, configured by the environment.
 
-    :mod:`neofoam_ui.catalyst` is looked up at each call (it is imported on the first frame)."""
+    :mod:`neofoam_ui.catalyst` is looked up at each call (Catalyst itself is loaded by the first
+    :class:`~neofoam_ui.catalyst.InSitu`)."""
 
     def unavailable(self) -> Optional[str]:
-        from neofoam_ui import catalyst  # noqa: PLC0415
-
         if catalyst.configured():
             return None
         return f"in-situ view off: set {catalyst.ENV} to a Catalyst + ParaView install"
 
     def publishes_all(self) -> bool:
-        from neofoam_ui import catalyst  # noqa: PLC0415
-
         return catalyst.custom_script()
 
     def create(self) -> Renderer:
-        from neofoam_ui import catalyst  # noqa: PLC0415
-
         return catalyst.InSitu()
 
 
@@ -111,8 +108,6 @@ class _FieldView:
             geom = self._geometry[region.name] = geom or False
         if not geom:
             return None
-        from neofoam_ui.geometry import cell_count  # noqa: PLC0415
-
         n = cell_count(geom)
         fields = {k: np.asarray(v) for k, v in region.fields(s.ctx).items()}
         return region.name, geom, {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
