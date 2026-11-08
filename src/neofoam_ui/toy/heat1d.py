@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from neofoam_ui.engine import InitStep, Op
+from neofoam_ui.engine import InitStep, Op, topological_order
 
 __all__ = ["Heat1D", "Heat1DContext", "run_plain"]
 
@@ -224,8 +224,6 @@ def _post_process(ctx: Heat1DContext) -> None:
 
 def run_plain(solver: Heat1D | None = None) -> Heat1DContext:
     """Run without the stepper — the reference for equivalence tests."""
-    from neofoam_ui.engine import topological_order  # noqa: PLC0415
-
     solver = solver or Heat1D()
     results: dict[str, Any] = {}
     for step in topological_order(solver.init_steps()):
