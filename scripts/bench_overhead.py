@@ -34,6 +34,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from trame.app import get_server
+
 HERE = Path(__file__).resolve().parents[1]
 NEOFOAM = Path(os.environ.get("NEOFOAM_DIR", Path.home() / "libsAndApps" / "NeoFOAM"))
 SPEC = "neofoam_ui.adapters.neofoam:incompressible_fluid"
@@ -108,9 +110,7 @@ def run_plain(case: Path, python: str, np_: int) -> dict:
 
 
 async def _run_ui(case: Path, python: str, np_: int, mode: str, catalyst: str | None) -> dict:
-    from trame.app import get_server  # noqa: PLC0415
-
-    from neofoam_ui.app import StepperApp  # noqa: PLC0415
+    from neofoam_ui.app import StepperApp  # noqa: PLC0415 - from --src, put on sys.path in main()
 
     server = get_server(f"bench-{mode}-{time.monotonic_ns()}", client_type="vue3")
     app = StepperApp(server, SPEC, case=str(case), python=python, np=np_,
