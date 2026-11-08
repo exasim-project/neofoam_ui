@@ -139,6 +139,15 @@ class StepperApp:
         s.cur_node = None
         s.cur_kind = None
         s.depth = 0
+        # every region's token (a multi-region solver; else the one): the actions / init steps
+        # and the loop tests paused before, the nodes of the regions waiting for a partner,
+        # what each waits for, and the regions done
+        s.cur_nodes = []
+        s.cur_tests = []
+        s.wait_nodes = []
+        s.waiting = {}
+        s.done_regions = []
+        self._region_events: dict[str, dict[str, Any]] = {}
         s.active_loops = []
         s.loop_iter = {}
         s.status = "starting solver worker…"
@@ -208,7 +217,7 @@ class StepperApp:
     def _on_running(self, msg: dict[str, Any]) -> None:
         self._set_event(msg["event"])
         self.state.running = True
-        self.state.status = f"running · {self.model.event_label(msg['event'])}"
+        self.state.status = f"running · {self._label(msg['event'])}"
 
     def _on_error(self, msg: dict[str, Any]) -> None:
         self.console(f"✖ error in {self.name(msg.get('node'))}", "err")
@@ -239,28 +248,75 @@ class StepperApp:
             s.status = "finished"
             self.console("■ run finished", "")
         else:
-            s.status = f"paused before {self.model.event_label(ev)}"
+            s.status = f"paused before {self._label(ev)}"
+
+    def _regions_of(self, ev: dict[str, Any]) -> list[dict[str, Any]]:
+        """Where each region is (a multi-region solver; ``[]`` for one region): a paused message
+        tells all of them, a running token moves its own region's."""
+        if ev.get("regions"):
+            self._region_events = {r["region"]: r for r in ev["regions"]}
+        elif ev.get("region") is not None and ev["region"] in self._region_events:
+            self._region_events[ev["region"]] = {"region": ev["region"], "state": "running", "event": ev,
+                                                 "waiting_for": None}
+        elif ev.get("region") is None:  # one region (or the run's end)
+            self._region_events = {}
+        return list(self._region_events.values())
+
+    def _label(self, ev: dict[str, Any]) -> str:
+        """The status line's event: per region (``a: ▶ solve · b: waiting for a``) or the one."""
+        regions = self._region_events if ev.get("regions") or ev.get("region") else {}
+        if not regions:
+            return self.model.event_label(ev)
+        parts = []
+        for r in regions.values():
+            if r["state"] == "waiting":
+                parts.append(f"{r['region']}: waiting for {r.get('waiting_for') or 'a partner'}")
+            elif r["state"] in ("done", "failed"):
+                parts.append(f"{r['region']}: {r['state']}")
+            elif r.get("event"):
+                parts.append(f"{r['region']}: {self.model.event_label(r['event'])}")
+        return " · ".join(parts)
 
     def _set_event(self, ev: dict[str, Any]) -> None:
-        """Where the run is: the token, the active loops, the call stack."""
+        """Where the run is: the tokens (one per region), the active loops, the call stack."""
         s, name = self.state, self.name
         s.cur_node = ev["node"] if ev["kind"] != "end" else "end"
         s.cur_kind = ev["kind"]
         s.depth = ev["depth"]
-        s.active_loops = [lid for lid, _ in ev["stack"]] + ([ev["node"]] if ev["kind"] == "test" else [])
+        regions = self._regions_of(ev)
+        here = [r["event"] for r in regions if r["state"] in ("paused", "running") and r.get("event")] \
+            if regions else ([ev] if ev["kind"] != "end" else [])
+        s.cur_nodes = [e["node"] for e in here if e["kind"] != "test"]
+        s.cur_tests = [e["node"] for e in here if e["kind"] == "test"]
+        waits = [r for r in regions if r["state"] == "waiting" and r.get("event")]
+        s.wait_nodes = [r["event"]["node"] for r in waits]
+        s.waiting = {r["region"]: f"waiting for {r.get('waiting_for') or 'a partner'}" for r in waits}
+        s.done_regions = [r["region"] for r in regions if r["state"] == "done"]
+        shown = here + [r["event"] for r in waits]
+        s.active_loops = [lid for e in shown for lid, _ in e["stack"]] + [e["node"] for e in shown if e["kind"] == "test"]
         # The pass each active loop is in (a loop test: the pass it decides on).
-        s.loop_iter = {**{lid: it for lid, it in ev["stack"]},
-                       **({ev["node"]: ev["iter"]} if ev["kind"] == "test" else {})}
+        s.loop_iter = {k: v for e in shown for k, v in
+                       [*((lid, it) for lid, it in e["stack"]), *([(e["node"], e["iter"])] if e["kind"] == "test" else [])]}
         if ev["kind"] == "end":
             s.callstack = ["— finished —"]
             return
-        head = (f"◇ {name(ev['node'])} test #{ev['iter']}" if ev["kind"] == "test"
-                else ("init ▶ " if ev["kind"] == "init" else "▶ ") + name(ev["node"]))
-        rows = [head]
-        for lid, it in reversed(ev["stack"]):
-            rows.append(f"↺ {name(lid)}  [iteration {it}]")
-        if ev["kind"] == "init":
-            rows.append("Initialization")
+        rows: list[str] = []
+        for r in regions or [{"region": None, "state": "paused", "event": ev}]:
+            e = r.get("event")
+            prefix = f"{r['region']}: " if r["region"] else ""
+            if r["state"] in ("done", "failed") or e is None:
+                rows.append(f"{prefix}{r['state']}")
+                continue
+            if r["state"] == "waiting":
+                head = f"{prefix}⏳ in {name(e['node'])}, waiting for {r.get('waiting_for') or 'a partner'}"
+            else:
+                head = prefix + (f"◇ {name(e['node'])} test #{e['iter']}" if e["kind"] == "test"
+                                 else ("init ▶ " if e["kind"] == "init" else "▶ ") + name(e["node"]))
+            rows.append(head)
+            for lid, it in reversed(e["stack"]):
+                rows.append(f"{'  ' if prefix else ''}↺ {name(lid)}  [iteration {it}]")
+            if e["kind"] == "init":
+                rows.append(f"{'  ' if prefix else ''}Initialization")
         s.callstack = rows
 
     # -- user actions ----------------------------------------------------------------------

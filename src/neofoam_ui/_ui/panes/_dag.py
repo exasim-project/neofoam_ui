@@ -48,13 +48,10 @@ class _DagPane(BasePane):
         #: Regions seen in this or an earlier run (kept over restarts): the init view draws
         #: their boxes before they initialize. The worker does not name them up front.
         self._regions: list[str] = []
-        #: The node drawn for each op (a shared op in region boxes: its first copy).
+        #: The node drawn for each op.
         self._node_of: dict[str, str] = {}
-        #: The region boxes each op has a copy in (execution view), the box the view follows,
-        #: and the boxes drawn closed now (the user's ``boxes_closed`` but those the token or a
+        #: The boxes drawn closed now (the user's ``boxes_closed`` but those a token or a
         #: breakpoint is in).
-        self._boxes_of: dict[str, list[str]] = {}
-        self._followed: Optional[str] = None
         self._closed: frozenset[str] = frozenset()
         #: The regions in the order of the execution view's boxes (kept over restarts).
         self._box_order: list[str] = []
@@ -174,8 +171,10 @@ class _DagPane(BasePane):
                 self.model.residuals[msg["node"]] = res
                 self.app.state.loop_res = {**self.app.state.loop_res,
                                            msg["node"]: "res " + " ".join(f"{v:.1e}" for v in res.values())}
-            if not msg["stack"]:  # new time step: forget what ran in the previous one
-                self._visited = [v for v in visited if v.startswith("init:")]
+            if not msg["stack"]:  # new time step: forget what ran in the previous one (its region's)
+                region = msg.get("region")
+                self._visited = [v for v in visited if v.startswith("init:")
+                                 or (region is not None and not v.startswith(f"{region}/"))]
         self._visited_dirty = True
 
     def _apply_visited(self) -> None:
@@ -190,8 +189,11 @@ class _DagPane(BasePane):
         if ev["kind"] in ("init", "exec", "test"):
             self._follow_phase("init" if ev["kind"] == "init" else "exec")
         # the lines of a coupling node next to run (or of a coupling op whose test exchanges
-        # next) are hot; any other pause cools them
-        keys = self._line_of.get(ev["node"] or "", []) if ev["kind"] in ("exec", "test") else []
+        # next) are hot, in any region; any other pause cools them
+        keys: list[str] = []
+        for e in _paused_events(ev):
+            if e["kind"] in ("exec", "test"):
+                keys += [k for k in self._line_of.get(e["node"] or "", []) if k not in keys]
         if (s.ex_hot or []) != keys:
             s.ex_hot = list(keys)
         self._refresh_heat()
@@ -213,7 +215,7 @@ class _DagPane(BasePane):
         self._closed = self._boxes_shut()
         graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed, view,
                             tuple(self._regions), self._closed)
-        self._node_of, self._line_of, self._line_sides, self._boxes_of = {}, {}, {}, {}
+        self._node_of, self._line_of, self._line_sides = {}, {}, {}
         boxes = sorted((n["position"]["x"], n["id"][len("exec::box:"):]) for n in graph["nodes"]
                        if n["id"].startswith("exec::box:"))
         if boxes:
@@ -221,8 +223,6 @@ class _DagPane(BasePane):
         for n in graph["nodes"]:
             ref = (n.get("data") or {}).get("ref") or n["id"]
             self._node_of.setdefault(ref, n["id"])
-            if "@@" in n["id"] and "::" not in n["id"]:
-                self._boxes_of.setdefault(ref, []).append(f"exec::box:{n['id'].rsplit('@@', 1)[1]}")
             if n["type"] == "exmap":
                 data = n["data"]
                 self._line_sides[data["key"]] = (data["left"], data["right"])
@@ -300,10 +300,9 @@ class _DagPane(BasePane):
         self._refresh_inspector()
         if pan and node_id in index:
             shown = self.model.shown(node_id, self._shown)
-            boxes = self._boxes_of.get(shown)
-            if boxes:  # region boxes: show the box holding it (a shared op: the one followed)
-                box = self._followed if self._followed in boxes else boxes[0]
-                self._followed = box
+            region = index[shown].get("region")
+            if region and s.dag_view != "init":  # region boxes: show the box holding it
+                box = f"exec::box:{region}"
                 self.app.server.js_call(getattr(self.editor, "_NodeEditor__ref"), "fitView",
                                         {"nodes": [box], "duration": 250, "maxZoom": 1.0, "minZoom": 0.2,
                                          "padding": 0.06})
@@ -321,9 +320,10 @@ class _DagPane(BasePane):
         return boxes + [r for r in self._regions if r not in boxes]
 
     def _boxes_shut(self) -> frozenset[str]:
-        """The region boxes drawn closed: the user's, but those the token or a breakpoint is in."""
+        """The region boxes drawn closed: the user's, but those a token or a breakpoint is in."""
         s, index = self.app.state, self.model.index
-        inside = {index.get(n, {}).get("region") for n in [s.cur_node, *(s.bps or ())] if n}
+        tokens = [s.cur_node, *(getattr(s, "cur_nodes", None) or ()), *(getattr(s, "cur_tests", None) or ())]
+        inside = {index.get(n, {}).get("region") for n in [*tokens, *(s.bps or ())] if n}
         return frozenset(s.boxes_closed or ()) - inside
 
     def toggle_box(self, region: str) -> None:
@@ -390,3 +390,12 @@ class _DagPane(BasePane):
     def _refresh_inspector(self) -> None:
         s = self.app.state
         s.insp = _inspector_model(self.model, s.selected, s.bps)
+
+
+def _paused_events(ev: dict[str, Any]) -> list[dict[str, Any]]:
+    """The events the run is paused before: one per paused region (a multi-region solver),
+    else ``ev`` itself."""
+    regions = ev.get("regions")
+    if not regions:
+        return [ev]
+    return [r["event"] for r in regions if r["state"] == "paused" and r.get("event")]

@@ -170,7 +170,7 @@ delay {{ delay_ms }} ms
 <Controls :showInteractive="false" />
 <MiniMap v-show="minimap_on && !is_mobile && !fv_on && !pp_on && !pt_on" pannable zoomable />
 <template v-slot:node-action=props>
-<div :class="['nf-node', 'nf-action', { cur: props.data.ref === cur_node && cur_kind !== 'test', sel: props.data.ref === selected, done: visited.includes(props.data.ref) && props.data.ref !== cur_node, inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
+<div :class="['nf-node', 'nf-action', { cur: cur_nodes.includes(props.data.ref), wait: wait_nodes.includes(props.data.ref), sel: props.data.ref === selected, done: visited.includes(props.data.ref) && !cur_nodes.includes(props.data.ref), inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
 <Handle id="r" position="right" type="source" />
@@ -194,7 +194,7 @@ delay {{ delay_ms }} ms
 </div>
 </template>
 <template v-slot:node-init=props>
-<div :class="['nf-node', 'nf-init', { cur: props.data.ref === cur_node && cur_kind !== 'test', sel: props.data.ref === selected, done: visited.includes(props.data.ref) && props.data.ref !== cur_node }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
+<div :class="['nf-node', 'nf-init', { cur: cur_nodes.includes(props.data.ref), sel: props.data.ref === selected, done: visited.includes(props.data.ref) && !cur_nodes.includes(props.data.ref) }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
 <span @click.stop="trigger('nf_toggle_bp', [props.data.ref])" :class="['nf-bp', { on: bps.includes(props.data.ref) }]" />
@@ -284,7 +284,7 @@ exchange {{ props.data.name }}
 </div>
 </template>
 <template v-slot:node-decision=props>
-<div :class="['nf-decision', { cur: props.data.loop === cur_node && cur_kind === 'test', sel: props.data.loop === selected }]">
+<div :class="['nf-decision', { cur: cur_tests.includes(props.data.loop), wait: wait_nodes.includes(props.data.loop), sel: props.data.loop === selected }]">
 <Handle id="t" position="top" type="target" />
 <Handle id="b" position="bottom" type="source" />
 <Handle id="r" position="right" type="target" />
@@ -301,6 +301,9 @@ exchange {{ props.data.name }}
 <span class="nf-dot" :style="`background:${props.data.color}`" />
 <span >
 {{ props.data.label }}
+</span>
+<span class="nf-box-wait" v-if="waiting[props.data.region]">
+⏳ {{ waiting[props.data.region] }}
 </span>
 </div>
 <Handle id="r" position="right" type="source" />
@@ -322,7 +325,7 @@ exchange {{ props.data.name }}
 </div>
 </template>
 <template v-slot:node-final=props>
-<div :class="['nf-final', { cur: cur_node === 'end' }]">
+<div :class="['nf-final', { cur: cur_node === 'end' || done_regions.includes(props.data.region) }]">
 <Handle id="t" position="top" type="target" />
 <Handle id="lt" position="left" type="target" />
 </div>
@@ -341,8 +344,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w517-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w518-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w519-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w520-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -437,7 +440,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w562-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w564-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -652,7 +655,7 @@ flow == 2.2.2
 Containment
 </div>
 <div class="nf-tree">
-<div :class="{ sel: n.id === selected, cur: n.id === cur_node, done: visited.includes(n.id) && n.id !== cur_node }" :style="`padding-left: ${12 + n.depth * 14}px`" :key="n.id" v-for="n in tree" @click="trigger('nf_select', [n.id])">
+<div :class="{ sel: n.id === selected, cur: cur_nodes.includes(n.id) || cur_tests.includes(n.id), done: visited.includes(n.id) && !cur_nodes.includes(n.id) }" :style="`padding-left: ${12 + n.depth * 14}px`" :key="n.id" v-for="n in tree" @click="trigger('nf_select', [n.id])">
 <span class="nf-bpmark">
 {{ bps.includes(n.id) ? '●' : '' }}
 </span>
@@ -683,10 +686,10 @@ dashed ▭ ⊕ injected by an optional model
 </div>
 <div v-if="regions.length">
 <div >
-▢ a box per solver (its region's colour), as it runs alone
+▢ a box per region: its own solver, graph and thread (its region's colour); a token per box, every step moves all of them
 </div>
 <div >
-loops and driver ops appear in every box: copies of one shared node
+⏳ amber: the region waits for its partner's data; it moves once that arrives
 </div>
 <div >
 ⇄ coupling node: hands its op the partner's data

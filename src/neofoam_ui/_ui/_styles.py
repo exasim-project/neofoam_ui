@@ -175,6 +175,10 @@ _CSS = r"""
 .nf-decision.cur::after { content: ""; position: absolute; left: calc(50% - 5px); top: calc(50% - 5px); width: 10px;
   height: 10px; border-radius: 50%; background: #e0362c; }
 .nf-decision.sel .d { box-shadow: 0 0 0 2.5px #2b6fd6; }
+/* a region waiting for its partner's data, at the node it waits in (amber, dashed) */
+.nf-node.wait { background: #fff4db; border-color: #e8a317; border-width: 2.5px; border-style: dashed; }
+.nf-decision.wait .d { border-color: #e8a317; border-width: 2.5px; border-style: dashed; background: #fff4db; }
+.nf-box-wait { color: #b7790f; font-weight: 600; margin-left: 6px; white-space: nowrap; }
 .nf-decision .nf-bp { left: -26px; }
 .nf-activity { border: 1.6px solid #8a94a6; border-radius: 18px; background: rgba(138,148,166,.05); }
 .nf-activity-title { position: absolute; left: 14px; top: 9px; font-size: 13px; font-weight: 600; opacity: .75; }

@@ -9,10 +9,13 @@
   "connected": false,
   "cur_kind": null,
   "cur_node": null,
+  "cur_nodes": [],
+  "cur_tests": [],
   "dag_on": true,
   "dag_view": "init",
   "delay_ms": 0.0,
   "depth": 0,
+  "done_regions": [],
   "ex_hot": [],
   "ex_vals": {},
   "failed": false,
@@ -63,7 +66,9 @@
   "status": "starting solver worker\u2026",
   "tree": [],
   "visited": [],
-  "wait_ui": false
+  "wait_nodes": [],
+  "wait_ui": false,
+  "waiting": {}
  },
  "triggers": [
   "nf_box",

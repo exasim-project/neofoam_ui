@@ -81,179 +81,200 @@ def test_empty_loop_is_drawn():
     assert nodes["wait"]["type"] == "loop" and "wait::test" in nodes and "after" in nodes
 
 
+def _region(region, *, extra=(), exchanges=(), mapping=None, leader=False):
+    """One region's own graph, as NeoFOAM builds it and the session ids it: ``time_loop {
+    set_time_step, [extra ...,] <region>.couple { solve } }`` under ``<region>/``.
+    ``exchanges``: the coupling op's ``[(name, partner region), ...]``."""
+    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
+
+    def op(name, kind="action", children=(), **kw):
+        return Op(name, kind, lambda ctx: False, list(children), region=region, **kw)
+
+    maps = mapping if isinstance(mapping, list) else [mapping] * len(exchanges)
+    couple = op(f"{region}.couple", "loop", [op("solve")], test="exchange · serial",
+                tag="leader" if leader else None,
+                exchanges=[Exchange(f"{p}.to_{region}", ("T", "h") if m is not None else ("x",), p, m, n)
+                           for (n, p), m in zip(exchanges, maps)])
+    ops = [op("time_loop", "loop", [op("set_time_step"), *(op(e) for e in extra), couple])]
+    assign_ids(ops, f"{region}/")
+    return ops
+
+
+def _flow_of(*graphs, **kw):
+    return build_flow([], [op_dict(o) for g in graphs for o in g], **kw)
+
+
+def _pair(left=None, right=None):
+    return (_region("a", exchanges=[("a-b", "b")], mapping=left),
+            _region("b", exchanges=[("a-b", "a")], mapping=right, leader=True))
+
+
+def _model(*graphs):
+    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
+
+    model = _RunModel()
+    model.graph({"activity": "exec", "ops": [op_dict(o) for g in graphs for o in g]})
+    model.reindex("probe")
+    return model
+
+
 def test_region_ops_take_their_region_colour_and_make_the_legend():
     from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
-    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
-    from neofoam_ui.engine import Op  # noqa: PLC0415
 
-    ops = [Op("loop", "loop", lambda ctx: False, [Op("a.solve", "action", lambda ctx: None, region="a"),
-                                                  Op("b.solve", "action", lambda ctx: None, region="b")])]
-    assign_ids(ops)
-    model = _RunModel()
-    model.graph({"activity": "exec", "ops": [op_dict(o) for o in ops]})
+    model = _model(*_pair())
     nodes = {n["id"]: n for n in build_flow([], model.ops)["nodes"]}
 
-    assert nodes["loop/a.solve@@a"]["data"]["color"] == _REGION.color("a")
-    assert nodes["loop/a.solve@@a"]["data"]["color"] != nodes["loop/b.solve@@b"]["data"]["color"]
+    assert nodes["a/time_loop/a.couple/solve"]["data"]["color"] == _REGION.color("a")
+    assert nodes["a/time_loop/a.couple/solve"]["data"]["color"] != nodes["b/time_loop/b.couple/solve"]["data"]["color"]
     assert [r["name"] for r in model.regions()] == ["a", "b"]
 
 
-def _coupled(name, regions, sources, extra=()):
-    """A coupling loop: per region its coupling node, taking ``sources[i]``'s data, then its solve."""
-    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
-
-    body = []
-    for r, (source, partner) in zip(regions, sources):
-        body += [Op(f"couple_{r}.x", "action", lambda ctx: None, region=r,
-                    exchange=Exchange(source, ("x",), partner)),
-                 Op(f"{r}.solve", "action", lambda ctx: None, region=r)]
-    return Op(name, "loop", lambda ctx: False, [*extra, *body])
-
-
-def _flow(ops, **kw):
-    assign_ids(ops)
-    return build_flow([], [op_dict(o) for o in ops], **kw)
-
-
-def _pair():
-    from neofoam_ui.engine import Op  # noqa: PLC0415
-
-    loop = _coupled("couple", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])
-    return [Op("time", "loop", lambda ctx: False, [Op("set_time_step", "action", lambda ctx: None), loop])]
-
-
-def test_each_region_box_is_the_full_solver_with_copies_of_the_shared_loops():
-    flow = _flow(_pair())
+def test_each_region_box_is_its_own_graph():
+    flow = _flow_of(*_pair())
     nodes = {n["id"]: n for n in flow["nodes"]}
 
     for region in "ab":
         box = nodes[f"exec::box:{region}"]
-        assert box["type"] == "region" and box["data"]["label"] == region
-        own = [f"start@@{region}", f"time@@{region}", f"time/set_time_step@@{region}",
-               f"time/couple@@{region}", f"time/couple/couple_{region}.x@@{region}",
-               f"time/couple/{region}.solve@@{region}", f"end@@{region}"]
+        assert box["type"] == "region" and box["data"]["label"] == region and box["data"]["region"] == region
+        own = [i for i in nodes if i.startswith(f"{region}/") and "::" not in i]
+        own += [f"exec::start:{region}", f"exec::end:{region}"]
+        assert len(own) == 6
         for i in own:
             n = nodes[i]
             assert box["position"]["x"] <= n["position"]["x"] and \
                 n["position"]["x"] + n["width"] <= box["position"]["x"] + box["width"], i
             assert box["position"]["y"] <= n["position"]["y"] <= box["position"]["y"] + box["height"], i
-        # a copy binds to the shared op: token, selection, breakpoints, pass
-        assert nodes[f"time/couple@@{region}"]["data"]["ref"] == "time/couple"
-        assert nodes[f"time/couple@@{region}::test"]["data"]["loop"] == "time/couple"
-        assert nodes[f"time/set_time_step@@{region}"]["data"]["number"] == "1.1"
-    # nothing of the other region in a box
-    assert not [i for i in nodes if i.endswith("@@a") and ("b.solve" in i or "couple_b" in i)]
-    # between the boxes only the line between the coupling nodes, through the interface's
-    # mapping node, arrowheads at the coupling nodes
+        # a node binds to its own op: no copies of shared ops any more
+        assert nodes[f"{region}/time_loop/{region}.couple"]["data"]["ref"] == f"{region}/time_loop/{region}.couple"
+        assert nodes[f"{region}/time_loop/set_time_step"]["data"]["number"] == "1.1"
+        assert nodes[f"exec::end:{region}"]["data"]["region"] == region
+    assert not [i for i in nodes if "@@" in i]
+    # between the boxes only the line between the coupling ops, through the exchange's
+    # mapping node, arrowheads at the coupling ops
     couple = [e for e in flow["edges"] if "nf-couple" in e.get("class", "")]
     assert [(e["source"], e["target"], e["class"]) for e in couple] == [
-        ("time/couple/couple_a.x@@a", "exmap:0", "nf-couple cl-0"),
-        ("exmap:0", "time/couple/couple_b.x@@b", "nf-couple cl-0")]
+        ("a/time_loop/a.couple", "exmap:0", "nf-couple cl-0"),
+        ("exmap:0", "b/time_loop/b.couple", "nf-couple cl-0")]
     assert couple[0]["markerStart"] and "markerEnd" not in couple[0] and couple[1]["markerEnd"]
-    # the mapping node sits between the two coupling nodes, outside both boxes, keyed for the
-    # values and the highlight
     label = nodes["exmap:0"]
-    assert {k: label["data"][k] for k in ("key", "data", "left", "right", "nodes")} == {
-        "key": "0", "data": "x", "left": "a", "right": "b",
-        "nodes": ["time/couple/couple_a.x", "time/couple/couple_b.x"]}
+    assert {k: label["data"][k] for k in ("key", "data", "left", "right", "nodes", "name")} == {
+        "key": "0", "data": "x", "left": "a", "right": "b", "name": "a-b",
+        "nodes": ["a/time_loop/a.couple", "b/time_loop/b.couple"]}
     a_right = nodes["exec::box:a"]["position"]["x"] + nodes["exec::box:a"]["width"]
     assert a_right < label["position"]["x"] < label["position"]["x"] + label["width"] < \
         nodes["exec::box:b"]["position"]["x"]
-    couple_a = nodes["time/couple/couple_a.x@@a"]
+    couple_a = nodes["a/time_loop/a.couple"]
     assert label["position"]["y"] + label["height"] / 2 == couple_a["position"]["y"] + couple_a["height"] / 2
-    # a chip on the line, no taller than the coupling node (the details show on hover)
     assert label["height"] <= couple_a["height"]
-    a_box = {i for i in nodes if i.endswith("@@a")}  # (the mapping node belongs to no box)
-    b_box = {i for i in nodes if i.endswith("@@b")}
-    crossing = [e for e in flow["edges"] if (e["source"].split("::")[0] in a_box)
-                != (e["target"].split("::")[0] in a_box) and "nf-couple" not in e.get("class", "")]
-    assert not crossing and a_box and b_box
-    # the coupling nodes face each other
-    assert nodes["time/couple/couple_a.x@@a"]["position"]["y"] == nodes["time/couple/couple_b.x@@b"]["position"]["y"]
+    a_box = {i for i in nodes if i.startswith("a/") or i.endswith(":a")}
+    crossing = [e for e in flow["edges"] if (e["source"].removesuffix("::test") in a_box)
+                != (e["target"].removesuffix("::test") in a_box) and "nf-couple" not in e.get("class", "")]
+    assert not crossing and a_box
+    assert nodes["b/time_loop/b.couple"]["data"]["tag"] == "leader"
 
 
-def test_a_solver_without_regions_has_no_boxes_and_no_copies():
+def test_coupling_ops_face_each_other_when_the_regions_differ_before_them():
+    # b has two ops more before its coupling op: a's coupling op moves down to b's row
+    flow = _flow_of(_region("a", exchanges=[("a-b", "b")]),
+                    _region("b", exchanges=[("a-b", "a")], extra=("agree_dt", "prep")))
+    nodes = {n["id"]: n for n in flow["nodes"]}
+    assert nodes["a/time_loop/a.couple"]["position"]["y"] == nodes["b/time_loop/b.couple"]["position"]["y"]
+    assert nodes["a/time_loop/a.couple/solve"]["position"]["y"] == nodes["b/time_loop/b.couple/solve"]["position"]["y"]
+    assert nodes["a/time_loop/set_time_step"]["position"]["y"] == nodes["b/time_loop/set_time_step"]["position"]["y"]
+
+
+def test_a_solver_without_regions_has_no_boxes():
     from neofoam_ui.engine import Op  # noqa: PLC0415
 
-    flow = _flow([Op("loop", "loop", lambda ctx: False, [Op("solve", "action", lambda ctx: None)])])
+    ops = [Op("loop", "loop", lambda ctx: False, [Op("solve", "action", lambda ctx: None)])]
+    assign_ids(ops)
+    flow = build_flow([], [op_dict(o) for o in ops])
 
     assert not [n for n in flow["nodes"] if n["type"] == "region"]
     assert {n["id"] for n in flow["nodes"]} == {"start", "loop", "loop::test", "loop/solve", "end"}
 
 
-def test_a_nested_coupling_loop_is_projected_into_each_region_s_box():
-    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
-
-    inner = _coupled("inner", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])
-    outer = Op("outer", "loop", lambda ctx: False, [
-        Op("couple_b.x", "action", lambda ctx: None, region="b", exchange=Exchange("c.solve", ("x",), "c")),
-        inner,
-        Op("couple_c.x", "action", lambda ctx: None, region="c", exchange=Exchange("inner", ("x",), "b")),
-        Op("c.solve", "action", lambda ctx: None, region="c"),
-    ])
-    flow = _flow([outer])
+def test_a_chain_s_boxes_follow_the_exchanges_and_b_sits_on_both_lines():
+    # reported in another order (b, a, c); the chain is a - b - c
+    flow = _flow_of(_region("b", exchanges=[("a-b", "a"), ("b-c", "c")]), _region("a", exchanges=[("a-b", "b")]),
+                    _region("c", exchanges=[("b-c", "b")], leader=True))
     nodes = {n["id"]: n for n in flow["nodes"]}
 
-    # each box shows the loops its region runs in: a re-solves inside every outer pass too
-    assert {"outer@@a", "outer/inner@@a", "outer@@b", "outer/inner@@b", "outer@@c"} <= set(nodes)
-    assert "outer/inner@@c" not in nodes
-    # the boxes along the chain, b in the middle
     xs = [nodes[f"exec::box:{r}"]["position"]["x"] for r in "abc"]
     assert xs == sorted(xs)
-    # a shared loop's copies on one row; each line joins neighbouring boxes, horizontally, in the gap
-    assert nodes["outer/inner@@a"]["position"]["y"] == nodes["outer/inner@@b"]["position"]["y"]
-    halves = [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")]
-    couple = [(s, t2) for s, m in halves if m.startswith("exmap:") for m2, t2 in halves if m2 == m]
-    assert set(couple) == {("outer/inner/couple_a.x@@a", "outer/inner/couple_b.x@@b"),
-                           ("outer/couple_b.x@@b", "outer/couple_c.x@@c")}
-    # one mapping node per interface, each in its own gap, on its line's row
-    maps = {n["data"]["left"] + n["data"]["right"]: n for n in flow["nodes"] if n["type"] == "exmap"}
-    assert set(maps) == {"ab", "bc"}
-    for s, tgt in couple:
-        m = maps[s[-1] + tgt[-1]]
-        assert nodes[s]["position"]["x"] + nodes[s]["width"] < m["position"]["x"]
-        assert m["position"]["x"] + m["width"] < nodes[tgt]["position"]["x"]
-        assert m["position"]["y"] + m["height"] / 2 == nodes[s]["position"]["y"] + nodes[s]["height"] / 2
-        left, right = s[-1], tgt[-1]
-        assert nodes[s]["position"]["y"] == nodes[tgt]["position"]["y"]
+    assert len({nodes[f"{r}/time_loop/{r}.couple"]["position"]["y"] for r in "abc"}) == 1
+    couple = [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")]
+    assert couple == [("a/time_loop/a.couple", "exmap:0"), ("exmap:0", "b/time_loop/b.couple"),
+                      ("b/time_loop/b.couple", "exmap:1"), ("exmap:1", "c/time_loop/c.couple")]
+    assert [nodes[f"exmap:{k}"]["data"]["name"] for k in "01"] == ["a-b", "b-c"]
+    assert nodes["b/time_loop/b.couple"]["data"]["exchange"] == "x ← a · x ← c"
+    for key, (left, right) in (("0", "ab"), ("1", "bc")):
+        m = nodes[f"exmap:{key}"]
         box_l, box_r = nodes[f"exec::box:{left}"], nodes[f"exec::box:{right}"]
-        assert box_l["position"]["x"] < nodes[s]["position"]["x"] + nodes[s]["width"] \
-            <= box_l["position"]["x"] + box_l["width"] < box_r["position"]["x"] <= nodes[tgt]["position"]["x"]
-    # b holds both of its coupling nodes, one per exchange
-    assert {"outer/couple_b.x@@b", "outer/inner/couple_b.x@@b"} <= set(nodes)
+        assert box_l["position"]["x"] + box_l["width"] < m["position"]["x"]
+        assert m["position"]["x"] + m["width"] < box_r["position"]["x"]
+
+
+def test_two_exchanges_between_the_same_regions_pair_by_name():
+    flow = _flow_of(_region("a", exchanges=[("p", "b"), ("q", "b")]), _region("b", exchanges=[("q", "a"), ("p", "a")]))
+    maps = sorted(n["data"]["name"] for n in flow["nodes"] if n["type"] == "exmap")
+    assert maps == ["p", "q"]
 
 
 def test_a_collapsed_loop_hides_the_exchange_into_it():
-    flow = _flow([_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])],
-                 collapsed=frozenset({"loop"}))
-    assert {n["id"] for n in flow["nodes"]} >= {"loop@@a", "loop@@b"}
-
+    flow = _flow_of(*_pair(), collapsed=frozenset({"a/time_loop", "b/time_loop"}))
+    assert {n["id"] for n in flow["nodes"]} >= {"a/time_loop", "b/time_loop"}
     assert not [e for e in flow["edges"] if "nf-couple" in e.get("class", "")]
 
 
-def test_the_inspector_names_a_coupling_node_s_exchange():
-    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
+def test_a_closed_region_box_keeps_only_its_coupling_ops_on_their_rows():
+    full = {n["id"]: n for n in _flow_of(*_pair())["nodes"]}
+    flow = _flow_of(*_pair(), closed=frozenset({"b"}))
+    nodes = {n["id"]: n for n in flow["nodes"]}
+
+    assert [i for i in nodes if i.startswith("b/") and "::" not in i] == ["b/time_loop/b.couple"]
+    assert nodes["exec::box:b"]["data"]["closed"] and nodes["exec::box:b"]["width"] < full["exec::box:b"]["width"]
+    assert nodes["b/time_loop/b.couple"]["position"]["y"] == nodes["a/time_loop/a.couple"]["position"]["y"]
+    assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
+        ("a/time_loop/a.couple", "exmap:0"), ("exmap:0", "b/time_loop/b.couple")]
+    m = nodes["exmap:0"]
+    assert nodes["exec::box:a"]["position"]["x"] + nodes["exec::box:a"]["width"] < m["position"]["x"]
+    assert m["position"]["x"] + m["width"] < nodes["exec::box:b"]["position"]["x"]
+
+
+def test_a_box_holding_a_token_or_a_breakpoint_opens():
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
+
+    index = {"b/l/solve": {"region": "b"}, "a/l/solve": {"region": "a"}, "a/l": {"region": "a"}}
+    state = SimpleNamespace(boxes_closed=["a", "b"], cur_node=None, cur_nodes=[], cur_tests=[], bps=[])
+    pane = SimpleNamespace(app=SimpleNamespace(state=state), model=SimpleNamespace(index=index))
+    shut = lambda: _DagPane._boxes_shut(pane)  # noqa: E731
+    assert shut() == {"a", "b"}
+    state.cur_nodes = ["b/l/solve"]
+    assert shut() == {"a"}
+    state.cur_nodes, state.cur_tests = [], ["a/l"]  # every region's token counts
+    assert shut() == {"b"}
+    state.bps = ["b/l/solve"]
+    assert shut() == set()
+
+
+def test_the_inspector_names_a_coupling_op_s_exchange():
     from neofoam_ui._ui.panes._inspector import _inspector_model  # noqa: PLC0415
 
-    ops = [_coupled("loop", ["a", "b"], [("b.solve", "b"), ("a.solve", "a")])]
-    assign_ids(ops)
-    model = _RunModel()
-    model.graph({"activity": "exec", "ops": [op_dict(o) for o in ops]})
-    model.reindex("probe")
-
-    rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_a.x", [])["rows"]}  # by the shared id
-    assert rows["exchange"] == "x ← b (b.solve)"
+    rows = {r["k"]: r["v"] for r in _inspector_model(_model(*_pair()), "a/time_loop/a.couple", [])["rows"]}
+    assert rows["exchange"] == "x ← b (b.to_a), exchange a-b"
+    assert rows["loop test"] == "exchange · serial"
 
 
-def test_the_init_view_puts_each_region_s_steps_in_its_box_below_the_driver_s():
+def test_the_init_view_puts_each_region_s_steps_in_its_box():
     from neofoam_ui.engine import InitStep  # noqa: PLC0415
 
-    steps = [InitStep("time", lambda r: None), InitStep("a.mesh", lambda r: None, ["time"], region="a"),
-             InitStep("b.mesh", lambda r: None, ["time"], region="b"),
+    steps = [InitStep("a.mesh", lambda r: None, region="a"), InitStep("b.mesh", lambda r: None, region="b"),
              InitStep("b.T", lambda r: None, ["b.mesh"], region="b")]
-    loop = _coupled("loop", ["b", "a"], [("a.solve", "a"), ("b.solve", "b")])
-    assign_ids([loop])
-    flow = build_flow([init_dict(s) for s in steps], [op_dict(loop)], view="init")
+    graphs = (_region("b", exchanges=[("a-b", "a")]), _region("a", exchanges=[("a-b", "b")]))
+    flow = build_flow([init_dict(s) for s in steps], [op_dict(o) for g in graphs for o in g], view="init")
     nodes = {n["id"]: n for n in flow["nodes"]}
 
     # the regions in the order of the execution view (b, then a)
@@ -263,14 +284,45 @@ def test_the_init_view_puts_each_region_s_steps_in_its_box_below_the_driver_s():
         box, n = nodes[f"init::box:{region}"], nodes[step]
         assert box["position"]["x"] < n["position"]["x"] < box["position"]["x"] + box["width"]
         assert box["position"]["y"] < n["position"]["y"] < box["position"]["y"] + box["height"]
-    assert nodes["init:time"]["position"]["y"] < nodes["init::box:a"]["position"]["y"]
     edges = {(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" not in e.get("class", "")}
-    assert edges == {("init:time", "init:a.mesh"), ("init:time", "init:b.mesh"), ("init:b.mesh", "init:b.T")}
-    # the interface: its mapping node between the two boxes, the coupling line through it
+    assert edges == {("init:b.mesh", "init:b.T")}
     m = nodes["exmap:0"]
     assert bx + nodes["init::box:b"]["width"] < m["position"]["x"] < m["position"]["x"] + m["width"] < ax
     assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
         ("init::box:b", "exmap:0"), ("exmap:0", "init::box:a")]
+
+
+def test_the_mapping_node_shows_kind_points_and_mapped_fields_each_way():
+    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
+
+    # a has 4 interface points, b 3 (each its own end tells); T is mapped, h handed over as is
+    flow = _flow_of(*_pair(PointMapping("nearest-neighbor", ("T",), None, 4),
+                           PointMapping("nearest-neighbor", ("T",), None, 3)))
+    data = {n["id"]: n for n in flow["nodes"]}["exmap:0"]["data"]
+    assert data["kind"] == "nearest-neighbor"
+    assert data["points"] == {"a": 4, "b": 3}
+    assert data["ways"] == [
+        {"from": "a", "to": "b", "fields": [{"name": "T", "mapped": True}, {"name": "h", "mapped": False}]},
+        {"from": "b", "to": "a", "fields": [{"name": "T", "mapped": True}, {"name": "h", "mapped": False}]}]
+
+
+def test_the_mapping_node_marks_what_the_solver_does_not_tell():
+    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
+
+    flow = _flow_of(*_pair(PointMapping(), PointMapping(mapped=("T", "h"))))
+    data = {n["id"]: n for n in flow["nodes"]}["exmap:0"]["data"]
+    assert data["kind"] is None and data["points"] == {"a": None, "b": None}
+    assert data["ways"][0]["fields"] == [{"name": "T", "mapped": True}, {"name": "h", "mapped": True}]
+    assert data["ways"][1]["fields"] == [{"name": "T", "mapped": None}, {"name": "h", "mapped": None}]
+
+
+def test_the_inspector_shows_a_coupling_op_s_mapping():
+    from neofoam_ui._ui.panes._inspector import _inspector_model  # noqa: PLC0415
+    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
+
+    model = _model(*_pair(PointMapping("nearest-neighbor", ("T",), None, 4), None))
+    rows = {r["k"]: r["v"] for r in _inspector_model(model, "a/time_loop/a.couple", [])["rows"]}
+    assert rows["mapping"].startswith("nearest-neighbor")
 
 
 def test_a_plain_solver_s_init_view_has_no_region_boxes():
@@ -346,54 +398,6 @@ def test_a_coupling_op_s_test_heats_all_its_lines_and_fills_each_by_exchange_nam
     assert state.ex_vals == {"0": {"a": "x = 1"}, "1": {"c": "x = 2"}}
 
 
-def test_the_pair_view_keeps_its_shape():
-    """Guard: pair stays two boxes a | b, the coupling nodes face each other on one row."""
-    flow = _flow(_pair())
-    nodes = {n["id"]: n for n in flow["nodes"]}
-    boxes = sorted((n["position"]["x"], n["id"]) for n in flow["nodes"] if n["type"] == "region")
-    assert [b for _, b in boxes] == ["exec::box:a", "exec::box:b"]
-    a, b = nodes["time/couple/couple_a.x@@a"], nodes["time/couple/couple_b.x@@b"]
-    assert a["position"]["y"] == b["position"]["y"]
-    assert nodes["time/couple/a.solve@@a"]["position"]["y"] == nodes["time/couple/b.solve@@b"]["position"]["y"]
-    assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
-        ("time/couple/couple_a.x@@a", "exmap:0"), ("exmap:0", "time/couple/couple_b.x@@b")]
-
-
-def test_a_closed_region_box_keeps_only_its_coupling_nodes_on_their_rows():
-    assign_ids(ops := _pair())
-    full = {n["id"]: n for n in build_flow([], [op_dict(o) for o in ops])["nodes"]}
-    flow = build_flow([], [op_dict(o) for o in ops], closed=frozenset({"b"}))
-    nodes = {n["id"]: n for n in flow["nodes"]}
-
-    b = [i for i in nodes if i.endswith("@@b")]
-    assert b == ["time/couple/couple_b.x@@b"]
-    assert nodes["exec::box:b"]["data"]["closed"] and nodes["exec::box:b"]["width"] < full["exec::box:b"]["width"]
-    # still facing its partner, still joined to it
-    assert nodes["time/couple/couple_b.x@@b"]["position"]["y"] == nodes["time/couple/couple_a.x@@a"]["position"]["y"]
-    assert [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")] == [
-        ("time/couple/couple_a.x@@a", "exmap:0"), ("exmap:0", "time/couple/couple_b.x@@b")]
-    # its mapping node between the narrow box and its partner's
-    m = nodes["exmap:0"]
-    assert nodes["exec::box:a"]["position"]["x"] + nodes["exec::box:a"]["width"] < m["position"]["x"]
-    assert m["position"]["x"] + m["width"] < nodes["exec::box:b"]["position"]["x"]
-
-
-def test_a_box_holding_the_token_or_a_breakpoint_opens():
-    from types import SimpleNamespace  # noqa: PLC0415
-
-    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
-
-    index = {"c/b.solve": {"region": "b"}, "c/a.solve": {"region": "a"}, "c": {}}
-    state = SimpleNamespace(boxes_closed=["a", "b"], cur_node="c", bps=[])
-    pane = SimpleNamespace(app=SimpleNamespace(state=state), model=SimpleNamespace(index=index))
-    shut = lambda: _DagPane._boxes_shut(pane)  # noqa: E731
-    assert shut() == {"a", "b"}  # a shared loop holds the token: no box opens
-    state.cur_node = "c/b.solve"
-    assert shut() == {"a"}
-    state.bps = ["c/a.solve"]
-    assert shut() == set()
-
-
 def test_field_rows_are_grouped_per_region_in_the_boxes_order():
     from neofoam_ui._ui._app import _by_region  # noqa: PLC0415
     from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
@@ -416,46 +420,6 @@ def test_a_region_fields_table_is_drawn_in_the_region_s_colour():
     assert chart["layout"]["xaxis"]["title"]["text"] == "coupling pass"
 
 
-def _mapped_pair(left, right):
-    """The pair, its coupling nodes telling how they map (``left``/``right``: each node's PointMapping)."""
-    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
-
-    body = [Op("couple_a.q", "action", lambda ctx: None, region="a",
-               exchange=Exchange("b.solve", ("T", "h"), "b", left)),
-            Op("a.solve", "action", lambda ctx: None, region="a"),
-            Op("couple_b.q", "action", lambda ctx: None, region="b",
-               exchange=Exchange("a.solve", ("T", "h"), "a", right)),
-            Op("b.solve", "action", lambda ctx: None, region="b")]
-    return [Op("loop", "loop", lambda ctx: False, body)]
-
-
-def test_the_mapping_node_shows_kind_points_and_mapped_fields_each_way():
-    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
-
-    # a has 4 interface points, b 3; T is mapped point by point, h handed over as is
-    ops = _mapped_pair(PointMapping("nearest-neighbor", ("T",), 3, 4), PointMapping("nearest-neighbor", ("T",), 4, 3))
-    data = {n["id"]: n for n in _flow(ops)["nodes"]}["exmap:0"]["data"]
-    assert data["kind"] == "nearest-neighbor"
-    assert data["points"] == {"a": 4, "b": 3}
-    assert data["ways"] == [
-        {"from": "a", "to": "b", "fields": [{"name": "T", "mapped": True}, {"name": "h", "mapped": False}]},
-        {"from": "b", "to": "a", "fields": [{"name": "T", "mapped": True}, {"name": "h", "mapped": False}]}]
-
-
-def test_the_mapping_node_marks_what_the_solver_does_not_tell():
-    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
-
-    # one side tells nothing (no mapping), the other its mapped fields but no points
-    data = {n["id"]: n for n in _flow(_mapped_pair(None, PointMapping(mapped=("T", "h"))))["nodes"]}["exmap:0"]["data"]
-    assert data["kind"] is None and data["points"] == {"a": None, "b": None}
-    assert data["ways"][0]["fields"] == [{"name": "T", "mapped": True}, {"name": "h", "mapped": True}]
-    assert data["ways"][1]["fields"] == [{"name": "T", "mapped": None}, {"name": "h", "mapped": None}]
-    # each side's count comes from either node: a's own (target) or b's partner's (source)
-    data = {n["id"]: n for n in _flow(_mapped_pair(PointMapping(target_points=5), PointMapping()))["nodes"]}[
-        "exmap:0"]["data"]
-    assert data["points"] == {"a": 5, "b": None}
-
-
 def test_the_wire_carries_a_coupling_node_s_mapping_only_when_known():
     from neofoam_ui.engine import Exchange, Op, PointMapping  # noqa: PLC0415
 
@@ -467,55 +431,40 @@ def test_the_wire_carries_a_coupling_node_s_mapping_only_when_known():
                                            "target_points": 2}
 
 
-def test_the_inspector_shows_a_coupling_node_s_mapping():
-    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
-    from neofoam_ui._ui.panes._inspector import _inspector_model  # noqa: PLC0415
-    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
+def test_the_app_shows_a_token_per_region_and_who_waits_for_whom():
+    from trame.app import get_server  # noqa: PLC0415
 
-    ops = _mapped_pair(PointMapping("nearest-neighbor", ("T",), 3, 4), None)
-    assign_ids(ops)
-    model = _RunModel()
-    model.graph({"activity": "exec", "ops": [op_dict(o) for o in ops]})
-    model.reindex("probe")
-    rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_a.q", [])["rows"]}
-    assert rows["mapping"] == "nearest-neighbor, 3 → 4 points; mapped T, as is h"
-    rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_b.q", [])["rows"]}
-    assert "mapping" not in rows
+    from neofoam_ui.app import StepperApp  # noqa: PLC0415
 
+    app = StepperApp(get_server("regions_tokens", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D")
+    model = app.model
+    model.graph({"activity": "exec", "ops": [op_dict(o) for g in _pair() for o in g]})
+    model.reindex("multiRun")
+    couple_a, solve_b = "a/time_loop/a.couple", "b/time_loop/b.couple/solve"
+    test_b = {"kind": "test", "node": "b/time_loop/b.couple", "depth": 1, "iter": 2,
+              "stack": [["b/time_loop", 1]], "region": "b"}
+    waiting_a = {"kind": "test", "node": couple_a, "depth": 1, "iter": 2, "stack": [["a/time_loop", 1]], "region": "a"}
+    ev = {**test_b, "regions": [
+        {"region": "a", "state": "waiting", "event": waiting_a, "waiting_for": "b"},
+        {"region": "b", "state": "paused", "event": test_b, "waiting_for": None}]}
+    app._on_paused({"type": "paused", "event": ev, "finished": False, "failed": False,
+                    "summary": {"scalars": {}, "fields": [], "init_done": []},
+                    "calls": {}, "last_ms": {}, "total_ms": {}, "writes_seen": {}})
+    s = app.state
 
-def _coupling_ops(layout):
-    """NeoFOAM's coupling now: a group loop of one coupling op (a loop whose test exchanges) per
-    region, each around its solve. ``layout``: per region ``[(exchange name, partner), ...]``."""
-    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
-
-    ops = [Op(f"{r}.couple", "loop", lambda ctx: True, [Op(f"{r}.solve", "action", lambda ctx: None, region=r)],
-              region=r, test="exchange · serial", tag="leader" if i == len(layout) - 1 else None,
-              exchanges=[Exchange(f"{p}.couple", ("x",), p, name=n) for n, p in ends])
-           for i, (r, ends) in enumerate(layout.items())]
-    return [Op("group", "loop", lambda ctx: True, ops)]
-
-
-def test_a_coupling_op_is_a_loop_in_its_box_joined_to_its_partners_through_the_chip():
-    flow = _flow(_coupling_ops({"a": [("a-b", "b")], "b": [("a-b", "a"), ("b-c", "c")], "c": [("b-c", "b")]}))
-    nodes = {n["id"]: n for n in flow["nodes"]}
-
-    # each region's coupling op is a loop (control node) in its own box, the group mirrored into all
-    for r in "abc":
-        assert nodes[f"group/{r}.couple@@{r}"]["type"] == "loop"
-        assert nodes[f"group@@{r}"]["data"]["ref"] == "group"
-    # facing each other on one row
-    assert len({nodes[f"group/{r}.couple@@{r}"]["position"]["y"] for r in "abc"}) == 1
-    # b's coupling op sits on both lines, each through its interface's chip
-    couple = [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")]
-    assert couple == [("group/a.couple@@a", "exmap:0"), ("exmap:0", "group/b.couple@@b"),
-                      ("group/b.couple@@b", "exmap:1"), ("exmap:1", "group/c.couple@@c")]
-    assert [nodes[f"exmap:{k}"]["data"]["name"] for k in "01"] == ["a-b", "b-c"]
-    # the leader is tagged; the exchanges show on the op
-    assert nodes["group/c.couple@@c"]["data"]["tag"] == "leader"
-    assert nodes["group/b.couple@@b"]["data"]["exchange"] == "x ← a · x ← c"
-
-
-def test_two_exchanges_between_the_same_regions_pair_by_name():
-    flow = _flow(_coupling_ops({"a": [("p", "b"), ("q", "b")], "b": [("q", "a"), ("p", "a")]}))
-    maps = sorted(n["data"]["name"] for n in flow["nodes"] if n["type"] == "exmap")
-    assert maps == ["p", "q"]
+    assert s.cur_nodes == [] and s.cur_tests == ["b/time_loop/b.couple"]
+    assert s.wait_nodes == [couple_a] and s.waiting == {"a": "waiting for b"}
+    assert set(s.active_loops) == {"a/time_loop", "b/time_loop", couple_a, "b/time_loop/b.couple"}
+    assert s.loop_iter[couple_a] == 2 and s.loop_iter["b/time_loop/b.couple"] == 2
+    assert s.status == "paused before a: waiting for b · b: ◇ b.couple test #2"
+    assert s.callstack[0] == "a: ⏳ in a.couple, waiting for b"
+    # a running token moves its own region only
+    app._on_running({"type": "running", "event": {"kind": "exec", "node": solve_b, "depth": 2, "iter": None,
+                                                    "stack": [["b/time_loop", 1], ["b/time_loop/b.couple", 2]],
+                                                    "region": "b"}})
+    assert s.cur_nodes == [solve_b] and s.wait_nodes == [couple_a]
+    # a single-region solver: one token, as before
+    app._on_paused({"type": "paused", "event": {"kind": "exec", "node": "x", "depth": 0, "iter": None, "stack": []},
+                    "finished": False, "failed": False, "summary": {"scalars": {}, "fields": [], "init_done": []},
+                    "calls": {}, "last_ms": {}, "total_ms": {}, "writes_seen": {}})
+    assert (s.cur_nodes, s.cur_tests, s.waiting) == (["x"], [], {})

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 __all__ = ()
 
 #: Background of a node in the timing heat map (``heat`` holds a CSS colour per node id). Nodes
-#: bind to ``data.ref``, the op they stand for: a region box's copy of a shared op binds to it.
+#: bind to ``data.ref``, the op they stand for.
 _HEAT = "heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''"
 
 
@@ -26,7 +26,10 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
         with html.Span(v_for="r in regions", key="r.name", classes="nf-region"):
             html.Span(classes="nf-dot", style=("`background:${r.color}`",))
             html.Span("{{ r.name }}")
-    cls_node = "props.data.ref === cur_node && cur_kind !== 'test'"
+    # a token per region (cur_nodes; one for a single-region solver); a region waiting for its
+    # partner's data marks where it waits (wait_nodes)
+    cls_node = "cur_nodes.includes(props.data.ref)"
+    cls_wait = "wait_nodes.includes(props.data.ref)"
     # hot-<key>: the coupling line <key> exchanges now (see _styles: its dashes move)
     with NodeEditor(style="width: 100%; height: 100%;", classes=("ex_hot.map(k => 'hot-' + k)",),
                     node_click=(pane.select, "[$event.node.data && ($event.node.data.ref || $event.node.data.loop)"
@@ -40,8 +43,8 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
 
         with CustomNode("action"):
             with html.Div(classes=(
-                "['nf-node', 'nf-action', { cur: " + cls_node + ", sel: props.data.ref === selected,"
-                " done: visited.includes(props.data.ref) && props.data.ref !== cur_node, inj: !!props.data.injected_by,"
+                "['nf-node', 'nf-action', { cur: " + cls_node + ", wait: " + cls_wait + ", sel: props.data.ref === selected,"
+                " done: visited.includes(props.data.ref) && !cur_nodes.includes(props.data.ref), inj: !!props.data.injected_by,"
                 " cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]",
             ), style=(_HEAT,)):
                 Handle(position="top", type="target", id="t")
@@ -64,7 +67,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
         with CustomNode("init"):
             with html.Div(classes=(
                 "['nf-node', 'nf-init', { cur: " + cls_node + ", sel: props.data.ref === selected,"
-                " done: visited.includes(props.data.ref) && props.data.ref !== cur_node }]",
+                " done: visited.includes(props.data.ref) && !cur_nodes.includes(props.data.ref) }]",
             ), style=(_HEAT,)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
@@ -137,8 +140,8 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
 
         with CustomNode("decision"):
             with html.Div(classes=(
-                "['nf-decision', { cur: props.data.loop === cur_node && cur_kind === 'test',"
-                " sel: props.data.loop === selected }]",
+                "['nf-decision', { cur: cur_tests.includes(props.data.loop),"
+                " wait: wait_nodes.includes(props.data.loop), sel: props.data.loop === selected }]",
             )):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
@@ -157,6 +160,9 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                               raw_attrs=['@click.stop="trigger(\'nf_box\', [props.data.toggle])"'])
                     html.Span(classes="nf-dot", style=("`background:${props.data.color}`",))
                     html.Span("{{ props.data.label }}")
+                    # its region's thread waits for a partner's data (it moves once it arrives)
+                    html.Span("⏳ {{ waiting[props.data.region] }}", classes="nf-box-wait",
+                              v_if="waiting[props.data.region]")
                 # the init view's coupling lines start and end at the box
                 Handle(position="right", type="source", id="r")
                 Handle(position="left", type="target", id="lt")
@@ -172,7 +178,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 Handle(position="bottom", type="source", id="b")
 
         with CustomNode("final"):
-            with html.Div(classes=("['nf-final', { cur: cur_node === 'end' }]",)):
+            with html.Div(classes=("['nf-final', { cur: cur_node === 'end' || done_regions.includes(props.data.region) }]",)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="left", type="target", id="lt")  # a loop's [false] exit
 
@@ -246,7 +252,8 @@ def _drawer(drawer: Any) -> None:
     with html.Div(classes="nf-tree"):
         with html.Div(
             v_for="n in tree", key="n.id",
-            classes=("{ sel: n.id === selected, cur: n.id === cur_node, done: visited.includes(n.id) && n.id !== cur_node }",),
+            classes=("{ sel: n.id === selected, cur: cur_nodes.includes(n.id) || cur_tests.includes(n.id),"
+                     " done: visited.includes(n.id) && !cur_nodes.includes(n.id) }",),
             style=("`padding-left: ${12 + n.depth * 14}px`",),
             click="trigger('nf_select', [n.id])",
         ):
@@ -263,8 +270,9 @@ def _drawer(drawer: Any) -> None:
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
         html.Div("dashed ▭ ⊕ injected by an optional model")
         with html.Div(v_if="regions.length"):
-            html.Div("▢ a box per solver (its region's colour), as it runs alone")
-            html.Div("loops and driver ops appear in every box: copies of one shared node")
+            html.Div("▢ a box per region: its own solver, graph and thread (its region's colour);"
+                     " a token per box, every step moves all of them")
+            html.Div("⏳ amber: the region waits for its partner's data; it moves once that arrives")
             html.Div("⇄ coupling node: hands its op the partner's data")
             html.Div("⇄ (loop) a region's coupling op: its test hands the region the partners' data;"
                      " 'leader': the one that decides whether the group goes on")
