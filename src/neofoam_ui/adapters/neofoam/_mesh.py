@@ -8,6 +8,7 @@ from typing import Any, Optional
 import numpy as np
 
 from neofoam_ui.engine import DEFAULT_REGION
+from neofoam_ui.geometry import cell_centres_geometry, polyhedral, read_polymesh
 from neofoam_ui.parallel import rank_info
 
 __all__ = ()
@@ -33,8 +34,6 @@ class _PolyMeshGeometry:
         in an MPI run); without them only the cell centres ``mesh.C()`` are shown.
         Static meshes only.
         """
-        from neofoam_ui.geometry import cell_centres_geometry, polyhedral, read_polymesh  # noqa: PLC0415
-
         mesh = getattr(ctx, "mesh", None)
         if mesh is None:
             return None

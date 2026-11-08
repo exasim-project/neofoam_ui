@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from neofoam_ui.parallel import rank_info
+from neofoam_ui.pptables import observe
 
 __all__ = ()
 
@@ -23,8 +24,6 @@ class _PostProcessHook:
         except ImportError:  # a NeoFOAM without post-processing
             return
         if isinstance(value, PostProcessor):
-            from neofoam_ui.pptables import observe  # noqa: PLC0415
-
             if getattr(value, "_tables", None):
                 _ensure_neon()
             if rank_info()[0] > 0:  # only rank 0's rows reach the UI: the others convert none
