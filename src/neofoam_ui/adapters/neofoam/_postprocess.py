@@ -20,7 +20,7 @@ class _PostProcessHook:
         (:func:`neofoam_ui.pptables.observe`, on rank 0 only); the CSV files are written as before.
         """
         try:
-            from neofoam.postprocess.model import PostProcessor  # noqa: PLC0415
+            from neofoam.postprocess.model import PostProcessor  # noqa: PLC0415 - neofoam: the solver's venv only
         except ImportError:  # a NeoFOAM without post-processing
             return
         if isinstance(value, PostProcessor):
@@ -41,7 +41,7 @@ def _ensure_neon() -> None:
     first ``min``/``max``/``mean`` aborts the process (also in a plain ``run()``).
     """
     try:
-        from neofoam.solver.neon_runtime import ensure_neon_initialized  # noqa: PLC0415
+        from neofoam.solver.neon_runtime import ensure_neon_initialized  # noqa: PLC0415 - neofoam: the solver's venv only
     except ImportError:
         return
     ensure_neon_initialized(["neofoam"])

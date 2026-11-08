@@ -103,7 +103,7 @@ class _FieldAccess:
         out = self.fields(ctx)
         mesh = getattr(ctx, "mesh", None)
         try:
-            import pybFoam  # noqa: PLC0415
+            import pybFoam  # noqa: PLC0415 - the solver's venv only, with OpenFOAM's libraries
 
             kinds = [(k, list(map(str, k.list_objects(mesh))))
                      for k in (pybFoam.volScalarField, pybFoam.volVectorField)]

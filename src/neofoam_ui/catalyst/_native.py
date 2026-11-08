@@ -40,7 +40,7 @@ def _import(prefix: str) -> tuple[Any, Any]:
                         "site-packages")
     if site not in sys.path:
         sys.path.append(site)  # last: the solver's own numpy etc. win
-    import catalyst  # noqa: PLC0415
-    import catalyst_conduit  # noqa: PLC0415
+    import catalyst  # noqa: PLC0415 - from the site-packages just added to sys.path
+    import catalyst_conduit  # noqa: PLC0415 - likewise
 
     return catalyst, catalyst_conduit

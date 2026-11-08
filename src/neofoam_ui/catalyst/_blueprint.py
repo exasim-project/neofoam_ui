@@ -19,7 +19,7 @@ def _external(node: Any, path: str, arr: np.ndarray, keep: list[np.ndarray]) -> 
 def _interleaved(node: Any, path: str, arr: np.ndarray, names: Any,
                  keep: list[np.ndarray]) -> None:
     """Components as strided views into one (n, k) array: VTK keeps it as one AOS array."""
-    from catalyst_conduit import Schema  # noqa: PLC0415
+    from catalyst_conduit import Schema  # noqa: PLC0415 - on sys.path only once _native._import added Catalyst's
 
     arr = np.ascontiguousarray(arr, dtype=np.float64)
     keep.append(arr)

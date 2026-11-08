@@ -83,7 +83,7 @@ def _describe_pipeline(observe: Any = None) -> dict[str, Any]:
     "settings": [[key, value], ...]}``; edge: ``{"source", "target"}`` (data flows
     from source to target). ``observe(id, vtk_object)`` is called for what can be timed.
     """
-    from paraview import servermanager, simple  # noqa: PLC0415
+    from paraview import servermanager, simple  # noqa: PLC0415 - on sys.path only once Catalyst is loaded
 
     pxm = servermanager.ProxyManager()
     nodes: list[dict[str, Any]] = []

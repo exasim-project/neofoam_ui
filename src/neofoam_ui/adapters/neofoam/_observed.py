@@ -37,7 +37,7 @@ class ObservedNeoFoamSolver(_NeoFoamBase):
         self.argv = argv or ["neofoam"]
 
     def program(self, session: ProgramContext) -> Iterator[Event]:
-        from neofoam.framework.execution_observer import observe  # noqa: PLC0415
+        from neofoam.framework.execution_observer import observe  # noqa: PLC0415 - neofoam: the solver's venv only
 
         def target() -> Any:
             with observe(stepper):  # type: ignore[arg-type]  # duck-typed observer

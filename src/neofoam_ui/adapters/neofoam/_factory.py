@@ -18,7 +18,7 @@ __all__ = ()
 def has_observer() -> bool:
     """This NeoFOAM has ``neofoam.framework.execution_observer`` (observed mode)."""
     try:
-        import neofoam.framework.execution_observer  # noqa: F401, PLC0415
+        import neofoam.framework.execution_observer  # noqa: F401, PLC0415 - the probe itself
     except ImportError:
         return False
     return True

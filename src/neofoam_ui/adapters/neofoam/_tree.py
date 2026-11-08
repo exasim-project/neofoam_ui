@@ -26,7 +26,7 @@ class NeoFoamSolver(_NeoFoamBase):
     # -- initialization -----------------------------------------------------------------
 
     def _make_runner(self) -> Any:
-        from neofoam.framework.initialization import StagedInitRunner  # noqa: PLC0415
+        from neofoam.framework.initialization import StagedInitRunner  # noqa: PLC0415 - neofoam: the solver's venv only
 
         spec = self.spec
         kwargs = spec._dependency_resolver.resolve_arguments(spec._initialize_func, None)
@@ -41,16 +41,16 @@ class NeoFoamSolver(_NeoFoamBase):
         return runner
 
     def init_steps(self) -> list[InitStep]:
-        from neofoam.framework.initialization.config_context import ConfigContext  # noqa: PLC0415
-        from neofoam.framework.initialization.execution import (  # noqa: PLC0415
+        from neofoam.framework.initialization.config_context import ConfigContext  # noqa: PLC0415 - neofoam: the solver's venv only
+        from neofoam.framework.initialization.execution import (  # noqa: PLC0415 - neofoam: the solver's venv only
             InitializationGraphError,
             execute_step,
             validate,
         )
-        from neofoam.framework.initialization.execution.ordering import (  # noqa: PLC0415
+        from neofoam.framework.initialization.execution.ordering import (  # noqa: PLC0415 - neofoam: the solver's venv only
             _topological_sort,
         )
-        from neofoam.framework.initialization.execution.validation import (  # noqa: PLC0415
+        from neofoam.framework.initialization.execution.validation import (  # noqa: PLC0415 - neofoam: the solver's venv only
             check_replacements,
         )
 
@@ -86,7 +86,7 @@ class NeoFoamSolver(_NeoFoamBase):
         ]
 
     def create_context(self, results: dict[str, Any]) -> Any:
-        from neofoam.framework.initialization.execution import (  # noqa: PLC0415
+        from neofoam.framework.initialization.execution import (  # noqa: PLC0415 - neofoam: the solver's venv only
             InitResult,
             build_context_from_results,
             default_router,
@@ -114,7 +114,7 @@ class NeoFoamSolver(_NeoFoamBase):
     # -- execution graph ------------------------------------------------------------------
 
     def execution_graph(self, ctx: Any) -> list[Op]:
-        from neofoam.framework.graph import DAGResolver  # noqa: PLC0415
+        from neofoam.framework.graph import DAGResolver  # noqa: PLC0415 - neofoam: the solver's venv only
 
         injected: dict[int, str] = {}
         for model in self.runtime.state.optional_models:
