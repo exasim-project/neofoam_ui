@@ -10,6 +10,17 @@ from neofoam_ui.engine import Exchange, Op, PointMapping
 __all__ = ()
 
 
+def _is_mapping_node(op: Any) -> bool:
+    """A NeoFOAM mapping node (``map_<exchange>_to_<region>``): the coupling line's mapping chip
+    stands for it, so the stepper does not show it as a node of its own."""
+    return type(getattr(getattr(op, "func", None), "func", None)).__name__ == "MappingNode"
+
+
+def _visible(ops: list[Any]) -> list[Any]:
+    """The ops the stepper shows (all but the mapping nodes)."""
+    return [op for op in ops if not _is_mapping_node(op)]
+
+
 def _convert(op: Any, injected: dict[int, str]) -> Op:
     meta = op.metadata
     name = meta.op_name or meta.name or "operation"
@@ -32,7 +43,7 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
             test = f"{predicate.__name__}()"
         else:
             test = type(predicate).__name__ + "()"
-        return Op(name, "loop", op.func, [_convert(c, injected) for c in op.sub_operations],
+        return Op(name, "loop", op.func, [_convert(c, injected) for c in _visible(op.sub_operations)],
                   test=test, **common)
     return Op(name, "action", op.run, guard=guard, exchange=_exchange(target), **common)
 
@@ -40,54 +51,38 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
 def _exchange(func: Any) -> Optional[Exchange]:
     """A NeoFOAM coupling node's exchange: the partner's op whose data it hands over.
 
-    The node's function (a ``CouplingNode``) names its coupling and the index of its side;
-    the coupling's other side is the partner, and ``op`` the op its own node runs before.
-    ``None`` for any other op, and for a coupling that lacks its partner.
+    The node's function (a ``CouplingNode``) gives its ``side``, the ``partner`` side and the
+    ``exchange`` (NeoFOAM's public read API); ``partner.op`` is the op the partner's node runs
+    before, the data the fields this side receives. ``None`` for any other op.
     """
-    sides = getattr(getattr(func, "coupling", None), "sides", None)
-    index = getattr(func, "index", None)
-    if not isinstance(sides, list) or len(sides) != 2 or index not in (0, 1):
-        return None
-    side, partner = sides[index], sides[1 - index]
+    side, partner = getattr(func, "side", None), getattr(func, "partner", None)
     source = getattr(partner, "op", None)
-    if not source:
+    if side is None or not source:
         return None
-    kinds = getattr(side, "kinds", {}) or {}
-    return Exchange(str(source), tuple(str(name) for name in kinds), getattr(partner, "region", None),
-                    _mapping(func.coupling, side, partner, kinds))
+    received = getattr(getattr(side, "receives", None), "model_fields", None) or {}
+    return Exchange(str(source), tuple(str(name) for name in received), getattr(partner, "region", None),
+                    _mapping(getattr(func, "exchange", None), side, partner))
 
 
-#: The mapping kind of NeoFOAM's own transfers (``CouplingOp.transfer``), by their name.
-_TRANSFERS = {"identity_transfer": "identity", "MappedTransfer": "nearest-neighbor"}
+def _mapping(exchange: Any, side: Any, partner: Any) -> Optional[PointMapping]:
+    """How a coupling node's data is mapped onto its side's points, as NeoFOAM's exchange tells.
 
-
-def _mapping(coupling: Any, side: Any, partner: Any, kinds: dict[str, str]) -> Optional[PointMapping]:
-    """How a coupling node maps its partner's data onto its side's points, as far as NeoFOAM tells.
-
-    The kind from the coupling's ``transfer`` (a transfer of its own: its name), the mapped
-    fields from the kinds (``Array`` fields go through the transfer, the others are handed over
-    as they are), the points from each side's ``coordinates`` (``None``: the side gives none).
+    The kind is the exchange's ``mapping.kind``, the mapped fields the side's ``mapped`` (the
+    point fields it receives; the others are handed over as they are), the points each side's
+    ``points`` (``None``: the side gives none).
     """
-    transfer = getattr(coupling, "transfer", None)
-    kind = None
-    if transfer is not None:
-        name = getattr(transfer, "__name__", None) or type(transfer).__name__
-        kind = _TRANSFERS.get(name, name)
-    mapped = tuple(str(name) for name, k in kinds.items() if k == "Array") if kinds else None
-    mapping = PointMapping(kind, mapped, _points(partner), _points(side))
+    kind = getattr(getattr(exchange, "mapping", None), "kind", None)
+    mapped = getattr(side, "mapped", None)
+    mapping = PointMapping(None if kind is None else str(kind),
+                           None if mapped is None else tuple(str(name) for name in mapped),
+                           _points(partner), _points(side))
     return None if mapping == PointMapping() else mapping
 
 
-def _points(attached: Any) -> Optional[int]:
-    """The number of interface points of a coupled side (rows of its ``coordinates``), if it has any."""
-    coordinates = getattr(getattr(attached, "side", None), "coordinates", None)
-    shape = getattr(coordinates, "shape", None)
-    if shape:
-        return int(shape[0])
-    try:
-        return len(coordinates) if coordinates is not None else None
-    except TypeError:
-        return None
+def _points(side: Any) -> Optional[int]:
+    """The number of interface points of an exchange side, if it has any."""
+    points = getattr(side, "points", None)
+    return int(points) if isinstance(points, int) else None
 
 
 def _turb_corr_gate(func: Any) -> Optional[tuple[Any, str]]:

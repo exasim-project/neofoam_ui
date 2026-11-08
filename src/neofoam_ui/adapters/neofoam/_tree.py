@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Optional
 
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase
-from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source
+from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source, _visible
 from neofoam_ui.engine import InitStep, Op
 
 __all__ = ()
@@ -123,7 +123,7 @@ class NeoFoamSolver(_NeoFoamBase):
         # A NeoFOAM with resolve_operations also applies the graph edits (coupling loops).
         resolve = getattr(self.runtime, "resolve_operations", None)
         if resolve is not None:
-            return [_convert(op, injected) for op in resolve(ctx).ops]
+            return [_convert(op, injected) for op in _visible(resolve(ctx).ops)]
         builder, model_ops = self.runtime.execution_graph(ctx=ctx)
         resolved = DAGResolver().resolve(builder, model_ops)
-        return [_convert(op, injected) for op in resolved.operations.ops]
+        return [_convert(op, injected) for op in _visible(resolved.operations.ops)]

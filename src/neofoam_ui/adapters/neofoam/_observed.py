@@ -8,7 +8,7 @@ from typing import Any, Callable, Iterator, Optional
 import numpy as np
 
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase
-from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source
+from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source, _visible
 from neofoam_ui.engine import Event, InitStep, Op, ProgramContext, ThreadedProgram
 from neofoam_ui.engine._wire import _init_dict
 
@@ -63,6 +63,8 @@ class _Stepper:
         self.coupling_runs: dict[str, int] = {}
         #: Coupling loop tests so far (all loops): the x of the region field tables.
         self.passes = 0
+        #: What a NeoFOAM coupling node hands its side now (``coupling_exchanged``), by side.
+        self.handed: dict[int, Any] = {}
 
     # -- init -----------------------------------------------------------------------------
 
@@ -101,12 +103,12 @@ class _Stepper:
 
     def operations(self, operations: Any) -> None:
         injected: dict[int, str] = {}
-        ops = [_convert(op, injected) for op in operations.ops]
+        ops = [_convert(op, injected) for op in _visible(operations.ops)]
         self.s.set_ops(ops)  # assigns the ids
         self.nodes.clear()
 
         def index(raw: list[Any], conv: list[Op], parent: str) -> None:
-            for r, c in zip(raw, conv):
+            for r, c in zip(_visible(raw), conv):
                 self.nodes.setdefault(id(r), []).append((parent, c.id))
                 self.names[c.id] = c.name
                 if c.kind == "loop":
@@ -148,7 +150,7 @@ class _Stepper:
             return
         ms = (time.perf_counter() - self.t0) * 1e3
         extra = {}
-        exchange = _exchanged(op)
+        exchange = _exchanged(op, self.handed)
         if exchange:
             extra["exchange"] = exchange
         self.s.record("exec", node, self.names[node], ms, stack=tuple(self.stack), **extra)
@@ -206,6 +208,10 @@ class _Stepper:
                   "values": [[float(np.mean(v)) if np.size(v) else None for v in fields.values()]],
                   "region": region, "x": "coupling pass"})
 
+    def coupling_exchanged(self, coupling: Any, side: Any, data: Any) -> None:
+        """A coupling node is about to hand ``side`` the (mapped) ``data``; shown when it is done."""
+        self.handed[id(side)] = data
+
     def coupling_finished(self, coupling: Any, outcome: Any) -> None:
         """A coupling loop ended: its outcome as one row of a ``pptable`` (Plots pane).
 
@@ -224,23 +230,19 @@ class _Stepper:
                           *(float(v) for v in residuals.values())]]})
 
 
-def _exchanged(op: Any) -> Optional[dict[str, Any]]:
-    """After a NeoFOAM coupling node ran: what its partner sends now, ``{"from", "to", "data"}``.
+def _exchanged(op: Any, handed: dict[int, Any]) -> Optional[dict[str, Any]]:
+    """After a NeoFOAM coupling node ran: what it handed its side, ``{"from", "to", "data"}``.
 
-    Read through the partner side's public ``send()`` (no framework hook gives the data the node
-    handed over): for a serial coupling's second side this is that data; otherwise it is the
-    partner's current data before relaxation and mapping. Each value summarised as text.
-    ``None`` for any other op, or when the data cannot be read.
+    ``handed`` holds what NeoFOAM's ``coupling_exchanged`` hook reported for the node's side:
+    the partner's data, relaxed and mapped onto the side's points. Each value summarised as
+    text. ``None`` for any other op, or when nothing was reported.
     """
     func = getattr(getattr(op, "func", None), "func", None)
-    sides = getattr(getattr(func, "coupling", None), "sides", None)
-    index = getattr(func, "index", None)
-    if not isinstance(sides, list) or len(sides) != 2 or index not in (0, 1):
+    side, partner = getattr(func, "side", None), getattr(func, "partner", None)
+    if side is None or partner is None or id(side) not in handed:
         return None
-    side, partner = sides[index], sides[1 - index]
     try:
-        sent = partner.side.send()
-        data = {str(name): _summary(getattr(sent, name)) for name in getattr(side, "kinds", {}) or ()}
+        data = {str(name): _summary(value) for name, value in handed.pop(id(side))}
     except Exception:  # noqa: BLE001 - a view must never break the run
         return None
     return {"from": getattr(partner, "region", None), "to": getattr(side, "region", None), "data": data}

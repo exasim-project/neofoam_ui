@@ -200,63 +200,80 @@ def test_a_coupling_loop_names_its_scheme():
     assert _convert(loop, {}).test == "CouplingOp() · serial"
 
 
+class Model:
+    """Just enough of a pydantic model class: its field names."""
+
+    def __init__(self, *fields):
+        self.model_fields = dict.fromkeys(fields)
+
+
+def _exchange(kind="nearest-neighbor", points=(2, 3)):
+    """A fake NeoFOAM exchange of a and b (public read API: sides, mapping.kind)."""
+    a = SimpleNamespace(region="a", op="a.solve_T", receives=Model("T", "h"), mapped=("T",),
+                        points=points[0])
+    b = SimpleNamespace(region="b", op="b.solve_T", receives=Model("T", "h"), mapped=("T",),
+                        points=points[1])
+    return SimpleNamespace(sides=(a, b), mapping=SimpleNamespace(kind=kind))
+
+
+class CouplingNode:
+    """Hands the side its partner's data (NeoFOAM's CouplingNode: side, partner, exchange)."""
+
+    def __init__(self, exchange, index):
+        self.exchange, self.side, self.partner = exchange, exchange.sides[index], exchange.sides[1 - index]
+
+    def __call__(self, ctx):
+        return None
+
+
+class MappingNode(CouplingNode):
+    """Maps the partner's data onto the side's points."""
+
+
 def test_a_coupling_node_names_the_partner_op_whose_data_it_hands_over():
     from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
     from neofoam_ui.engine import Exchange, PointMapping  # noqa: PLC0415
 
-    sides = [SimpleNamespace(kinds={"T": "Array", "h": "Array"}, op="a.solve_T", region="a"),
-             SimpleNamespace(kinds={"T": "Array", "h": "Array"}, op="b.solve_T", region="b")]
-
-    class CouplingNode:
-        """Hands the side its partner's data."""
-
-        def __init__(self, index):
-            self.coupling, self.index = SimpleNamespace(sides=sides), index
-
-        def __call__(self, ctx):
-            return None
-
-    nodes = [FakeOp(f"couple_{r}.T") for r in ("a", "b")]
+    exchange = _exchange()
+    nodes = [FakeOp(f"{r}.couple_to_{p}") for r, p in (("a", "b"), ("b", "a"))]
     for i, node in enumerate(nodes):
-        node.func = SimpleNamespace(func=CouplingNode(i))
-    told = PointMapping(mapped=("T", "h"))  # the fakes give no transfer and no coordinates
+        node.func = SimpleNamespace(func=CouplingNode(exchange, i))
     assert [_convert(node, {}).exchange for node in nodes] == [
-        Exchange("b.solve_T", ("T", "h"), "b", told), Exchange("a.solve_T", ("T", "h"), "a", told)]
-    # a plain op, and a coupling that lacks its partner, have none
+        Exchange("b.solve_T", ("T", "h"), "b", PointMapping("nearest-neighbor", ("T",), 3, 2)),
+        Exchange("a.solve_T", ("T", "h"), "a", PointMapping("nearest-neighbor", ("T",), 2, 3))]
+    # a plain op has none
     assert _convert(FakeOp("a.solve_T"), {}).exchange is None
-    sides.pop()
-    assert _convert(nodes[0], {}).exchange is None
 
 
 def test_a_coupling_node_tells_how_it_maps_its_partner_s_data():
-    import numpy as np  # noqa: PLC0415
-
     from neofoam_ui.adapters.neofoam._ops import _mapping  # noqa: PLC0415
     from neofoam_ui.engine import PointMapping  # noqa: PLC0415
 
-    def identity_transfer(data, source, target, iteration):
-        return data
+    exchange = _exchange(kind="identity", points=(None, None))
+    side, partner = exchange.sides
+    # the exchange's mapping kind; a side without coordinates: its points are unknown
+    assert _mapping(exchange, side, partner) == PointMapping("identity", ("T",), None, None)
+    # nothing known at all: no mapping
+    bare = SimpleNamespace()
+    assert _mapping(SimpleNamespace(), bare, bare) is None
 
-    class MappedTransfer:
-        def __call__(self, data, source, target, iteration):
-            return data
 
-    class Bilinear(MappedTransfer):
-        pass
+def test_the_mapping_nodes_are_not_shown_the_coupling_line_s_chip_stands_for_them():
+    exchange = _exchange()
+    mapping, couple, solve = FakeOp("map_a-b_to_a"), FakeOp("a.couple_to_b"), FakeOp("a.solve_T")
+    mapping.func = SimpleNamespace(func=MappingNode(exchange, 0))
+    couple.func = SimpleNamespace(func=CouplingNode(exchange, 0))
+    loop = FakeOp("loop", [mapping, couple, solve], iterations=1)
+    session = FakeSession()
+    stepper = _Stepper(session, lambda event: None)
 
-    kinds = {"T": "Array", "h": "float"}
-    side = SimpleNamespace(side=SimpleNamespace(coordinates=np.zeros((3, 2))))
-    partner = SimpleNamespace(side=SimpleNamespace(coordinates=[[0.0], [1.0]]))
-    # NeoFOAM's own transfers by kind, a custom one by its name; the Array fields are mapped
-    assert _mapping(SimpleNamespace(transfer=MappedTransfer()), side, partner, kinds) == \
-        PointMapping("nearest-neighbor", ("T",), 2, 3)
-    assert _mapping(SimpleNamespace(transfer=identity_transfer), side, partner, kinds).kind == "identity"
-    assert _mapping(SimpleNamespace(transfer=Bilinear()), side, partner, kinds).kind == "Bilinear"
-    # a side without coordinates: its points are unknown; nothing known at all: no mapping
-    bare = SimpleNamespace(side=SimpleNamespace(coordinates=None))
-    assert _mapping(SimpleNamespace(transfer=identity_transfer), bare, bare, kinds) == \
-        PointMapping("identity", ("T",), None, None)
-    assert _mapping(SimpleNamespace(), bare, bare, {}) is None
+    stepper.operations(SimpleNamespace(ops=[loop]))
+    loop.run(stepper)
+
+    children = session.ops[0].children
+    assert [c.name for c in children] == ["a.couple_to_b", "a.solve_T"]
+    # the mapping node runs without a node of its own: no record, no pause
+    assert [node for kind, node in session.records if kind == "exec"] == [c.id for c in children]
 
 
 def test_a_coupling_loop_test_reports_the_residuals_of_the_last_pass():
@@ -276,21 +293,25 @@ def test_a_coupling_loop_test_reports_the_residuals_of_the_last_pass():
     assert [r[2].get("residuals") for r in session.records if r[0] == "test"] == [None, {"x": 0.25}]
 
 
-def test_a_coupling_node_reports_what_its_partner_sends():
+def test_a_coupling_node_reports_what_it_hands_its_side():
     import numpy as np  # noqa: PLC0415
 
     from neofoam_ui.adapters.neofoam._observed import _exchanged  # noqa: PLC0415
 
-    sides = [SimpleNamespace(kinds={"x": "Array"}, region="a",
-                             side=SimpleNamespace(send=lambda: SimpleNamespace(x=np.array([1.5])))),
-             SimpleNamespace(kinds={"x": "Array"}, region="b",
-                             side=SimpleNamespace(send=lambda: SimpleNamespace(x=np.array([0.5, 1.0]))))]
-    node = FakeOp("couple_b.x")
-    node.func = SimpleNamespace(func=SimpleNamespace(coupling=SimpleNamespace(sides=sides), index=1))
-    assert _exchanged(node) == {"from": "a", "to": "b", "data": {"x": "1.5"}}
-    node.func.func.index = 0
-    assert _exchanged(node) == {"from": "b", "to": "a", "data": {"x": "mean 0.75 (n=2)"}}
-    assert _exchanged(FakeOp("a.solve_x")) is None
+    exchange = _exchange()
+    node = FakeOp("b.couple_to_a")
+    node.func = SimpleNamespace(func=CouplingNode(exchange, 1))
+    side = exchange.sides[1]
+    # what NeoFOAM's coupling_exchanged hook reported for the side (a pydantic model iterates
+    # as (name, value))
+    handed = {id(side): [("T", np.array([1.5])), ("h", 2.0)]}
+    assert _exchanged(node, handed) == {"from": "a", "to": "b", "data": {"T": "1.5", "h": "2"}}
+    assert handed == {}
+    handed[id(side)] = [("T", np.array([0.5, 1.0]))]
+    assert _exchanged(node, handed)["data"] == {"T": "mean 0.75 (n=2)"}
+    # nothing reported, or another op: none
+    assert _exchanged(node, {}) is None
+    assert _exchanged(FakeOp("a.solve_x"), handed) is None
 
 
 def test_a_coupling_loop_test_reports_each_region_s_fields():

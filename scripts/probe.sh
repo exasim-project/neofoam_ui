@@ -12,9 +12,7 @@
 # ~/libsAndApps/NeoFOAM), NEOFOAM_PYTHON (default ~/libsAndApps/NeoFOAM/.venv/bin/python),
 # NEOFOAM_SITE (optional: a directory with a sitecustomize.py that points NeoFOAM's editable
 # install at $NEOFOAM_SRC; set to run a worktree's src with the main checkout's venv),
-# NEOFOAM_SRC (default $NEOFOAM_DIR/src), PROBE_COUPLINGS=hand (couple chain and
-# two_interfaces by hand, below the regionCoupling.yaml that cannot describe them),
-# OPENFOAM_BASHRC (default ~/OpenFOAM/OpenFOAM-v2406/etc/bashrc; pybFoam needs it).
+# NEOFOAM_SRC (default $NEOFOAM_DIR/src), OPENFOAM_BASHRC (default ~/OpenFOAM/OpenFOAM-v2406/etc/bashrc; pybFoam needs it).
 # OpenFOAM's bashrc is not strict-mode clean and parses "$@" as overrides:
 # source it first, with the script arguments hidden.
 args=("$@")

@@ -8,10 +8,16 @@ Paused on 2026-11-07. This note records where the coupled-region work stands, so
 |---|---|---|
 | neofoam_ui | `feat/dag-stepper` | The UI for coupled regions, commits `a7c3d26` … `379d132`. |
 | NeoFOAM | `feat/multiphysics-minimal` (worktree `.claude/worktrees/feat+multiphysics-minimal`) | The `feat/region-coupling` chain on top of `feat/operation-domains`, plus the coupling-node refactor (`df2c75f6f`, `14bf00719`) and the probe/limitations cases in `test/solver/multiRun/limitations/`. |
+| NeoFOAM | `feat/coupling-decorators` (same worktree, on top of `feat/multiphysics-minimal`) | `@coupled` sides, `exchanges:` in `regionCoupling.yaml`, a mapping node per side, one loop per connected group, the public read API. |
 
-To open a case, run `scripts/probe.sh <case>`, where `<case>` is pair, chain, …. For the nested chain, set `PROBE_COUPLINGS=hand`.
+To open a case, run `scripts/probe.sh <case>`, where `<case>` is pair, chain, …. The chain and two_interfaces run from their yaml now (one loop each).
 
-## Framework design as it stands (NeoFOAM)
+## Framework design as it stands (NeoFOAM, `feat/coupling-decorators`)
+
+- A BC declares its side with `@coupled(field=...)` (`@coupled.sends` / `.receives` / `.coordinates`, one pydantic model per direction) and registers only its coupling node `<region>.couple_<patch>`. The case's `exchanges:` pairs the nodes and picks the mapping; the framework checks the models crosswise, puts `map_<exchange>_to_<region>` (a `MappingNode`) before each coupling node and builds one `CouplingOp` per group of exchanges sharing a region.
+- Read API the adapter uses: a coupling node's `CouplingNode.side` / `.partner` / `.exchange` (`ExchangeSide`: `region`, `patch`, `op`, `receives`, `mapped`, `points`; `Exchange.mapping.kind`), and the observer hook `coupling_exchanged(coupling, side, data)`. The adapter hides the mapping nodes (the chip stands for them).
+
+## Framework design before `feat/coupling-decorators`
 
 - **One coupling node per coupled op.** `couple_<field>` is inserted directly before the op it feeds and does the whole exchange for that side. There are no separate send or receive ops.
 - **Exchanged data is declared as a pydantic model** per side (`CoupledSide(data=Model, send=..., receive=..., coordinates=...)`). `CouplingOp.attach` raises when the two sides' fields do not match.
@@ -40,7 +46,7 @@ To open a case, run `scripts/probe.sh <case>`, where `<case>` is pair, chain, �
 
 ## Open, in rough order
 
-1. **Framework: one loop per connected group,** plus `interfaces:` as a list in `regionCoupling.yaml`. This removes the nested chain loops (122 solves of a) and lets the box layout settle.
+1. ~~**Framework: one loop per connected group,** plus a list in `regionCoupling.yaml`.~~ Done on `feat/coupling-decorators` (`exchanges:`; chain 29 solves per region).
 2. **Framework hooks for the UI:**
    - multiRun announces its regions before initializing them, so the Init view can show every box from the first run;
    - `coupling_exchanged(node, data)`, so the line shows exactly the data handed over, after relaxation and mapping.
