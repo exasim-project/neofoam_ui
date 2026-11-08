@@ -12,6 +12,8 @@ import os
 from paraview import catalyst
 from paraview.simple import (ColorBy, CreateExtractor, CreateView, ExtractSurface,
                              GetColorTransferFunction, GetScalarBar, Show, TrivialProducer)
+from vtkmodules.vtkCommonCore import vtkDoubleArray
+from vtkmodules.vtkParallelCore import vtkCommunicator, vtkMultiProcessController
 
 _args = catalyst.get_args()
 
@@ -49,9 +51,6 @@ def _global(lows, highs):
     Image size, camera and colour range must be identical on every rank, or
     the parallel compositing (IceT) gathers images of different sizes.
     """
-    from vtkmodules.vtkCommonCore import vtkDoubleArray
-    from vtkmodules.vtkParallelCore import vtkCommunicator, vtkMultiProcessController
-
     controller = vtkMultiProcessController.GetGlobalController()
     if controller is None or controller.GetNumberOfProcesses() < 2:
         return list(lows), list(highs)
