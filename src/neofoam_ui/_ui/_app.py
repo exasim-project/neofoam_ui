@@ -17,6 +17,7 @@ from trame.app import asynchronous
 from neofoam_ui._ui import _shell
 from neofoam_ui._ui._dispatch import _Dispatcher
 from neofoam_ui._ui._format import _fmt
+from neofoam_ui._ui._layout._palette import _REGION
 from neofoam_ui._ui._model import _RunModel
 from neofoam_ui._ui._pusher import _Pusher
 from neofoam_ui._ui._worker_link import _WorkerLink
@@ -362,8 +363,6 @@ class StepperApp:
 def _by_region(rows: list[dict[str, Any]], regions: list[str]) -> list[dict[str, Any]]:
     """Field rows of a multi-region solver (``<region>.<field>``) grouped per region, in the
     regions' order, each with its region and colour; other rows first, as they came."""
-    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
-
     def region(row: dict[str, Any]) -> Optional[str]:
         head = str(row["name"]).split(".", 1)[0]
         return head if "." in str(row["name"]) and head in regions else None

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from neofoam_ui._ui._layout._palette import _REGION
+
 __all__ = ()
 
 
@@ -103,8 +105,6 @@ class _TableHistory:
                  "name": _line_name(key, table, len(rows)), "connectgaps": False,
                  "marker": {"size": 4}} for key in shown]
         if table.region:  # a region's fields: its colour, in shades for further lines
-            from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
-
             color = _REGION.color(table.region)
             for i, line in enumerate(data):
                 line["line"] = {"color": color, "dash": ("solid", "dash", "dot", "dashdot")[i % 4]}
