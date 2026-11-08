@@ -29,3 +29,8 @@ where = ["src"]
 testpaths = ["tests"]
 # the helper solvers the tests import (worker processes get them on their own PYTHONPATH)
 pythonpath = ["tests/helpers"]
+
+[tool.ruff.lint]
+# Imports at the top of the module; the few that cannot be (a dependency only the solver's
+# interpreter has, or one found on sys.path at run time) carry a noqa with the reason.
+extend-select = ["PLC0415"]
