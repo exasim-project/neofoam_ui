@@ -1,9 +1,14 @@
 """The NeoFOAM observer adapter maps hook calls to graph node ids (no neofoam needed)."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
+import numpy as np
+
+from neofoam_ui.adapters.neofoam._fields import _FieldAccess, _RegionContexts
 from neofoam_ui.adapters.neofoam._observed import _Stepper
-from neofoam_ui.engine import assign_ids
+from neofoam_ui.adapters.neofoam._ops import _convert, _mapping
+from neofoam_ui.engine import Exchange, PointMapping, assign_ids
 
 
 class FakeOp:
@@ -159,10 +164,6 @@ def test_each_region_reports_its_own_graph_and_keeps_its_own_stack():
 
 
 def test_multi_region_fields_and_times_are_named_by_region():
-    import numpy as np  # noqa: PLC0415
-
-    from neofoam_ui.adapters.neofoam._fields import _FieldAccess, _RegionContexts  # noqa: PLC0415
-
     def region(x):
         return SimpleNamespace(fields={"x": np.array([x])}, mesh=None,
                                time=SimpleNamespace(value=x, delta_t=1.0, index=1, write_time=False))
@@ -177,8 +178,6 @@ def test_multi_region_fields_and_times_are_named_by_region():
 
 
 def test_a_loop_driven_by_a_bound_method_shows_its_class():
-    from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
-
     class Predicate:
         def _next_pass(self, ctx):
             return False
@@ -238,9 +237,6 @@ def _region_ctx(region, parallel=False, **fields):
 
 
 def test_a_coupling_op_is_a_loop_whose_test_exchanges_one_per_side():
-    from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
-    from neofoam_ui.engine import Exchange, PointMapping  # noqa: PLC0415
-
     a, b = _coupling()
     ops = [_convert(_loop(f"{r}.couple", c, [FakeOp("solve")]), {}, _region_ctx(r, parallel=True))
            for r, c in (("a", a), ("b", b))]
@@ -253,9 +249,6 @@ def test_a_coupling_op_is_a_loop_whose_test_exchanges_one_per_side():
 
 
 def test_a_coupling_op_s_mapping_tells_kind_and_points():
-    from neofoam_ui.adapters.neofoam._ops import _mapping  # noqa: PLC0415
-    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
-
     a, _b = _coupling(kind="identity", points=(None, None))
     side = a.sides[0]
     assert _mapping(a.exchange_of(side), side) == PointMapping("identity", ("T",), None, None)
@@ -289,8 +282,6 @@ def test_the_leader_s_test_reports_its_controller_s_residuals():
 
 
 def test_a_coupling_op_s_test_records_what_it_handed_each_side():
-    import numpy as np  # noqa: PLC0415
-
     a, _b = _coupling()
     op = _loop("a.couple", a, [FakeOp("solve")])
     session = _recording(RegionSession())
@@ -309,8 +300,6 @@ def test_a_coupling_op_s_test_records_what_it_handed_each_side():
 
 
 def test_a_coupling_op_s_test_reports_its_region_s_fields():
-    import numpy as np  # noqa: PLC0415
-
     emitted = []
     session = _recording(RegionSession())
     session.emit = emitted.append
@@ -334,8 +323,6 @@ def test_a_receive_on_the_transport_shows_its_region_waiting_for_the_sender():
 
     class Lanes:
         def waiting(self, region, source, tag):
-            from contextlib import contextmanager  # noqa: PLC0415
-
             @contextmanager
             def wait():
                 calls.append(("wait", region, source, tag))

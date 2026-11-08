@@ -1,9 +1,11 @@
 """A pane from outside: registered without editing the app, it gets a toolbar toggle, a slot,
 the worker's messages, and a say in whether frames are rendered."""
 
+from trame.app import get_server
 from trame.widgets import html
 
 from neofoam_ui import extensions
+from neofoam_ui.app import StepperApp
 from neofoam_ui.extensions import BasePane, ExtensionRegistry, PaneToggle
 
 
@@ -35,10 +37,6 @@ class Residuals(BasePane):
 
 
 def _app(name, registry):
-    from trame.app import get_server  # noqa: PLC0415
-
-    from neofoam_ui.app import StepperApp  # noqa: PLC0415
-
     server = get_server(name, client_type="vue3")
     return server, StepperApp(server, "neofoam_ui.toy.heat1d:Heat1D", registry=registry)
 

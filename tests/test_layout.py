@@ -1,7 +1,26 @@
-from neofoam_ui.engine import Session, assign_ids, topological_order
+from types import SimpleNamespace
+
+from trame.app import get_server
+
+from neofoam_ui._ui._app import _by_region
+from neofoam_ui._ui._layout._dag import _build_flow as build_flow
+from neofoam_ui._ui._layout._palette import _REGION
+from neofoam_ui._ui._model import _RunModel
+from neofoam_ui._ui.panes._dag import _DagPane
+from neofoam_ui._ui.panes._inspector import _inspector_model
+from neofoam_ui._ui.panes._table_history import _TableHistory
+from neofoam_ui.app import StepperApp
+from neofoam_ui.engine import (
+    Exchange,
+    InitStep,
+    Op,
+    PointMapping,
+    Session,
+    assign_ids,
+    topological_order,
+)
 from neofoam_ui.engine._wire import _init_dict as init_dict
 from neofoam_ui.engine._wire import _op_dict as op_dict
-from neofoam_ui._ui._layout._dag import _build_flow as build_flow
 from neofoam_ui.toy.heat1d import Heat1D
 
 
@@ -85,8 +104,6 @@ def _region(region, *, extra=(), exchanges=(), mapping=None, leader=False):
     """One region's own graph, as NeoFOAM builds it and the session ids it: ``time_loop {
     set_time_step, [extra ...,] <region>.couple { solve } }`` under ``<region>/``.
     ``exchanges``: the coupling op's ``[(name, partner region), ...]``."""
-    from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
-
     def op(name, kind="action", children=(), **kw):
         return Op(name, kind, lambda ctx: False, list(children), region=region, **kw)
 
@@ -110,8 +127,6 @@ def _pair(left=None, right=None):
 
 
 def _model(*graphs):
-    from neofoam_ui._ui._model import _RunModel  # noqa: PLC0415
-
     model = _RunModel()
     model.graph({"activity": "exec", "ops": [op_dict(o) for g in graphs for o in g]})
     model.reindex("probe")
@@ -119,8 +134,6 @@ def _model(*graphs):
 
 
 def test_region_ops_take_their_region_colour_and_make_the_legend():
-    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
-
     model = _model(*_pair())
     nodes = {n["id"]: n for n in build_flow([], model.ops)["nodes"]}
 
@@ -184,8 +197,6 @@ def test_coupling_ops_face_each_other_when_the_regions_differ_before_them():
 
 
 def test_a_solver_without_regions_has_no_boxes():
-    from neofoam_ui.engine import Op  # noqa: PLC0415
-
     ops = [Op("loop", "loop", lambda ctx: False, [Op("solve", "action", lambda ctx: None)])]
     assign_ids(ops)
     flow = build_flow([], [op_dict(o) for o in ops])
@@ -243,10 +254,6 @@ def test_a_closed_region_box_keeps_only_its_coupling_ops_on_their_rows():
 
 
 def test_a_box_holding_a_token_or_a_breakpoint_opens():
-    from types import SimpleNamespace  # noqa: PLC0415
-
-    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
-
     index = {"b/l/solve": {"region": "b"}, "a/l/solve": {"region": "a"}, "a/l": {"region": "a"}}
     state = SimpleNamespace(boxes_closed=["a", "b"], cur_node=None, cur_nodes=[], cur_tests=[], bps=[])
     pane = SimpleNamespace(app=SimpleNamespace(state=state), model=SimpleNamespace(index=index))
@@ -261,16 +268,12 @@ def test_a_box_holding_a_token_or_a_breakpoint_opens():
 
 
 def test_the_inspector_names_a_coupling_op_s_exchange():
-    from neofoam_ui._ui.panes._inspector import _inspector_model  # noqa: PLC0415
-
     rows = {r["k"]: r["v"] for r in _inspector_model(_model(*_pair()), "a/time_loop/a.couple", [])["rows"]}
     assert rows["exchange"] == "x ← b (b.to_a), exchange a-b"
     assert rows["loop test"] == "exchange · serial"
 
 
 def test_the_init_view_puts_each_region_s_steps_in_its_box():
-    from neofoam_ui.engine import InitStep  # noqa: PLC0415
-
     steps = [InitStep("a.mesh", lambda r: None, region="a"), InitStep("b.mesh", lambda r: None, region="b"),
              InitStep("b.T", lambda r: None, ["b.mesh"], region="b")]
     graphs = (_region("b", exchanges=[("a-b", "a")]), _region("a", exchanges=[("a-b", "b")]))
@@ -293,8 +296,6 @@ def test_the_init_view_puts_each_region_s_steps_in_its_box():
 
 
 def test_the_mapping_node_shows_kind_points_and_mapped_fields_each_way():
-    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
-
     # a has 4 interface points, b 3 (each its own end tells); T is mapped, h handed over as is
     flow = _flow_of(*_pair(PointMapping("nearest-neighbor", ("T",), None, 4),
                            PointMapping("nearest-neighbor", ("T",), None, 3)))
@@ -307,8 +308,6 @@ def test_the_mapping_node_shows_kind_points_and_mapped_fields_each_way():
 
 
 def test_the_mapping_node_marks_what_the_solver_does_not_tell():
-    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
-
     flow = _flow_of(*_pair(PointMapping(), PointMapping(mapped=("T", "h"))))
     data = {n["id"]: n for n in flow["nodes"]}["exmap:0"]["data"]
     assert data["kind"] is None and data["points"] == {"a": None, "b": None}
@@ -317,9 +316,6 @@ def test_the_mapping_node_marks_what_the_solver_does_not_tell():
 
 
 def test_the_inspector_shows_a_coupling_op_s_mapping():
-    from neofoam_ui._ui.panes._inspector import _inspector_model  # noqa: PLC0415
-    from neofoam_ui.engine import PointMapping  # noqa: PLC0415
-
     model = _model(*_pair(PointMapping("nearest-neighbor", ("T",), None, 4), None))
     rows = {r["k"]: r["v"] for r in _inspector_model(model, "a/time_loop/a.couple", [])["rows"]}
     assert rows["mapping"].startswith("nearest-neighbor")
@@ -332,10 +328,6 @@ def test_a_plain_solver_s_init_view_has_no_region_boxes():
 
 
 def test_the_dag_view_follows_the_run_s_phase_until_the_user_switches():
-    from types import SimpleNamespace  # noqa: PLC0415
-
-    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
-
     rebuilt = []
     pane = SimpleNamespace(_phase=None, app=SimpleNamespace(state=SimpleNamespace(dag_view="init")),
                            rebuild=lambda: rebuilt.append(pane.app.state.dag_view))
@@ -354,8 +346,6 @@ def test_the_dag_view_follows_the_run_s_phase_until_the_user_switches():
 
 
 def test_the_init_view_draws_known_regions_before_they_initialize():
-    from neofoam_ui.engine import InitStep  # noqa: PLC0415
-
     steps = [InitStep("time", lambda r: None), InitStep("a.mesh", lambda r: None, ["time"], region="a")]
     flow = build_flow([init_dict(s) for s in steps], None, view="init", regions=("a", "b"))
     nodes = {n["id"]: n for n in flow["nodes"]}
@@ -366,10 +356,6 @@ def test_the_init_view_draws_known_regions_before_they_initialize():
 
 
 def test_the_dag_pane_shows_what_a_coupling_node_hands_over_and_heats_its_line():
-    from types import SimpleNamespace  # noqa: PLC0415
-
-    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
-
     state = SimpleNamespace(ex_vals={}, ex_hot=[])
     pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"c/couple_b.x": ["0"], "c/couple_a.x": ["0"]},
                            _line_sides={"0": ("a", "b")}, _line_name={"0": None})
@@ -383,10 +369,6 @@ def test_the_dag_pane_shows_what_a_coupling_node_hands_over_and_heats_its_line()
 
 
 def test_a_coupling_op_s_test_heats_all_its_lines_and_fills_each_by_exchange_name():
-    from types import SimpleNamespace  # noqa: PLC0415
-
-    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
-
     state = SimpleNamespace(ex_vals={}, ex_hot=[])
     # b's coupling op sits on the lines a-b (0) and b-c (1)
     pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"g/b.couple": ["0", "1"]},
@@ -399,9 +381,6 @@ def test_a_coupling_op_s_test_heats_all_its_lines_and_fills_each_by_exchange_nam
 
 
 def test_field_rows_are_grouped_per_region_in_the_boxes_order():
-    from neofoam_ui._ui._app import _by_region  # noqa: PLC0415
-    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
-
     rows = [{"name": n} for n in ("c.x", "a.x", "time", "b.x", "a.T")]
     out = _by_region(rows, ["a", "b", "c"])
     assert [r["name"] for r in out] == ["time", "a.x", "a.T", "b.x", "c.x"]
@@ -409,9 +388,6 @@ def test_field_rows_are_grouped_per_region_in_the_boxes_order():
 
 
 def test_a_region_fields_table_is_drawn_in_the_region_s_colour():
-    from neofoam_ui._ui._layout._palette import _REGION  # noqa: PLC0415
-    from neofoam_ui._ui.panes._table_history import _TableHistory  # noqa: PLC0415
-
     history = _TableHistory()
     history.add({"name": "fields · b", "time": 1.0, "columns": ["x"], "values": [[0.5]], "region": "b",
                  "x": "coupling pass"})
@@ -421,8 +397,6 @@ def test_a_region_fields_table_is_drawn_in_the_region_s_colour():
 
 
 def test_the_wire_carries_a_coupling_node_s_mapping_only_when_known():
-    from neofoam_ui.engine import Exchange, Op, PointMapping  # noqa: PLC0415
-
     plain = op_dict(Op("couple_a.x", "action", lambda ctx: None, exchange=Exchange("b.solve", ("x",), "b")))
     assert "mapping" not in plain["exchange"]
     told = op_dict(Op("couple_a.x", "action", lambda ctx: None,
@@ -432,10 +406,6 @@ def test_the_wire_carries_a_coupling_node_s_mapping_only_when_known():
 
 
 def test_the_app_shows_a_token_per_region_and_who_waits_for_whom():
-    from trame.app import get_server  # noqa: PLC0415
-
-    from neofoam_ui.app import StepperApp  # noqa: PLC0415
-
     app = StepperApp(get_server("regions_tokens", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D")
     model = app.model
     model.graph({"activity": "exec", "ops": [op_dict(o) for g in _pair() for o in g]})

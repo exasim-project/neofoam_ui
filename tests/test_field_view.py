@@ -6,11 +6,16 @@ import json
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from neofoam_ui import catalyst
+from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow as build_pipeline_flow
+from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
+from neofoam_ui.catalyst._blueprint import _blueprint
+from neofoam_ui.catalyst._native import _import
 from neofoam_ui.engine import Session
 from neofoam_ui.geometry import cell_centres_geometry, polyhedral, read_polymesh
 from neofoam_ui.toy.heat1d import Heat1D
@@ -298,8 +303,6 @@ def test_a_failing_description_keeps_the_frames(monkeypatch):
 
 
 def test_pipeline_layout_layers_by_data_flow():
-    from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow as build_pipeline_flow
-
     desc = {"script": "x.py", "edges": [{"source": "a", "target": "b"}, {"source": "b", "target": "c"},
                                         {"source": "a", "target": "e"}, {"source": "c", "target": "gone"}],
             "nodes": [{"id": i, "kind": k, "name": i, "type": k, "settings": [["k", "v"]] * n}
@@ -330,10 +333,6 @@ def test_view_offers_view_fields_the_stats_table_does_not(fake_catalyst):
 
 
 def test_neofoam_view_fields_from_the_mesh_registry(monkeypatch):
-    from types import SimpleNamespace
-
-    from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
-
     class Field:
         def __init__(self, name, values):
             self._name, self.values = name, np.asarray(values, dtype=float)
@@ -537,11 +536,9 @@ needs_catalyst = pytest.mark.skipif(not PREFIX, reason=f"set {catalyst.ENV} to a
 
 @needs_catalyst
 def test_blueprint_of_the_polymesh_verifies(tmp_path):
-    from neofoam_ui.catalyst._blueprint import _blueprint  # noqa: PLC0415
-    from neofoam_ui.catalyst._native import _import  # noqa: PLC0415
-
     _, conduit = _import(PREFIX)
-    from catalyst_conduit import blueprint  # noqa: F401  (registers conduit.blueprint)
+    # registers conduit.blueprint; on sys.path only once _import added Catalyst's site-packages
+    from catalyst_conduit import blueprint  # noqa: F401, PLC0415
 
     write_ascii(tmp_path)
     geom = polyhedral(read_polymesh(str(tmp_path)), 2)

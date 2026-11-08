@@ -6,8 +6,11 @@ Opt-in: needs a NeoFOAM interpreter and a sourced OpenFOAM, e.g.::
     NEOFOAM_PYTHON=~/libsAndApps/NeoFOAM/.venv/bin/python pixi run pytest tests/test_neofoam_adapter.py
 """
 
+import csv
+import json
 import os
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -76,9 +79,6 @@ def _has_postprocess() -> bool:
 @pytest.mark.parametrize("ui_mode", ["tree", "observed"])
 def test_post_processing_tables_reach_the_ui(tmp_path, ui_mode):
     """The example tables (examples/pitzDaily): a diagram each, and rows equal to the CSVs."""
-    import csv  # noqa: PLC0415
-    import json  # noqa: PLC0415
-
     if not _has_postprocess():
         pytest.skip("this NeoFOAM has no post-processing tables")
     if ui_mode == "observed" and not _has_observer():
@@ -124,8 +124,6 @@ def test_post_processing_tables_reach_the_ui(tmp_path, ui_mode):
 def test_mpi_free_runs_keep_the_ranks_in_step(tmp_path):
     """mpirun -np 2, observed: free runs (events passed on each rank), a breakpoint, a Pause,
     single steps; every pause has the stats of both ranks, and the run ends cleanly."""
-    import json  # noqa: PLC0415
-
     if not _has_observer() or not shutil.which("mpirun"):
         pytest.skip("needs the execution observer and mpirun")
     case = _pitzdaily(tmp_path)
@@ -133,7 +131,7 @@ def test_mpi_free_runs_keep_the_ranks_in_step(tmp_path):
         subprocess.run(["foamDictionary", "-entry", entry, "-set", value, "system/decomposeParDict"],
                        cwd=case, check=True, capture_output=True)
     subprocess.run(["decomposePar", "-force"], cwd=case, check=True, capture_output=True)
-    with __import__("socket").socket() as sock:
+    with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     proc = subprocess.Popen(["mpirun", "-np", "2", PYTHON, "-u", "-m", "neofoam_ui.worker",

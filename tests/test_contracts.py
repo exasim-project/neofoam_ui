@@ -11,9 +11,17 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
+from trame.app import get_server
+
+import neofoam_ui
+from neofoam_ui.app import StepperApp
+from neofoam_ui.catalyst._config import _PIPELINE
+from neofoam_ui.engine import Session
+from neofoam_ui.toy.heat1d import Heat1D
 
 GOLDEN = Path(__file__).parent / "golden"
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -40,19 +48,14 @@ def test_public_entry_points_resolve(spec):
 
 
 def test_the_catalyst_script_stays_at_its_path():
-    import neofoam_ui  # noqa: PLC0415
-
     root = Path(neofoam_ui.__file__).parent
     assert (root / "pipelines" / "view.py").is_file()
-    from neofoam_ui.catalyst._config import _PIPELINE  # noqa: PLC0415
 
     assert Path(_PIPELINE).resolve() == (root / "pipelines" / "view.py").resolve()
 
 
 def test_the_catalyst_script_is_packaged():
     """``pipelines/`` has no ``__init__``: it ships as a namespace package (setuptools' default)."""
-    import tomllib  # noqa: PLC0415
-
     config = tomllib.loads((SRC.parent / "pyproject.toml").read_text())
     assert config["tool"]["setuptools"]["packages"]["find"].get("namespaces", True)
     assert not (SRC / "neofoam_ui" / "pipelines" / "__init__.py").exists()
@@ -83,10 +86,6 @@ def test_python_m_worker_prints_its_usage():
 
 
 def _app(name):
-    from trame.app import get_server  # noqa: PLC0415
-
-    from neofoam_ui.app import StepperApp  # noqa: PLC0415
-
     server = get_server(name, client_type="vue3")
     return server, StepperApp(server, "neofoam_ui.toy.heat1d:Heat1D")
 
@@ -110,9 +109,6 @@ def test_trame_template_unchanged():
 
 
 def _trace():
-    from neofoam_ui.engine import Session  # noqa: PLC0415
-    from neofoam_ui.toy.heat1d import Heat1D  # noqa: PLC0415
-
     out = []
 
     def emit(m):

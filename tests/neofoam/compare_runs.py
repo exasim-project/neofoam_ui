@@ -3,18 +3,17 @@
 import sys
 
 import numpy as np
+from neofoam.solver.incompressibleFluid.incompressibleFluid import run
+
+from neofoam_ui.adapters.neofoam import incompressible_fluid
+from neofoam_ui.engine import Session
 
 mode, out = sys.argv[1], sys.argv[2]
 if mode == "plain":
-    from neofoam.solver.incompressibleFluid.incompressibleFluid import run
-
     ctx = run(["neofoam"])
     fields = {k: np.asarray(f.internalField()) for k, f in ctx.fields.items()
               if k in ("U", "p", "phi")}
 else:
-    from neofoam_ui.adapters.neofoam import incompressible_fluid
-    from neofoam_ui.engine import Session
-
     messages = []
     session = Session(incompressible_fluid(), messages.append)
     session.start()

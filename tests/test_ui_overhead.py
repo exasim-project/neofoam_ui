@@ -1,9 +1,14 @@
 """The UI's side of a cheap run: options, and telling the worker who watches the DAG."""
 
+import asyncio
+import json
+
+from trame.app import get_server
+
+from neofoam_ui.app import StepperApp, parse_args
+
 
 def test_delay_option_and_environment(monkeypatch):
-    from neofoam_ui.app import parse_args
-
     monkeypatch.delenv("NEOFOAM_UI_DELAY_MS", raising=False)
     monkeypatch.delenv("NEOFOAM_UI_WAIT", raising=False)
     args = parse_args([])
@@ -16,10 +21,6 @@ def test_delay_option_and_environment(monkeypatch):
 
 
 def test_app_tells_the_worker_who_watches():
-    from trame.app import get_server
-
-    from neofoam_ui.app import StepperApp
-
     app = StepperApp(get_server("overhead_watch", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D",
                      delay_ms=40)
     sent = []
@@ -38,13 +39,6 @@ def test_app_tells_the_worker_who_watches():
 
 
 def test_state_is_pushed_at_a_capped_rate_and_syncs_are_acknowledged():
-    import asyncio
-    import json
-
-    from trame.app import get_server
-
-    from neofoam_ui.app import StepperApp
-
     app = StepperApp(get_server("overhead_push", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D")
     pushes = []
     real = app.pusher.push

@@ -10,10 +10,13 @@ from __future__ import annotations
 import math
 from typing import Any, NamedTuple
 
+from trame.app import get_server
+
 from neofoam_ui.engine import Session
 from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow as build_pipeline_flow
 from neofoam_ui._ui.panes._table_history import _TableHistory as TableHistory
-from neofoam_ui.pptables import describe_table, observe, rows_message
+from neofoam_ui.app import StepperApp
+from neofoam_ui.pptables import _describe, describe_table, observe, register_describer, rows_message
 from neofoam_ui.toy.heat1d import Heat1D
 
 # -- fakes ----------------------------------------------------------------------------------
@@ -238,9 +241,6 @@ def test_pipeline_is_described_from_the_node_objects():
 
 
 def test_a_registered_describer_describes_its_nodes(monkeypatch):
-    from neofoam_ui.pptables import _describe  # noqa: PLC0415
-    from neofoam_ui.pptables import register_describer  # noqa: PLC0415
-
     monkeypatch.setattr(_describe, "_DESCRIBERS", [])
 
     def binary(obj):  # e.g. a case's own selector, drawn as one node
@@ -350,10 +350,6 @@ def test_rows_that_come_and_go_leave_gaps_and_a_repeated_step_replaces():
 
 
 def test_app_draws_tables_and_plots_their_rows():
-    from trame.app import get_server  # noqa: PLC0415
-
-    from neofoam_ui.app import StepperApp  # noqa: PLC0415
-
     server = get_server("pptables_test", client_type="vue3")
     app = StepperApp(server, "neofoam_ui.toy.heat1d:Heat1D")
     tables = [describe_table(t) for t in processor()._tables]
@@ -384,10 +380,6 @@ def test_app_draws_tables_and_plots_their_rows():
 
 
 def test_no_tables_says_so():
-    from trame.app import get_server  # noqa: PLC0415
-
-    from neofoam_ui.app import StepperApp  # noqa: PLC0415
-
     app = StepperApp(get_server("pptables_none", client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D")
     with app.state:
         app.dispatch({"type": "pptables", "tables": []})

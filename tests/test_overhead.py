@@ -11,14 +11,22 @@ import time
 import types
 
 import pytest
+import test_pptables  # its fake PostProcessor
+from self_driven import RankSelfDriven, SelfDriven
+from test_parallel import _port
 
+from neofoam_ui import catalyst
+from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
+from neofoam_ui.catalyst import InSitu
 from neofoam_ui.engine import _tracking as engine
 from neofoam_ui.engine import UNTRACKED, Session
+from neofoam_ui.parallel import SYNC_ENV
+from neofoam_ui.protocol import LOSSY
 from neofoam_ui.toy.heat1d import Heat1D
+from neofoam_ui.worker._out import _Out
+from neofoam_ui.worker._out import _thin as thin
 
 HELPERS = os.path.join(os.path.dirname(__file__), "helpers")
-sys.path.insert(0, HELPERS)
-from self_driven import SelfDriven  # noqa: E402
 
 
 def of(messages, kind):
@@ -177,8 +185,6 @@ class FakeInSitu:
 
 @pytest.fixture
 def fake_catalyst(monkeypatch, tmp_path):
-    from neofoam_ui import catalyst
-
     monkeypatch.setenv(catalyst.ENV, "/nowhere")
     monkeypatch.setenv(catalyst.OUT_ENV, str(tmp_path))
     monkeypatch.setattr(catalyst, "InSitu", FakeInSitu)
@@ -200,8 +206,6 @@ def test_live_frames_at_their_interval(fake_catalyst, every, seconds, expected):
 
 
 def test_only_the_newest_images_are_kept(tmp_path):
-    from neofoam_ui.catalyst import InSitu
-
     insitu = types.SimpleNamespace(out_dir=str(tmp_path), step=0, _pruned=0)
     for step in range(30):
         (tmp_path / f"view_{step:06d}.png").write_bytes(b"png")
@@ -215,10 +219,6 @@ def test_only_the_newest_images_are_kept(tmp_path):
 
 @pytest.mark.parametrize("rank", [0, 1])
 def test_post_processing_rows_are_converted_on_rank_0_only(monkeypatch, rank):
-    import test_pptables  # noqa: PLC0415 - its fake PostProcessor
-
-    from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
-
     model = types.ModuleType("neofoam.postprocess.model")
     model.PostProcessor = test_pptables.PostProcessor
     for name, module in (("neofoam", types.ModuleType("neofoam")),
@@ -239,9 +239,6 @@ def test_post_processing_rows_are_converted_on_rank_0_only(monkeypatch, rank):
 
 
 def test_thinning_keeps_every_critical_message_in_order():
-    from neofoam_ui.protocol import LOSSY
-    from neofoam_ui.worker._out import _thin as thin
-
     batch = []
     for i in range(300):
         batch.append({"type": "log", "i": i})
@@ -275,8 +272,6 @@ class SlowStream:
 
 
 def test_a_slow_ui_does_not_block_the_solver():
-    from neofoam_ui.worker._out import _Out
-
     stream = SlowStream()
     out = _Out(stream)
     t0 = time.perf_counter()
@@ -383,10 +378,6 @@ def test_without_wait_the_solver_runs_ahead_of_a_ui_that_does_not_read():
 
 def test_followers_pass_the_events_of_a_free_run_alike(monkeypatch):
     """Rank 0 and a follower, self-driven (as NeoFOAM), stay in step through free runs."""
-    from test_parallel import _port
-
-    from neofoam_ui.parallel import SYNC_ENV
-
     port = _port()
 
     def worker(rank, **kw):
@@ -423,8 +414,6 @@ def test_followers_pass_the_events_of_a_free_run_alike(monkeypatch):
         end = reader.until("paused")[-1]
         assert end["finished"] and not end["failed"]
 
-        from self_driven import RankSelfDriven
-
         means = []
         for rank in (0, 1):  # each rank's run in-process: the global mean is theirs
             monkeypatch.setenv("OMPI_COMM_WORLD_RANK", str(rank))
@@ -445,10 +434,6 @@ def test_followers_pass_the_events_of_a_free_run_alike(monkeypatch):
 
 def test_followers_honour_a_pause_at_the_next_time_step():
     """Under MPI a Pause in a free run takes effect at the next time step, on every rank."""
-    from test_parallel import _port
-
-    from neofoam_ui.parallel import SYNC_ENV
-
     port = _port()
 
     def worker(rank, **kw):
