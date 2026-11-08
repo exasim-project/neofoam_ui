@@ -25,6 +25,7 @@ the open panes' own data (frames at their interval, post-processing rows).
 
 from __future__ import annotations
 
+import threading
 import time
 import traceback
 from typing import Any, Callable, Iterator, Optional
@@ -95,6 +96,10 @@ class Session:
         #: Rendered frames kept on disk (older images of this session are deleted).
         self.keep_frames = 20
         self._view = _FieldView(self, renderer)
+        #: A multi-region solver's graph: each region's ops (and its stepping rank), in order.
+        self._region_ops: dict[str, tuple[Optional[int], list[Op]]] = {}
+        #: Region threads report concurrently: one graph / log / paused message at a time.
+        self._lock = threading.RLock()
         if isinstance(solver, SelfDrivingSolver):  # the solver drives itself and fills self.init
             self.init: list[InitStep] = []
             self._gen = solver.program(self)
@@ -104,6 +109,8 @@ class Session:
         self.event: Event = next(self._gen)
         self.finished = False
         self.failed = False
+        if self.program_thread is not None:  # a region that stops outside a step is news
+            self.program_thread.lanes.on_change = self._regions_moved
 
     def set_peers(self, peers: Peers) -> None:
         """Rank 0 of an MPI run: keep ``peers`` in step from the next resume on.
@@ -143,6 +150,33 @@ class Session:
         assign_ids(self.ops)
         self.emit({"type": "graph", "activity": "exec", "ops": [_op_dict(o) for o in self.ops]})
 
+    def set_region_ops(self, region: str, ops: list[Op], rank: Optional[int] = None) -> None:
+        """Region ``region``'s own graph (a multi-region solver, from the region's thread).
+
+        Its ops get the region and ids under ``<region>/`` (``a/time_loop/a.couple``); the
+        graph sent is every region's, the regions in stepping order (``rank``, else as they
+        came)."""
+
+        def mark(ops_: list[Op]) -> None:
+            for op in ops_:
+                op.region = region
+                mark(op.children)
+
+        mark(ops)
+        assign_ids(ops, f"{region}/")
+        with self._lock:
+            self._region_ops[region] = (rank, ops)
+            arrival = list(self._region_ops)
+            order = sorted(arrival, key=lambda r: (self._region_ops[r][0] is None,
+                                                   self._region_ops[r][0] or 0, arrival.index(r)))
+            self._order_regions(order)
+            self.ops = [op for r in order for op in self._region_ops[r][1]]
+            self.emit({"type": "graph", "activity": "exec", "ops": [_op_dict(o) for o in self.ops]})
+
+    def _order_regions(self, regions: list[str]) -> None:
+        if self.program_thread is not None:
+            self.program_thread.lanes.order = list(regions)
+
     def observe_result(self, value: Any) -> None:
         """Offer an init-step result to the solver's optional ``observe(value, emit)``."""
         if self._observe is None:
@@ -160,11 +194,15 @@ class Session:
         return self.program_thread.call(fn, timeout)
 
     def record(self, kind: str, node: str, name: str, ms: float, **extra: Any) -> None:
-        """Book-keeping after an event ran: timing, call count, written fields, log line."""
-        self.tracker.count(node, ms)
-        if kind == "exec":
-            self._track_writes(node, name)
-        self._log(kind, node, name, **extra)
+        """Book-keeping after an event ran: timing, call count, written fields, log line.
+
+        ``region``: the event's region (a multi-region solver): its writes are looked for
+        among its own fields (``<region>.<field>``) only, and the log line names it."""
+        with self._lock:
+            self.tracker.count(node, ms)
+            if kind == "exec":
+                self._track_writes(node, name, extra.get("region"))
+            self._log(kind, node, name, **extra)
 
     def _walk(self, ops: list[Op], depth: int, stack: tuple[tuple[str, int], ...]) -> Iterator[Event]:
         for op in ops:
@@ -184,14 +222,18 @@ class Session:
                     break
                 yield from self._walk(op.children, depth + 1, stack + ((op.id, i),))
 
-    def _track_writes(self, node: str, op_name: str) -> None:
+    def _track_writes(self, node: str, op_name: str, region: Optional[str] = None) -> None:
         if self.stepping:  # a free run: no checksums, see advance()
-            self.tracker.track_writes(self.ctx, node, op_name)
+            self.tracker.track_writes(self.ctx, node, op_name, region)
 
     def _log(self, kind: str, node: str, name: str, **extra: Any) -> None:
         if not (self.stepping or self.watch) or self.follower:  # a free run nobody watches
             return
         stack = extra.pop("stack", ())
+        if extra.get("region") is None:
+            extra.pop("region", None)
+        if "time" not in extra:  # (a region's event brings its region's time)
+            extra["time"] = self.solver.scalars(self.ctx).get("time") if self.ctx is not None else None
         self.emit(
             {
                 "type": "log",
@@ -200,7 +242,6 @@ class Session:
                 "name": name,
                 "ms": round(self.tracker.last_ms.get(node, 0.0), 3),
                 "stack": [list(s) for s in stack],
-                "time": self.solver.scalars(self.ctx).get("time") if self.ctx is not None else None,
                 **extra,
             }
         )
@@ -222,6 +263,9 @@ class Session:
         second time step it starts.
         """
         if self.finished:
+            return
+        if self.event.regions:
+            self._advance_regions(mode, target, track)
             return
         start = self.event
         until = _until(mode, start, target)
@@ -260,6 +304,41 @@ class Session:
                 self._arm(mode if free else None, target)  # breakpoints / delay changed meanwhile
             if self.watch:
                 self._running(ev)
+        self._paused()
+
+    def _advance_regions(self, mode: Mode, target: Optional[str], track: Optional[bool]) -> None:
+        """A multi-region solver: every region takes the step, the step ends when they rest
+        (see :mod:`neofoam_ui.engine._lanes`)."""
+        start = self.event
+        _until(mode, start, target)  # (an unknown mode raises here, as for one region)
+        self.pause_requested = False
+        free = _free_run(mode, start)
+        self._begin(not free or mode == "run_to" if track is None else track)
+        assert self.program_thread is not None
+        lanes = self.program_thread.lanes
+        lanes.begin(mode, target, frozenset(self.breakpoints),
+                    lambda: self.pause_requested or self.stop_requested,
+                    self._running if self.watch else None)
+        try:
+            self.event = next(self._gen)
+        except Exception:  # a region's solver raised: the run ended with its error
+            self.failed = self.finished = True
+            failed = lanes.failed()
+            self.emit({"type": "error", "node": start.node, "region": failed[0] if failed else None,
+                       "traceback": traceback.format_exc()})
+            self._paused()
+            return
+        if self.event.kind == "end":
+            self.finished = True
+        elif lanes.hit is not None:
+            self.emit({"type": "breakpoint", "node": lanes.hit})
+        self._paused()
+
+    def _regions_moved(self) -> None:
+        """A region stopped outside a step (its data arrived late): show where they are now."""
+        if self.finished or self.program_thread is None:
+            return
+        self.event = self.program_thread.lanes.snapshot()
         self._paused()
 
     def _arm(self, mode: Optional[Mode], target: Optional[str]) -> None:
@@ -376,16 +455,18 @@ class Session:
             return
         self.send_view()
         t = self.tracker
-        self.emit(
-            {
-                "type": "paused",
-                "event": self.event.to_dict(),
-                "finished": self.finished,
-                "failed": self.failed,
-                "summary": self.summary(),
-                "calls": t.calls,
-                "last_ms": {k: round(v, 3) for k, v in t.last_ms.items()},
-                "total_ms": {k: round(v, 3) for k, v in t.total_ms.items()},
-                "writes_seen": {k: sorted(v) for k, v in t.writes_seen.items()},
-            }
-        )
+        with self._lock:  # (regions: copies, a late region may still book its last event)
+            copy = (lambda d: dict(d)) if self.event.regions else (lambda d: d)
+            self.emit(
+                {
+                    "type": "paused",
+                    "event": self.event.to_dict(),
+                    "finished": self.finished,
+                    "failed": self.failed,
+                    "summary": self.summary(),
+                    "calls": copy(t.calls),
+                    "last_ms": {k: round(v, 3) for k, v in copy(t.last_ms).items()},
+                    "total_ms": {k: round(v, 3) for k, v in copy(t.total_ms).items()},
+                    "writes_seen": {k: sorted(v) for k, v in copy(t.writes_seen).items()},
+                }
+            )

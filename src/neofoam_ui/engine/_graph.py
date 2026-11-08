@@ -113,15 +113,42 @@ class Event:
     iter: Optional[int] = None
     #: Enclosing loops, outermost first, as ``(loop id, iteration)``.
     stack: tuple[tuple[str, int], ...] = ()
+    #: The region of a multi-region solver whose thread the event is on (``None``: one region).
+    region: Optional[str] = None
+    #: A multi-region solver at rest: where each region is (the event itself is one of them).
+    regions: tuple[RegionState, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "kind": self.kind,
             "node": self.node,
             "depth": self.depth,
             "iter": self.iter,
             "stack": [list(s) for s in self.stack],
         }
+        if self.region is not None:  # optional: only a multi-region solver's events carry it
+            out["region"] = self.region
+        if self.regions:
+            out["regions"] = [r.to_dict() for r in self.regions]
+        return out
+
+
+@dataclass(frozen=True)
+class RegionState:
+    """Where one region of a multi-region solver is while the regions rest."""
+
+    region: str
+    #: ``paused`` (before :attr:`event`), ``waiting`` (for :attr:`waiting_for`'s data, in a
+    #: receive, after :attr:`event`), ``running``, ``done`` or ``failed``.
+    state: str
+    event: Optional[Event] = None
+    #: The region it waits for.
+    waiting_for: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"region": self.region, "state": self.state,
+                "event": None if self.event is None else self.event.to_dict(),
+                "waiting_for": self.waiting_for}
 
 
 def assign_ids(ops: list[Op], prefix: str = "", pos: str = "") -> None:

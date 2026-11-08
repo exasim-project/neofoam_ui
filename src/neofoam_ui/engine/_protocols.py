@@ -62,6 +62,9 @@ class ProgramContext(Protocol):
 
     def set_ops(self, ops: list[Op]) -> None: ...
 
+    def set_region_ops(self, region: str, ops: list[Op], rank: Optional[int] = None) -> None:
+        """A multi-region solver: region ``region``'s own graph (each region reports its own)."""
+
     def observe_result(self, value: Any) -> None: ...
 
     def record(self, kind: str, node: str, name: str, ms: float, **extra: Any) -> None: ...

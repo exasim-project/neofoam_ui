@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import zlib
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -66,10 +66,18 @@ class _Tracker:
         else:
             self._stale = True
 
-    def track_writes(self, ctx: Any, node: str, op_name: str) -> None:
-        """After action ``node`` ran: which fields it changed."""
+    def track_writes(self, ctx: Any, node: str, op_name: str, region: Optional[str] = None) -> None:
+        """After action ``node`` ran: which fields it changed.
+
+        ``region`` (a multi-region solver, whose regions run concurrently): only its own
+        fields (``<region>.<field>``) are compared, the others' writes are theirs."""
         now = self._field_prints(ctx)
-        self.last_writes = [k for k, v in now.items() if self._prints.get(k) != v]
+        if region is not None:
+            head = f"{region}."
+            now = {**self._prints, **{k: v for k, v in now.items() if k.startswith(head)}}
+            self.last_writes = [k for k, v in now.items() if k.startswith(head) and self._prints.get(k) != v]
+        else:
+            self.last_writes = [k for k, v in now.items() if self._prints.get(k) != v]
         for k in self.last_writes:
             self.last_written_by[k] = op_name
         if self.last_writes:
