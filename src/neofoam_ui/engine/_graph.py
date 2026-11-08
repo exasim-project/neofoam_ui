@@ -44,6 +44,8 @@ class Exchange:
     partner: Optional[str] = None
     #: How the data is mapped onto this side's interface points (``None``: not known).
     mapping: Optional[PointMapping] = None
+    #: The exchange's name, which both of its ends share (``None``: the solver does not tell).
+    name: Optional[str] = None
 
 
 @dataclass
@@ -75,9 +77,11 @@ class Op:
     region: Optional[str] = None
     #: A coupling node's data exchange (``None``: not a coupling node).
     exchange: Optional[Exchange] = None
-    #: A mapping node: the name of the coupling node it maps the partner's data for (it runs
-    #: right before it). Drawn on the coupling line, not in a region box.
-    maps: Optional[str] = None
+    #: A region's coupling op (a loop whose test exchanges): one exchange per coupled side;
+    #: takes the place of ``exchange``.
+    exchanges: list[Exchange] = field(default_factory=list)
+    #: A short tag shown on the node, e.g. ``"leader"`` (the coupling op that decides).
+    tag: Optional[str] = None
 
 
 @dataclass

@@ -242,7 +242,7 @@ def test_the_inspector_names_a_coupling_node_s_exchange():
     model.reindex("probe")
 
     rows = {r["k"]: r["v"] for r in _inspector_model(model, "loop/couple_a.x", [])["rows"]}  # by the shared id
-    assert rows["exchange"] == "x ← b (b.solve), for the op below"
+    assert rows["exchange"] == "x ← b (b.solve)"
 
 
 def test_the_init_view_puts_each_region_s_steps_in_its_box_below_the_driver_s():
@@ -319,7 +319,8 @@ def test_the_dag_pane_shows_what_a_coupling_node_hands_over_and_heats_its_line()
     from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
 
     state = SimpleNamespace(ex_vals={}, ex_hot=[])
-    pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"c/couple_b.x": "0", "c/couple_a.x": "0"})
+    pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"c/couple_b.x": ["0"], "c/couple_a.x": ["0"]},
+                           _line_sides={"0": ("a", "b")}, _line_name={"0": None})
     exchanged = lambda msg: _DagPane._exchanged(pane, msg)  # noqa: E731
     exchanged({"node": "c/couple_b.x", "exchange": {"from": "a", "to": "b", "data": {"x": "1.5"}}})
     assert state.ex_hot == ["0"] and state.ex_vals == {"0": {"a": "x = 1.5"}}
@@ -327,6 +328,22 @@ def test_the_dag_pane_shows_what_a_coupling_node_hands_over_and_heats_its_line()
     assert state.ex_vals == {"0": {"a": "x = 1.5", "b": "x = 0.75"}}
     exchanged({"node": "c/a.solve"})
     assert state.ex_hot == []
+
+
+def test_a_coupling_op_s_test_heats_all_its_lines_and_fills_each_by_exchange_name():
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from neofoam_ui._ui.panes._dag import _DagPane  # noqa: PLC0415
+
+    state = SimpleNamespace(ex_vals={}, ex_hot=[])
+    # b's coupling op sits on the lines a-b (0) and b-c (1)
+    pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"g/b.couple": ["0", "1"]},
+                           _line_sides={"0": ("a", "b"), "1": ("b", "c")}, _line_name={"0": "a-b", "1": "b-c"})
+    _DagPane._exchanged(pane, {"node": "g/b.couple", "kind": "test", "exchanges": [
+        {"from": "a", "to": "b", "exchange": "a-b", "data": {"x": "1"}},
+        {"from": "c", "to": "b", "exchange": "b-c", "data": {"x": "2"}}]})
+    assert state.ex_hot == ["0", "1"]
+    assert state.ex_vals == {"0": {"a": "x = 1"}, "1": {"c": "x = 2"}}
 
 
 def test_the_pair_view_keeps_its_shape():
@@ -466,43 +483,39 @@ def test_the_inspector_shows_a_coupling_node_s_mapping():
     assert "mapping" not in rows
 
 
-def _pair_with_mapping_ops():
-    """The pair as NeoFOAM steps it: before each coupling node the mapping op that feeds it."""
+def _coupling_ops(layout):
+    """NeoFOAM's coupling now: a group loop of one coupling op (a loop whose test exchanges) per
+    region, each around its solve. ``layout``: per region ``[(exchange name, partner), ...]``."""
     from neofoam_ui.engine import Exchange, Op  # noqa: PLC0415
 
-    body = []
-    for r, partner in (("a", "b"), ("b", "a")):
-        body += [Op(f"map_a-b_to_{r}", "action", lambda ctx: None, region=r, maps=f"{r}.couple"),
-                 Op(f"{r}.couple", "action", lambda ctx: None, region=r,
-                    exchange=Exchange(f"{partner}.solve", ("x",), partner)),
-                 Op(f"{r}.solve", "action", lambda ctx: None, region=r)]
-    return [Op("loop", "loop", lambda ctx: False, body)]
+    ops = [Op(f"{r}.couple", "loop", lambda ctx: True, [Op(f"{r}.solve", "action", lambda ctx: None, region=r)],
+              region=r, test="exchange · serial", tag="leader" if i == len(layout) - 1 else None,
+              exchanges=[Exchange(f"{p}.couple", ("x",), p, name=n) for n, p in ends])
+           for i, (r, ends) in enumerate(layout.items())]
+    return [Op("group", "loop", lambda ctx: True, ops)]
 
 
-def test_a_mapping_op_is_its_own_chip_on_the_line_next_to_the_coupling_node_it_feeds():
-    flow = _flow(_pair_with_mapping_ops())
+def test_a_coupling_op_is_a_loop_in_its_box_joined_to_its_partners_through_the_chip():
+    flow = _flow(_coupling_ops({"a": [("a-b", "b")], "b": [("a-b", "a"), ("b-c", "c")], "c": [("b-c", "b")]}))
     nodes = {n["id"]: n for n in flow["nodes"]}
 
-    # not in a box (no copy), and the box rows hold no gap for it
-    assert not [i for i in nodes if i.startswith("loop/map_") and "@@" in i]
-    for r in "ab":
-        couple, solve = nodes[f"loop/{r}.couple@@{r}"], nodes[f"loop/{r}.solve@@{r}"]
-        assert couple["position"]["y"] < solve["position"]["y"]
-    # one chip per way, the mapping op's own node (token, breakpoint, selection bind to it)
-    into_a, into_b = nodes["loop/map_a-b_to_a"], nodes["loop/map_a-b_to_b"]
-    assert (into_a["type"], into_a["data"]["ref"], into_a["data"]["into"]) == ("exmap", "loop/map_a-b_to_a", "left")
-    assert (into_b["data"]["ref"], into_b["data"]["into"], into_b["data"]["number"]) == (
-        "loop/map_a-b_to_b", "right", "1.4")
-    assert into_a["data"]["key"] == into_b["data"]["key"] == "0"
-    # in the gap, each next to the coupling node it feeds: a ◂ [→ a] ── [→ b] ▸ b
-    a_right = nodes["exec::box:a"]["position"]["x"] + nodes["exec::box:a"]["width"]
-    b_left = nodes["exec::box:b"]["position"]["x"]
-    assert a_right < into_a["position"]["x"] < into_a["position"]["x"] + into_a["width"] \
-        < into_b["position"]["x"] < into_b["position"]["x"] + into_b["width"] < b_left
-    # one line through both chips, arrowheads at the coupling nodes only
-    couple = [e for e in flow["edges"] if "nf-couple" in e.get("class", "")]
-    assert [(e["source"], e["target"]) for e in couple] == [
-        ("loop/a.couple@@a", "loop/map_a-b_to_a"), ("loop/map_a-b_to_a", "loop/map_a-b_to_b"),
-        ("loop/map_a-b_to_b", "loop/b.couple@@b")]
-    assert couple[0]["markerStart"] and "markerEnd" not in couple[0]
-    assert "markerStart" not in couple[1] and "markerEnd" not in couple[1] and couple[2]["markerEnd"]
+    # each region's coupling op is a loop (control node) in its own box, the group mirrored into all
+    for r in "abc":
+        assert nodes[f"group/{r}.couple@@{r}"]["type"] == "loop"
+        assert nodes[f"group@@{r}"]["data"]["ref"] == "group"
+    # facing each other on one row
+    assert len({nodes[f"group/{r}.couple@@{r}"]["position"]["y"] for r in "abc"}) == 1
+    # b's coupling op sits on both lines, each through its interface's chip
+    couple = [(e["source"], e["target"]) for e in flow["edges"] if "nf-couple" in e.get("class", "")]
+    assert couple == [("group/a.couple@@a", "exmap:0"), ("exmap:0", "group/b.couple@@b"),
+                      ("group/b.couple@@b", "exmap:1"), ("exmap:1", "group/c.couple@@c")]
+    assert [nodes[f"exmap:{k}"]["data"]["name"] for k in "01"] == ["a-b", "b-c"]
+    # the leader is tagged; the exchanges show on the op
+    assert nodes["group/c.couple@@c"]["data"]["tag"] == "leader"
+    assert nodes["group/b.couple@@b"]["data"]["exchange"] == "x ← a · x ← c"
+
+
+def test_two_exchanges_between_the_same_regions_pair_by_name():
+    flow = _flow(_coupling_ops({"a": [("p", "b"), ("q", "b")], "b": [("q", "a"), ("p", "a")]}))
+    maps = sorted(n["data"]["name"] for n in flow["nodes"] if n["type"] == "exmap")
+    assert maps == ["p", "q"]

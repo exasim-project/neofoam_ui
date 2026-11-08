@@ -63,8 +63,9 @@ class _Stepper:
         self.coupling_runs: dict[str, int] = {}
         #: Coupling loop tests so far (all loops): the x of the region field tables.
         self.passes = 0
-        #: What a NeoFOAM coupling node hands its side now (``coupling_exchanged``), by side.
-        self.handed: dict[int, Any] = {}
+        #: What a NeoFOAM region's coupling op hands its sides in its running loop test
+        #: (``coupling_exchanged``): ``(side, partner, exchange name, data)`` by coupling op.
+        self.handed: dict[int, list[tuple[Any, Any, Any, Any]]] = {}
 
     # -- init -----------------------------------------------------------------------------
 
@@ -149,14 +150,11 @@ class _Stepper:
         if node is None:
             return
         ms = (time.perf_counter() - self.t0) * 1e3
-        extra = {}
-        exchange = _exchanged(op, self.handed)
-        if exchange:
-            extra["exchange"] = exchange
-        self.s.record("exec", node, self.names[node], ms, stack=tuple(self.stack), **extra)
+        self.s.record("exec", node, self.names[node], ms, stack=tuple(self.stack))
 
     def before_loop_test(self, op: Any, ctx: Any, iteration: int) -> None:
         self.test_node = None
+        self.handed.pop(id(op.func), None)  # (what an unrecorded test handed over)
         if any(self.open):
             return
         if self.stack and self.stack[-1][0] in {n for _, n in self.nodes.get(id(op), ())}:
@@ -176,13 +174,19 @@ class _Stepper:
         if node is None:
             return
         ms = (time.perf_counter() - self.t0) * 1e3
-        extra = {}
-        residuals = getattr(op.func, "residuals", None)  # a NeoFOAM CouplingOp: the last pass's
+        extra: dict[str, Any] = {}
+        # NeoFOAM's coupling group: its leader decided on the residuals of the last pass
+        group = type(op.func).__name__ == "CouplingGroup"
+        residuals = getattr(getattr(op.func, "leader", None), "residuals", None) if group else None
         if isinstance(residuals, dict) and residuals:
             extra["residuals"] = {str(k): float(v) for k, v in residuals.items()}
+        # a region's coupling op: what its test handed each side
+        exchanges = _exchanged(self.handed.pop(id(op.func), []))
+        if exchanges:
+            extra["exchanges"] = exchanges
         self.s.record("test", node, self.names[node], ms, stack=tuple(self.stack),
                       iter=iteration, result=result, **extra)
-        if "residuals" in extra or hasattr(op.func, "residuals"):
+        if group:
             self._region_fields(ctx)
         if result:
             self.stack.append((node, iteration))
@@ -209,8 +213,13 @@ class _Stepper:
                   "region": region, "x": "coupling pass"})
 
     def coupling_exchanged(self, coupling: Any, side: Any, data: Any) -> None:
-        """A coupling node is about to hand ``side`` the (mapped) ``data``; shown when it is done."""
-        self.handed[id(side)] = data
+        """A region's coupling op is about to hand ``side`` the (mapped) ``data``, in its loop
+        test; recorded with the test."""
+        try:
+            partner, name = coupling.partner(side), coupling.exchange_of(side).name
+        except Exception:  # noqa: BLE001 - a view must never break the run
+            partner, name = None, None
+        self.handed.setdefault(id(coupling), []).append((side, partner, name, data))
 
     def coupling_finished(self, coupling: Any, outcome: Any) -> None:
         """A coupling loop ended: its outcome as one row of a ``pptable`` (Plots pane).
@@ -230,24 +239,19 @@ class _Stepper:
                           *(float(v) for v in residuals.values())]]})
 
 
-def _exchanged(op: Any, handed: dict[int, Any]) -> Optional[dict[str, Any]]:
-    """After a NeoFOAM coupling node ran: what it handed its side, ``{"from", "to", "data"}``.
-
-    ``handed`` holds what NeoFOAM's ``coupling_exchanged`` hook reported for the node's side:
-    the partner's data, relaxed and mapped onto the side's points. Each value summarised as
-    text. ``None`` for any other op, or when nothing was reported.
-    """
-    func = getattr(getattr(op, "func", None), "func", None)
-    if type(func).__name__ != "CouplingNode":
-        return None
-    side, partner = getattr(func, "side", None), getattr(func, "partner", None)
-    if side is None or partner is None or id(side) not in handed:
-        return None
-    try:
-        data = {str(name): _summary(value) for name, value in handed.pop(id(side))}
-    except Exception:  # noqa: BLE001 - a view must never break the run
-        return None
-    return {"from": getattr(partner, "region", None), "to": getattr(side, "region", None), "data": data}
+def _exchanged(handed: list[tuple[Any, Any, Any, Any]]) -> list[dict[str, Any]]:
+    """What a NeoFOAM coupling op's test handed its sides (``coupling_exchanged``): per side
+    ``{"from", "to", "exchange", "data"}``, the partner's data relaxed and mapped onto the
+    side's points, each value summarised as text."""
+    out = []
+    for side, partner, name, data in handed:
+        try:
+            values = {str(n): _summary(v) for n, v in data}
+        except Exception:  # noqa: BLE001 - a view must never break the run
+            continue
+        out.append({"from": getattr(partner, "region", None), "to": getattr(side, "region", None),
+                    "exchange": None if name is None else str(name), "data": values})
+    return out
 
 
 def _summary(value: Any) -> str:

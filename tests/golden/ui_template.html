@@ -228,9 +228,15 @@ delay {{ delay_ms }} ms
 <span class="nf-loop-res" v-if="loop_res[props.data.ref]">
  · {{ loop_res[props.data.ref] }}
 </span>
+<span class="nf-tag" title="decides whether the coupling group runs another pass" v-if="props.data.tag">
+{{ props.data.tag }}
+</span>
 </div>
 <div class="nf-loop-test" v-if="!props.data.control">
 test: {{ props.data.test }}
+</div>
+<div class="nf-cpl nf-loop-cpl" v-if="props.data.exchange">
+⇄ {{ props.data.exchange }}
 </div>
 <div class="nf-loop-size" v-if="props.data.collapsed">
 {{ heat_ms[props.data.ref] ? heat_ms[props.data.ref] + ' · ' : '' }}{{ props.data.size }} actions
@@ -239,25 +245,18 @@ test: {{ props.data.test }}
 </div>
 </template>
 <template v-slot:node-exmap=props>
-<div :class="['nf-exmap', { hot: ex_hot.includes(props.data.key), unk: !props.data.kind, cur: props.data.ref && props.data.ref === cur_node && cur_kind !== 'test', sel: props.data.ref && props.data.ref === selected, done: props.data.ref && visited.includes(props.data.ref) && props.data.ref !== cur_node }]" tabindex="0">
+<div :class="['nf-exmap', { hot: ex_hot.includes(props.data.key), unk: !props.data.kind }]" tabindex="0">
 <Handle id="lt" position="left" type="target" />
 <Handle id="r" position="right" type="source" />
-<span @click.stop="trigger('nf_toggle_bp', [props.data.ref])" :class="['nf-bp', { on: bps.includes(props.data.ref) }]" v-if="props.data.ref" />
-<span class="nf-map-into" v-if="props.data.into === 'left'">
-◂
-</span>
 <span class="nf-map-icon">
 ≈
 </span>
 <span class="nf-map-kind">
 {{ props.data.kind || '?' }}
 </span>
-<span class="nf-map-into" v-if="props.data.into === 'right'">
-▸
-</span>
 <div class="nf-map-tip">
-<div class="nf-map-op" v-if="props.data.ref">
-{{ props.data.number }} {{ props.data.label }} · runs before the coupling node it feeds
+<div class="nf-map-op" v-if="props.data.name">
+exchange {{ props.data.name }}
 </div>
 <div class="nf-map-head">
 <span class="nf-map-title">
@@ -342,8 +341,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w519-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w520-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w517-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w518-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -438,7 +437,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w564-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w562-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -693,7 +692,7 @@ loops and driver ops appear in every box: copies of one shared node
 ⇄ coupling node: hands its op the partner's data
 </div>
 <div >
-◂ ≈ ▸ a mapping node per way, next to the coupling node it feeds (runs right before it); step onto it, put a breakpoint on it
+⇄ (loop) a region's coupling op: its test hands the region the partners' data; 'leader': the one that decides whether the group goes on
 </div>
 <div >
 - - coupling line, through the interface's ≈ mapping chip (its kind; hover or tap: how the data goes onto the partner's points, mapped or as is, the points per side, what each side sends); red, moving: exchanging now

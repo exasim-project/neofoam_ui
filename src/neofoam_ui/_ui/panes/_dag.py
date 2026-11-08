@@ -59,7 +59,8 @@ class _DagPane(BasePane):
         #: The regions in the order of the execution view's boxes (kept over restarts).
         self._box_order: list[str] = []
         #: The coupling line of each coupling node (its key), and the line's two regions.
-        self._line_of: dict[str, str] = {}
+        self._line_of: dict[str, list[str]] = {}
+        self._line_name: dict[str, Optional[str]] = {}
         self._line_sides: dict[str, tuple[str, str]] = {}
         #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
         self.viewers = 0
@@ -157,7 +158,7 @@ class _DagPane(BasePane):
         prefix = f"[t={t:.4g}] " if isinstance(t, (int, float)) else ""
         visited = self._visited
         self._follow_phase("init" if msg["kind"] == "init" else "exec")
-        if msg["kind"] == "exec":
+        if msg["kind"] in ("exec", "test"):
             self._exchanged(msg)
         if msg["kind"] == "init":
             console(f"{prefix}init ▶ {msg['name']}  ({msg['ms']:.2f} ms)", "init")
@@ -188,10 +189,11 @@ class _DagPane(BasePane):
             self.rebuild(fit=False)
         if ev["kind"] in ("init", "exec", "test"):
             self._follow_phase("init" if ev["kind"] == "init" else "exec")
-        # the line of a coupling node next to run is hot; any other pause cools it
-        key = self._line_of.get(ev["node"] or "") if ev["kind"] == "exec" else None
-        if (s.ex_hot or []) != ([key] if key else []):
-            s.ex_hot = [key] if key else []
+        # the lines of a coupling node next to run (or of a coupling op whose test exchanges
+        # next) are hot; any other pause cools them
+        keys = self._line_of.get(ev["node"] or "", []) if ev["kind"] in ("exec", "test") else []
+        if (s.ex_hot or []) != keys:
+            s.ex_hot = list(keys)
         self._refresh_heat()
         self._refresh_highlight()
         if s.follow and ev["node"]:
@@ -224,8 +226,9 @@ class _DagPane(BasePane):
             if n["type"] == "exmap":
                 data = n["data"]
                 self._line_sides[data["key"]] = (data["left"], data["right"])
-                for ref in [*data["nodes"], *([data["ref"]] if data.get("ref") else [])]:
-                    self._line_of[ref] = data["key"]
+                self._line_name[data["key"]] = data.get("name")
+                for ref in data["nodes"]:  # (a coupling op may sit on several lines)
+                    self._line_of.setdefault(ref, []).append(data["key"])
         self.editor.graph = graph
         if fit:
             self.editor.fit_view()
@@ -241,19 +244,26 @@ class _DagPane(BasePane):
             self.rebuild()
 
     def _exchanged(self, msg: dict[str, Any]) -> None:
-        """A coupling node ran: its line is hot, and shows what its partner sends (``exchange``)."""
+        """A coupling node ran, or a coupling op's test exchanged: its lines are hot, and show
+        what each side was handed (``exchanges``; a coupling node's single ``exchange``)."""
         s = self.app.state
-        key = self._line_of.get(msg["node"])
-        hot = [key] if key else []
-        if (s.ex_hot or []) != hot:
-            s.ex_hot = hot
-        exchange = msg.get("exchange")
-        if key is None or not exchange:
+        keys = self._line_of.get(msg["node"], [])
+        if (s.ex_hot or []) != keys:
+            s.ex_hot = list(keys)
+        items = msg.get("exchanges") or ([msg["exchange"]] if msg.get("exchange") else [])
+        if not keys or not items:
             return
-        text = " ".join(f"{name} = {value}" for name, value in exchange.get("data", {}).items())
-        vals = dict((s.ex_vals or {}).get(key, {}))
-        vals[str(exchange.get("from"))] = text
-        s.ex_vals = {**(s.ex_vals or {}), key: vals}
+        vals_all = dict(s.ex_vals or {})
+        for item in items:
+            ends = {str(item.get("from")), str(item.get("to"))}
+            key = next((k for k in keys if item.get("exchange") is not None
+                        and self._line_name.get(k) == item["exchange"]), None) or \
+                next((k for k in keys if set(map(str, self._line_sides.get(k, ()))) == ends), None)
+            if key is None:
+                continue
+            text = " ".join(f"{name} = {value}" for name, value in item.get("data", {}).items())
+            vals_all[key] = {**vals_all.get(key, {}), str(item.get("from")): text}
+        s.ex_vals = vals_all
 
     def _view_changed(self) -> None:
         if self.editor is not None and self.app.state.dag_view != self._drawn:

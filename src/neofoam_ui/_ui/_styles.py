@@ -122,12 +122,9 @@ _CSS = r"""
   display: flex; align-items: center; gap: 5px; outline: none; cursor: help; position: relative; }
 .nf-exmap.unk { color: #7a7a86; border-color: #9a9aa6; }
 .nf-exmap.hot { border: 2.5px solid #e0362c; color: #e0362c; background: #fff2f1; }
-.nf-exmap.done { background: #e6f6ec; }
-.nf-exmap.cur { border: 2.5px solid #e0362c; border-style: solid; background: #ffe9e7; color: #e0362c;
-  box-shadow: 0 0 0 3px rgba(224,54,44,.25); }
-.nf-exmap.sel { box-shadow: 0 0 0 3px rgba(103,65,217,.35); }
-.nf-map-into { font-size: 12px; }
 .nf-map-op { opacity: .75; font-weight: 500; }
+.nf-tag { margin-left: 6px; padding: 0 5px; border-radius: 6px; font-size: 9.5px; font-weight: 600;
+  color: #6741d9; background: #ece6ff; vertical-align: 1px; }
 .nf-map-icon { font-size: 13px; }
 .nf-map-kind { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nf-map-tip { display: none; position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%);

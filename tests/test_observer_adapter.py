@@ -207,96 +207,119 @@ class Model:
         self.model_fields = dict.fromkeys(fields)
 
 
-def _exchange(kind="nearest-neighbor", points=(2, 3)):
-    """A fake NeoFOAM exchange of a and b (public read API: sides, mapping.kind)."""
-    a = SimpleNamespace(region="a", op="a.solve_T", receives=Model("T", "h"), mapped=("T",),
+def _coupling(kind="nearest-neighbor", points=(2, 3)):
+    """Fake NeoFOAM coupling ops of regions a and b (public read API: sides, partner(),
+    exchange_of(), leader / is_leader, exchange name and mapping.kind); b's leads."""
+    a = SimpleNamespace(region="a", coupling_op="a.couple", receives=Model("T", "h"), mapped=("T",),
                         points=points[0])
-    b = SimpleNamespace(region="b", op="b.solve_T", receives=Model("T", "h"), mapped=("T",),
+    b = SimpleNamespace(region="b", coupling_op="b.couple", receives=Model("T", "h"), mapped=("T",),
                         points=points[1])
-    return SimpleNamespace(sides=(a, b), mapping=SimpleNamespace(kind=kind))
+    exchange = SimpleNamespace(name="a-b", sides=(a, b), mapping=SimpleNamespace(kind=kind))
+
+    class CouplingOp:
+        def __init__(self, side, leader=None):
+            self.sides, self.label, self.parallel = (side,), f"{side.region}.couple", False
+            self.leader = leader or self
+            self.residuals = {}
+            self.func = self._test
+
+        @property
+        def is_leader(self):
+            return self.leader is self
+
+        def partner(self, side):
+            return b if side is a else a
+
+        def exchange_of(self, side):
+            return exchange
+
+        def _test(self, ctx):
+            return False
+
+    lead = CouplingOp(b)
+    return CouplingOp(a, lead), lead
 
 
-class CouplingNode:
-    """Hands the side its partner's data (NeoFOAM's CouplingNode: side, partner, exchange)."""
+class CouplingGroup:
+    """Repeats the coupling ops while the leader decides to go on."""
 
-    def __init__(self, exchange, index):
-        self.exchange, self.side, self.partner = exchange, exchange.sides[index], exchange.sides[1 - index]
-
-    def __call__(self, ctx):
-        return None
+    def __init__(self, leader):
+        self.leader, self.func = leader, lambda ctx: True
 
 
-class MappingNode(CouplingNode):
-    """Maps the partner's data onto the side's points."""
+def _loop(name, func, children=(), iterations=0):
+    op = FakeOp(name, list(children), iterations=iterations)
+    op.func = func
+    return op
 
 
-def test_a_coupling_node_names_the_partner_op_whose_data_it_hands_over():
+def test_a_coupling_op_is_a_loop_whose_test_exchanges_one_per_side():
     from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
     from neofoam_ui.engine import Exchange, PointMapping  # noqa: PLC0415
 
-    exchange = _exchange()
-    nodes = [FakeOp(f"{r}.couple_to_{p}") for r, p in (("a", "b"), ("b", "a"))]
-    for i, node in enumerate(nodes):
-        node.func = SimpleNamespace(func=CouplingNode(exchange, i))
-    assert [_convert(node, {}).exchange for node in nodes] == [
-        Exchange("b.solve_T", ("T", "h"), "b", PointMapping("nearest-neighbor", ("T",), 3, 2)),
-        Exchange("a.solve_T", ("T", "h"), "a", PointMapping("nearest-neighbor", ("T",), 2, 3))]
-    # a plain op has none
-    assert _convert(FakeOp("a.solve_T"), {}).exchange is None
+    a, b = _coupling()
+    ops = [_convert(_loop(f"{r}.couple", c, [FakeOp(f"{r}.solve")]), {}) for r, c in (("a", a), ("b", b))]
+    assert [(o.kind, o.test, o.tag) for o in ops] == [("loop", "exchange · serial", None),
+                                                      ("loop", "exchange · serial", "leader")]
+    assert ops[0].exchanges == [
+        Exchange("b.couple", ("T", "h"), "b", PointMapping("nearest-neighbor", ("T",), 3, 2), "a-b")]
+    assert ops[1].exchanges[0].partner == "a" and ops[1].exchange is None
 
 
-def test_a_coupling_node_tells_how_it_maps_its_partner_s_data():
+def test_the_coupling_group_names_its_leader_s_decision():
+    from neofoam_ui.adapters.neofoam._ops import _convert  # noqa: PLC0415
+
+    _a, b = _coupling()
+    assert _convert(_loop("loop_solving_a.x_b.x", CouplingGroup(b)), {}).test == "b.couple.decide()"
+
+
+def test_a_coupling_op_s_mapping_tells_kind_and_points():
     from neofoam_ui.adapters.neofoam._ops import _mapping  # noqa: PLC0415
     from neofoam_ui.engine import PointMapping  # noqa: PLC0415
 
-    exchange = _exchange(kind="identity", points=(None, None))
-    side, partner = exchange.sides
-    # the exchange's mapping kind; a side without coordinates: its points are unknown
-    assert _mapping(exchange, side, partner) == PointMapping("identity", ("T",), None, None)
-    # nothing known at all: no mapping
+    a, _b = _coupling(kind="identity", points=(None, None))
+    side = a.sides[0]
+    assert _mapping(a.exchange_of(side), side, a.partner(side)) == PointMapping("identity", ("T",), None, None)
     bare = SimpleNamespace()
     assert _mapping(SimpleNamespace(), bare, bare) is None
 
 
-def test_a_mapping_node_is_a_node_that_names_the_coupling_node_it_feeds():
-    exchange = _exchange()
-    exchange.sides[0].node = "a.couple_to_b"
-    mapping, couple, solve = FakeOp("map_a-b_to_a"), FakeOp("a.couple_to_b"), FakeOp("a.solve_T")
-    mapping.func = SimpleNamespace(func=MappingNode(exchange, 0))
-    couple.func = SimpleNamespace(func=CouplingNode(exchange, 0))
-    loop = FakeOp("loop", [mapping, couple, solve], iterations=1)
-    session = FakeSession()
+def test_the_coupling_group_s_test_reports_its_leader_s_residuals():
+    _a, b = _coupling()
+    loop = _loop("loop_solving_a.x_b.x", CouplingGroup(b), iterations=1)
+    session = RegionSession()
+    session.records = []
+    session.record = lambda kind, node, name, ms, **extra: session.records.append((kind, node, extra))
     stepper = _Stepper(session, lambda event: None)
-
     stepper.operations(SimpleNamespace(ops=[loop]))
-    loop.run(stepper)
+    stepper.before_loop_test(loop, None, 1)
+    stepper.after_loop_test(loop, None, 1, True)
+    b.residuals = {"x": 0.25}
+    stepper.before_loop_test(loop, None, 2)
+    stepper.after_loop_test(loop, None, 2, False)
 
-    children = session.ops[0].children
-    assert [(c.name, c.maps, c.exchange is not None) for c in children] == [
-        ("map_a-b_to_a", "a.couple_to_b", False), ("a.couple_to_b", None, True), ("a.solve_T", None, False)]
-    # it runs as its own node: recorded (and paused on) before the coupling node
-    assert [node for kind, node in session.records if kind == "exec"] == [c.id for c in children]
+    assert [r[2].get("residuals") for r in session.records if r[0] == "test"] == [None, {"x": 0.25}]
 
 
-def test_a_coupling_node_reports_what_it_hands_its_side():
+def test_a_coupling_op_s_test_records_what_it_handed_each_side():
     import numpy as np  # noqa: PLC0415
 
-    from neofoam_ui.adapters.neofoam._observed import _exchanged  # noqa: PLC0415
+    a, _b = _coupling()
+    op = _loop("a.couple", a, [FakeOp("a.solve")])
+    session = RegionSession()
+    session.records = []
+    session.record = lambda kind, node, name, ms, **extra: session.records.append((kind, extra))
+    stepper = _Stepper(session, lambda event: None)
+    stepper.operations(SimpleNamespace(ops=[op]))
 
-    exchange = _exchange()
-    node = FakeOp("b.couple_to_a")
-    node.func = SimpleNamespace(func=CouplingNode(exchange, 1))
-    side = exchange.sides[1]
-    # what NeoFOAM's coupling_exchanged hook reported for the side (a pydantic model iterates
-    # as (name, value))
-    handed = {id(side): [("T", np.array([1.5])), ("h", 2.0)]}
-    assert _exchanged(node, handed) == {"from": "a", "to": "b", "data": {"T": "1.5", "h": "2"}}
-    assert handed == {}
-    handed[id(side)] = [("T", np.array([0.5, 1.0]))]
-    assert _exchanged(node, handed)["data"] == {"T": "mean 0.75 (n=2)"}
-    # nothing reported, or another op: none
-    assert _exchanged(node, {}) is None
-    assert _exchanged(FakeOp("a.solve_x"), handed) is None
+    stepper.before_loop_test(op, None, 1)
+    # NeoFOAM's coupling_exchanged, from the test (a pydantic model iterates as (name, value))
+    stepper.coupling_exchanged(a, a.sides[0], [("T", np.array([0.5, 1.0])), ("h", 2.0)])
+    stepper.after_loop_test(op, None, 1, False)
+
+    assert [extra.get("exchanges") for kind, extra in session.records if kind == "test"] == [
+        [{"from": "b", "to": "a", "exchange": "a-b", "data": {"T": "mean 0.75 (n=2)", "h": "2"}}]]
+    assert stepper.handed == {}
 
 
 def test_a_coupling_loop_test_reports_each_region_s_fields():
@@ -311,8 +334,7 @@ def test_a_coupling_loop_test_reports_each_region_s_fields():
     regions = {"a": (None, SimpleNamespace(fields={"x": np.array([1.5])})),
                "b": (None, SimpleNamespace(fields={"x": np.array([0.25, 0.75])}))}
     ctx = SimpleNamespace(models={"regions": regions})
-    loop = FakeOp("loop", [], iterations=1)
-    loop.func = SimpleNamespace(func=lambda ctx: None, residuals={})
+    loop = _loop("loop", CouplingGroup(_coupling()[1]), iterations=1)
     stepper.operations(SimpleNamespace(ops=[loop]))
     stepper.before_loop_test(loop, ctx, 1)
     stepper.after_loop_test(loop, ctx, 1, True)

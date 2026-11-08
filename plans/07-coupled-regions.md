@@ -12,12 +12,13 @@ Paused on 2026-11-07. This note records where the coupled-region work stands, so
 
 To open a case, run `scripts/probe.sh <case>`, where `<case>` is pair, chain, …. The chain and two_interfaces run from their yaml now (one loop each).
 
-## Framework design as it stands (NeoFOAM, `feat/coupling-decorators`)
+## Framework design as it stands (NeoFOAM, `feat/coupling-per-region`)
 
-- A BC declares its side with `@coupled(field=...)` (`@coupled.sends` / `.receives` / `.coordinates`, one pydantic model per direction) and registers only its coupling node `<region>.couple_<patch>`. The case's `exchanges:` pairs the nodes and picks the mapping; the framework checks the models crosswise, puts `map_<exchange>_to_<region>` (a `MappingNode`) before each coupling node and builds one `CouplingOp` per group of exchanges sharing a region.
-- Read API the adapter uses: a coupling node's `CouplingNode.side` / `.partner` / `.exchange` (`ExchangeSide`: `region`, `patch`, `op`, `receives`, `mapped`, `points`; `Exchange.mapping.kind`), and the observer hook `coupling_exchanged(coupling, side, data)`. The mapping node belongs to the receiving region; in the stepper each mapping op is its own chip on the coupling line (one per way, next to the coupling node it feeds): token, breakpoints and selection sit on it.
+- A BC declares its side with `@coupled(field=...)`; the case's `exchanges:` pairs the sides and picks the mapping. Each region gets one coupling op `<region>.couple` (an IterativeOp around its solving ops) whose **loop test** does the exchange per side (partner data → mapping → `coupling_exchanged` → receive). The last region's op is the leader (convergence, relaxation, outcomes); a temporary `CouplingGroup` loop repeats the ops while `leader.decide()`.
+- Read API the adapter uses: `CouplingOp.sides`, `.partner(side)`, `.exchange_of(side)` (`name`, `mapping.kind`), `.leader` / `.is_leader`; `ExchangeSide.coupling_op`, `region`, `receives`, `mapped`, `points`; observer `coupling_exchanged(coupling, side, data)` (during the test) and `coupling_finished(leader, outcome)`.
+- UI: each box shows its `<region>.couple` as a loop node (test `exchange · serial`, `⇄ x ← b` badge, `leader` tag); the group loop is mirrored into every box; one coupling line per exchange joins the two couple ops through the mapping chip (display only); the lines are hot while a couple op's test is next/ran, and the chip shows what `coupling_exchanged` reported. Wire: `Op.exchanges` (one per side; `exchange` still carries the first), `Exchange.name`, `Op.tag`.
 
-## Framework design before `feat/coupling-decorators`
+## Framework design before `feat/coupling-decorators` (superseded)
 
 - **One coupling node per coupled op.** `couple_<field>` is inserted directly before the op it feeds and does the whole exchange for that side. There are no separate send or receive ops.
 - **Exchanged data is declared as a pydantic model** per side (`CoupledSide(data=Model, send=..., receive=..., coordinates=...)`). `CouplingOp.attach` raises when the two sides' fields do not match.
