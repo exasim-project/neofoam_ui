@@ -10,6 +10,7 @@ import sys
 import threading
 from typing import Any
 
+import neofoam_ui.worker
 from neofoam_ui.engine import Session
 from neofoam_ui.parallel import rank_info
 from neofoam_ui.parallel._follower import _follow
@@ -35,8 +36,6 @@ def main(argv: list[str] | None = None) -> int:
     """Run the solver ``argv[0]`` (``module:Factory``) under the stdio protocol."""
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:
-        import neofoam_ui.worker  # noqa: PLC0415
-
         print(neofoam_ui.worker.__doc__, file=sys.stderr)
         return 2
     rank, size = rank_info()
