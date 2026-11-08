@@ -27,3 +27,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# the helper solvers the tests import (worker processes get them on their own PYTHONPATH)
+pythonpath = ["tests/helpers"]

@@ -1,16 +1,13 @@
 """A solver that drives itself (as NeoFOAM does through its execution observer)."""
 
-import os
-import sys
+import threading
 
 import numpy as np
 import pytest
+from self_driven import SelfDriven
 
 from neofoam_ui.engine import Session
 from neofoam_ui.toy.heat1d import Heat1D
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "helpers"))
-from self_driven import SelfDriven  # noqa: E402
 
 
 def events(solver, mode="into"):
@@ -74,8 +71,6 @@ def test_other_modes_match_tree_mode(mode):
 
 @pytest.mark.parametrize("finish", [False, True])
 def test_calls_run_on_the_solver_thread(finish):
-    import threading
-
     solver = SelfDriven()
     session = Session(solver, lambda m: None)
     session.start()
@@ -88,8 +83,6 @@ def test_calls_run_on_the_solver_thread(finish):
 
 
 def test_tree_mode_calls_run_here():
-    import threading
-
     session = Session(Heat1D(), lambda m: None)
     names = []
     assert session.in_solver_thread(lambda: names.append(threading.current_thread().name))

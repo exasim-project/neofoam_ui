@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from rank_toy import RankHeat
 
 from neofoam_ui.engine import Session
 from neofoam_ui.parallel import SYNC_ENV, rank_info
@@ -67,8 +68,6 @@ def test_follower_steps_in_lockstep_and_stats_are_global(monkeypatch):
         assert msg["event"]["node"] == "time_loop/write_output"
 
         # The same run in-process, for the per-rank values.
-        monkeypatch.syspath_prepend(str(HELPERS))
-        from rank_toy import RankHeat
 
         local = Session(RankHeat(), lambda m: None)
         local.start()

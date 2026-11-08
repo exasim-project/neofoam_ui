@@ -1,16 +1,13 @@
 """A multi-region solver (NeoFOAM's multiRun): every region on its own thread, stepped all
 together; a region blocked on its partner's data shows as waiting (no neofoam needed)."""
 
-import os
-import sys
+import threading
 import time
 
 import pytest
+from two_regions import TwoRegions
 
 from neofoam_ui.engine import Session
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "helpers"))
-from two_regions import TwoRegions  # noqa: E402
 
 
 def _where(session):
@@ -141,8 +138,6 @@ def test_closing_unwinds_every_region_thread():
 
 
 def test_a_call_runs_on_a_held_region_thread():
-    import threading  # noqa: PLC0415
-
     session, _ = _session()
     names = []
     assert session.in_solver_thread(lambda: names.append(threading.current_thread().name), 5)
