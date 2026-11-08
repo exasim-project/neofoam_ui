@@ -68,7 +68,7 @@ class _RunModel:
         return tree
 
     def regions(self) -> list[dict[str, str]]:
-        """The regions of the graph, in order of appearance, with their colour (the legend)."""
+        """The regions of the graph, in order of appearance (execution graph first), with their colour (the legend)."""
         seen: dict[str, None] = {}
 
         def walk(ops: list[dict[str, Any]]) -> None:
@@ -77,10 +77,10 @@ class _RunModel:
                     seen.setdefault(op["region"], None)
                 walk(op["children"])
 
+        walk(self.ops)  # (the execution graph's order first: the regions' stepping order)
         for s in self.init_steps:
             if s.get("region"):
                 seen.setdefault(s["region"], None)
-        walk(self.ops)
         return [{"name": r, "color": _REGION.color(r)} for r in seen]
 
     def name(self, node_id: Optional[str]) -> str:

@@ -194,6 +194,10 @@ class _Stepper:
                 group = list(getattr(coupling, "group", None) or ())
                 self._watch(getattr(coupling, "transport", None))
                 self.contexts[region] = ctx
+                if group:  # (in stepping order, not the threads' order of arrival)
+                    ordered = sorted(self.contexts.items(), key=lambda kv: group.index(kv[0]) if kv[0] in group else len(group))
+                    self.contexts.clear()
+                    self.contexts.update(ordered)
                 self.s.set_context(self.contexts)
                 self.s.set_region_ops(region, ops, group.index(region) if region in group else None)
 
