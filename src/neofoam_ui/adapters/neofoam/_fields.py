@@ -15,13 +15,16 @@ __all__ = ()
 _OLD_COPY = re.compile(r"(_0)+$|PrevIter$")
 
 
+class _RegionContexts(dict):  # type: ignore[type-arg]
+    """The contexts of a multi-region run (multiRun), by region: the session's context.
+
+    Each region runs on its own context (``ctx.region``); multiRun's ``run()`` returns them
+    as ``{region: Context}``."""
+
+
 def _region_contexts(ctx: Any) -> Optional[dict[str, Any]]:
-    """``{region: context}`` of a multi-region driver (multiRun's ``ctx.models["regions"]``), else ``None``."""
-    regions = (getattr(ctx, "models", None) or {}).get("regions")
-    if not isinstance(regions, dict):
-        return None
-    return {name: entry[1] for name, entry in regions.items()
-            if isinstance(entry, tuple) and len(entry) == 2}
+    """``{region: context}`` of a multi-region run, else ``None``."""
+    return dict(ctx) if isinstance(ctx, _RegionContexts) and ctx else None
 
 
 class _Region:
@@ -48,8 +51,8 @@ class _Region:
 class _FieldAccess:
     """``scalars`` / ``fields`` / ``view_fields`` of a NeoFOAM context (``ctx.time``, ``ctx.fields``).
 
-    A multi-region driver's context (multiRun) is read through :meth:`regions`: every region's
-    fields, named ``<region>.<field>``.
+    A multi-region run's contexts (:class:`_RegionContexts`) are read through :meth:`regions`:
+    every region's fields, named ``<region>.<field>``.
     """
 
     def regions(self, ctx: Any) -> list[Any]:
@@ -60,6 +63,10 @@ class _FieldAccess:
         return [_Region(name, self, region_ctx) for name, region_ctx in contexts.items()]
 
     def scalars(self, ctx: Any) -> dict[str, Any]:
+        contexts = _region_contexts(ctx)
+        if contexts:  # every region's own time, ``<region>.time``
+            return {f"{region}.{k}": v for region, region_ctx in contexts.items()
+                    for k, v in self.scalars(region_ctx).items()}
         t = getattr(ctx, "time", None)
         if t is None:
             return {}

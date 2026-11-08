@@ -120,10 +120,10 @@ class NeoFoamSolver(_NeoFoamBase):
         for model in self.runtime.state.optional_models:
             for op in getattr(model, "operations", []) or []:
                 injected[id(op)] = getattr(model, "name", type(model).__name__)
-        # A NeoFOAM with resolve_operations also applies the graph edits (coupling loops).
+        # A NeoFOAM with resolve_operations also applies the graph edits (coupling ops).
         resolve = getattr(self.runtime, "resolve_operations", None)
         if resolve is not None:
-            return [_convert(op, injected) for op in resolve(ctx).ops]
+            return [_convert(op, injected, ctx) for op in resolve(ctx).ops]
         builder, model_ops = self.runtime.execution_graph(ctx=ctx)
         resolved = DAGResolver().resolve(builder, model_ops)
-        return [_convert(op, injected) for op in resolved.operations.ops]
+        return [_convert(op, injected, ctx) for op in resolved.operations.ops]

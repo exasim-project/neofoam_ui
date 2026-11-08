@@ -10,7 +10,9 @@ from neofoam_ui.engine import Exchange, Op, PointMapping
 __all__ = ()
 
 
-def _convert(op: Any, injected: dict[int, str]) -> Op:
+def _convert(op: Any, injected: dict[int, str], ctx: Any = None) -> Op:
+    """A NeoFOAM operation (and its body) as a stepper node; ``ctx``: the context whose
+    graph it is (a region's: its coupling's scheme)."""
     meta = op.metadata
     name = meta.op_name or meta.name or "operation"
     target, guard = _target(op)
@@ -20,7 +22,6 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
         doc=meta.description or _doc(target),
         source=_source(target),
         injected_by=injected.get(id(op)),
-        region=getattr(meta, "region", None),
     )
     if op.operation_type == "iterative":
         predicate = op.func.func
@@ -28,11 +29,9 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
         exchanges, tag = [], None
         if kind == "CouplingOp":  # a region's coupling op: its loop test exchanges
             exchanges = [x for x in (_exchange(op.func, side) for side in op.func.sides) if x is not None]
-            leader = op.func.leader
-            test = "exchange · " + ("parallel" if leader.parallel else "serial")
-            tag = "leader" if op.func.is_leader else None
-        elif kind == "CouplingGroup":  # repeats the group's coupling ops while the leader goes on
-            test = f"{op.func.leader.label}.decide()"
+            scheme = _scheme(op.func, ctx)
+            test = "exchange" + ("" if scheme is None else f" · {scheme}")
+            tag = "leader" if getattr(op.func, "is_leader", False) else None
         elif inspect.ismethod(predicate):
             test = f"{type(predicate.__self__).__name__}()"
             if hasattr(predicate.__self__, "parallel"):
@@ -41,41 +40,51 @@ def _convert(op: Any, injected: dict[int, str]) -> Op:
             test = f"{predicate.__name__}()"
         else:
             test = type(predicate).__name__ + "()"
-        return Op(name, "loop", op.func, [_convert(c, injected) for c in op.sub_operations],
+        return Op(name, "loop", op.func, [_convert(c, injected, ctx) for c in op.sub_operations],
                   test=test, exchanges=exchanges, tag=tag, **common)
     return Op(name, "action", op.run, guard=guard, **common)
+
+
+def _scheme(coupling: Any, ctx: Any) -> Optional[str]:
+    """``serial`` or ``parallel``: the leader's controller's, else the region's coupling's
+    (``Coupling.of(ctx).coupling.parallel``); ``None`` if neither tells."""
+    parallel = getattr(getattr(coupling, "controller", None), "parallel", None)
+    if parallel is None:
+        model = (getattr(ctx, "models", None) or {}).get("coupling")
+        parallel = getattr(getattr(model, "coupling", None), "parallel", None)
+    return None if parallel is None else ("parallel" if parallel else "serial")
 
 
 def _exchange(coupling: Any, side: Any) -> Optional[Exchange]:
     """What a NeoFOAM region's coupling op hands ``side`` in its loop test (public read API).
 
-    The partner side (``coupling.partner(side)``) sends it; its ``coupling_op`` is the
-    partner region's coupling op, the data the fields ``side`` receives, the mapping that of
-    the exchange (``coupling.exchange_of(side)``), whose name both ends share.
+    ``coupling.exchange_of(side)`` is the side's exchange: its name (both ends share it), the
+    partner end ``(region, patch)`` that sends what the side receives, and the mapping;
+    ``coupling.partner(side)`` labels the partner end ``<region>.<patch>``.
     """
     try:
-        partner, exchange = coupling.partner(side), coupling.exchange_of(side)
+        exchange = coupling.exchange_of(side)
+        label, (region, _patch) = coupling.partner(side), exchange.partner
     except Exception:  # noqa: BLE001 - a view must never break the run
         return None
     received = getattr(getattr(side, "receives", None), "model_fields", None) or {}
     name = getattr(exchange, "name", None)
-    return Exchange(str(getattr(partner, "coupling_op", None) or getattr(partner, "label", "?")),
-                    tuple(str(n) for n in received), getattr(partner, "region", None),
-                    _mapping(exchange, side, partner), None if name is None else str(name))
+    return Exchange(str(label), tuple(str(n) for n in received), str(region),
+                    _mapping(exchange, side), None if name is None else str(name))
 
 
-def _mapping(exchange: Any, side: Any, partner: Any) -> Optional[PointMapping]:
+def _mapping(exchange: Any, side: Any) -> Optional[PointMapping]:
     """How a side's data is mapped onto its points, as NeoFOAM's exchange tells.
 
     The kind is the exchange's ``mapping.kind``, the mapped fields the side's ``mapped`` (the
-    point fields it receives; the others are handed over as they are), the points each side's
-    ``points`` (``None``: the side gives none).
+    point fields it receives; the others are handed over as they are), the points the side's
+    ``points`` (``None``: it gives none). The partner's points are its own end's to tell.
     """
     kind = getattr(getattr(exchange, "mapping", None), "kind", None)
     mapped = getattr(side, "mapped", None)
     mapping = PointMapping(None if kind is None else str(kind),
                            None if mapped is None else tuple(str(name) for name in mapped),
-                           _points(partner), _points(side))
+                           None, _points(side))
     return None if mapping == PointMapping() else mapping
 
 
