@@ -33,7 +33,8 @@ from typing import Any, Callable, Iterator, Optional
 
 from neofoam_ui.engine._graph import Event, InitStep, Op, assign_ids, topological_order
 from neofoam_ui.engine._fieldview import _FieldView
-from neofoam_ui.engine._protocols import Peers, RenderBackend, ResultObserver, SelfDrivingSolver, Solver
+from neofoam_ui.engine._protocols import (PassControl, Peers, RenderBackend, ResultObserver, SelfDrivingSolver,
+                                          Solver)
 from neofoam_ui.engine._stepping import _free_run, _until, Mode
 from neofoam_ui.engine._stats import _field_stats, _merge, _rows
 from neofoam_ui.engine._threaded import ThreadedProgram
@@ -60,6 +61,8 @@ class Session:
         self.solver = solver
         self.emit = emit
         self.breakpoints: set[str] = set()
+        #: Ids of the ops marked final the user runs in every pass (:meth:`set_every_pass`).
+        self.every_pass: frozenset[str] = frozenset()
         #: Seconds to wait between events while running (animation); 0 = no sleep.
         self.delay = 0.0
         #: The DAG pane is open (set by the UI): free runs report their events (``log``,
@@ -148,6 +151,7 @@ class Session:
     def set_ops(self, ops: list[Op]) -> None:
         self.ops = ops
         assign_ids(self.ops)
+        self._apply_every_pass(ops)
         self.emit({"type": "graph", "activity": "exec", "ops": [_op_dict(o) for o in self.ops]})
 
     def set_region_ops(self, region: str, ops: list[Op], rank: Optional[int] = None) -> None:
@@ -164,6 +168,7 @@ class Session:
 
         mark(ops)
         assign_ids(ops, f"{region}/")
+        self._apply_every_pass(ops, (region,))
         with self._lock:
             self._region_ops[region] = (rank, ops)
             arrival = list(self._region_ops)
@@ -172,6 +177,43 @@ class Session:
             self._order_regions(order)
             self.ops = [op for r in order for op in self._region_ops[r][1]]
             self.emit({"type": "graph", "activity": "exec", "ops": [_op_dict(o) for o in self.ops]})
+
+    def set_every_pass(self, ids: Any) -> None:
+        """Run the ops ``ids`` (marked :attr:`Op.final`) in every pass of their wrapping loops,
+        every other final op in the final pass only: the whole choice, as for breakpoints.
+
+        Each region gets its own choice (:class:`PassControl`), at once, while its thread may
+        be running; the solver takes it from the next time it looks (NeoFOAM: the next run of
+        the op). Ids of a graph not reported yet are applied when it comes (:meth:`set_ops`,
+        :meth:`set_region_ops`); ids of no final op are ignored. Raises ``ValueError`` under
+        MPI (the other ranks would not follow at the same pass) and for a solver that cannot.
+        """
+        if self.peers is not None or self.follower:
+            raise ValueError("run every pass: not under MPI (the other ranks would not follow)")
+        if not isinstance(self.solver, PassControl):
+            raise ValueError(f"run every pass: solver {getattr(self.solver, 'name', '?')!r} cannot")
+        self.every_pass = frozenset(str(i) for i in ids)
+        self._apply_every_pass(self.ops)
+
+    def _apply_every_pass(self, ops: list[Op], regions: tuple[Optional[str], ...] = ()) -> None:
+        """Hand each region of ``ops`` (and of ``regions``) its ops of :attr:`every_pass`.
+
+        Takes no lock of the session's: a region's thread calls it with its adapter's lock
+        held (``set_region_ops``), the command thread without."""
+        if not isinstance(self.solver, PassControl):
+            return
+        chosen: dict[Optional[str], list[Op]] = {r: [] for r in regions}
+
+        def walk(ops_: list[Op]) -> None:
+            for op in ops_:
+                picked = chosen.setdefault(op.region, [])
+                if op.final and op.id in self.every_pass:
+                    picked.append(op)
+                walk(op.children)
+
+        walk(ops)
+        for region, picked in chosen.items():
+            self.solver.run_every_pass(region, picked)
 
     def _order_regions(self, regions: list[str]) -> None:
         if self.program_thread is not None:

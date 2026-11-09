@@ -86,6 +86,10 @@ _CSS = r"""
 .nf-meta { font-size: 11px; opacity: .6; white-space: nowrap; }
 .nf-badge { position: absolute; top: -9px; right: 10px; font-size: 10px; background: #8e5bb5; color: #fff;
   border-radius: 8px; padding: 0 6px; line-height: 16px; }
+.nf-every { position: absolute; top: -9px; left: 14px; font-size: 10px; line-height: 16px; padding: 0 6px;
+  border-radius: 8px; border: 1px solid #8a94a6; background: #fff; color: #5a6475; cursor: pointer; }
+.nf-every.on { background: #f08c00; border-color: #f08c00; color: #fff; font-weight: 600; }
+.nf-final-pass { color: #b35c00; background: #ffecd2; }
 .nf-node.done { background: #e6f6ec; border-color: #2f9e5b; }
 .nf-node.sel { box-shadow: 0 0 0 2.5px #2b6fd6; }
 .nf-node.cur { background: #ffe9e7; border-color: #e0362c; border-width: 2.5px; }

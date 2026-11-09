@@ -7,6 +7,7 @@ UI → worker (stdin)::
     {"cmd": "step", "mode": "into|over|out|time_step|skip_init|run|run_to", "node": "<id>"}
     {"cmd": "pause"}                      # honoured between two events
     {"cmd": "breakpoints", "ids": [...]}
+    {"cmd": "every_pass", "ids": [...]}   # ops marked final to run in every pass (debug)
     {"cmd": "delay", "seconds": 0.2}      # animation while running (0: none)
     {"cmd": "watch", "on": true}          # the DAG pane is open: report the events of a run
     {"cmd": "wait", "on": true}           # "wait for UI": block until the UI acknowledged

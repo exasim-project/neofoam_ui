@@ -30,6 +30,8 @@ def _op_dict(op: Op) -> dict[str, Any]:
         out["region"] = op.region
     if op.tag is not None:  # optional
         out["tag"] = op.tag
+    if op.final:  # optional: runs in the final pass of its wrapping loops only
+        out["final"] = True
     exchanges = op.exchanges or ([op.exchange] if op.exchange is not None else [])
     if exchanges:  # optional: only coupling nodes / coupling ops
         out["exchanges"] = [_exchange_dict(x) for x in exchanges]

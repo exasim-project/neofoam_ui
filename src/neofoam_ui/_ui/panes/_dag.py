@@ -76,9 +76,13 @@ class _DagPane(BasePane):
         s.visited = []
         self._visited, self._visited_dirty = [], False
         s.bps = s.bps if isinstance(s.bps, list) else []
+        # the ops marked final run in every pass (kept over restarts, as the breakpoints)
+        s.every_pass = s.every_pass if isinstance(s.every_pass, list) else []
         s.collapsed = s.collapsed if isinstance(s.collapsed, list) else []
         s.boxes_closed = s.boxes_closed if isinstance(s.boxes_closed, list) else []
         s.loop_res = {}
+        # the loops in their final pass (``ctx.loops[-1].final``), by node
+        s.loop_final = {}
         self._shown = frozenset()
         self._phase = self._drawn = None
         s.dag_view = "init"
@@ -108,6 +112,7 @@ class _DagPane(BasePane):
         handler keeps its generated name)."""
         server = self.app.server
         server.trigger("nf_toggle_bp")(self.toggle_bp)
+        server.trigger("nf_every_pass")(self.toggle_every_pass)
         server.trigger("nf_select")(self.select)
         server.trigger("nf_collapse")(self.toggle_collapse)
         server.trigger("nf_box")(self.toggle_box)
@@ -124,6 +129,8 @@ class _DagPane(BasePane):
 
     def spawned(self) -> None:
         self.app.send({"cmd": "breakpoints", "ids": list(self.app.state.bps)})
+        if self.app.state.every_pass:
+            self.app.send({"cmd": "every_pass", "ids": list(self.app.state.every_pass)})
         self.send_watch(force=True)
 
     # -- who watches -------------------------------------------------------------------
@@ -167,6 +174,7 @@ class _DagPane(BasePane):
             res = msg.get("residuals")
             note = ("  res " + " ".join(f"{k} {v:.2e}" for k, v in res.items())) if res else ""
             console(f"{prefix}{scope}  ◇ {msg['name']} test #{msg['iter']} → {msg['result']}{note}", "test")
+            self._loop_final(msg["node"], bool(msg["result"] and msg.get("final")))
             if res:
                 self.model.residuals[msg["node"]] = res
                 self.app.state.loop_res = {**self.app.state.loop_res,
@@ -176,6 +184,14 @@ class _DagPane(BasePane):
                 self._visited = [v for v in visited if v.startswith("init:")
                                  or (region is not None and not v.startswith(f"{region}/"))]
         self._visited_dirty = True
+
+    def _loop_final(self, node: str, final: bool) -> None:
+        """Loop ``node`` runs its final pass now (its test said so), or not."""
+        s = self.app.state
+        if bool((s.loop_final or {}).get(node)) == final:
+            return
+        shown = {k: v for k, v in (s.loop_final or {}).items() if k != node}
+        s.loop_final = {**shown, node: True} if final else shown
 
     def _apply_visited(self) -> None:
         if self._visited_dirty:
@@ -282,6 +298,22 @@ class _DagPane(BasePane):
             self.rebuild(fit=False)
         self._refresh_bp_list()
         self._refresh_inspector()
+
+    def toggle_every_pass(self, node_id: str) -> None:
+        """Run an op marked final in every pass of its wrapping loops, or in the final one only
+        again: in its region's context (each region has its own), from the next run of the op.
+
+        The solver names ops by name: every node of the region with the op's name goes along."""
+        info = self.model.index.get(node_id)
+        if not info or not info.get("final"):
+            return
+        same = [i for i, o in self.model.index.items() if o.get("final") and o.get("region") == info.get("region")
+                and o.get("domain") == info.get("domain") and o.get("name") == info.get("name")]
+        ids = [i for i in (self.app.state.every_pass or []) if i not in same]
+        if node_id not in (self.app.state.every_pass or []):
+            ids += same
+        self.app.state.every_pass = ids
+        self.app.send({"cmd": "every_pass", "ids": ids})
 
     def select(self, node_id: Optional[str], pan: bool = False) -> None:
         if not node_id:

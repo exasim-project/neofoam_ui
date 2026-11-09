@@ -7,7 +7,8 @@ Small protocols, each one capability (checked with ``isinstance``, decided once 
   :class:`SelfDrivingSolver` (it runs itself and reports through a :class:`ProgramContext`);
 * optional: :class:`MeshProvider` and :class:`ViewFieldProvider` (the field view),
   :class:`RegionProvider` (several mesh regions), :class:`ResultObserver` (sees every
-  init-step result, e.g. to hook post-processing);
+  init-step result, e.g. to hook post-processing), :class:`PassControl` (runs ops marked
+  final in every pass, a debug override);
 * :class:`Renderer` / :class:`RenderBackend`: what draws the field view (default: Catalyst);
 * :class:`Peers`: the other MPI ranks, as rank 0 keeps them in step.
 """
@@ -105,6 +106,18 @@ class ResultObserver(Protocol):
     """``observe(value, emit)``: offered every init-step result (e.g. the post-processor)."""
 
     def observe(self, value: Any, emit: _Emit) -> None: ...
+
+
+@runtime_checkable
+class PassControl(Protocol):
+    """``run_every_pass(region, ops)``: run ``ops`` (of ``region``, marked :attr:`Op.final`) in
+    every pass of their wrapping loops, the other final ops of the region in the final pass only.
+
+    ``ops`` is always the region's whole choice (empty: none). Called from the worker's command
+    thread while the region's thread may be running: the solver hands the choice over in one
+    step (e.g. replaces a set, never changes one in place)."""
+
+    def run_every_pass(self, region: Optional[str], ops: list[Op]) -> None: ...
 
 
 @runtime_checkable

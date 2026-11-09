@@ -16,6 +16,7 @@
   "delay_ms": 0.0,
   "depth": 0,
   "done_regions": [],
+  "every_pass": [],
   "ex_hot": [],
   "ex_vals": {},
   "failed": false,
@@ -40,6 +41,7 @@
   "insp": null,
   "is_mobile": false,
   "logs": [],
+  "loop_final": {},
   "loop_iter": {},
   "loop_res": {},
   "main_drawer": true,
@@ -73,6 +75,7 @@
  "triggers": [
   "nf_box",
   "nf_collapse",
+  "nf_every_pass",
   "nf_field",
   "nf_key",
   "nf_select",

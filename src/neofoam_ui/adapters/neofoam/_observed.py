@@ -19,7 +19,7 @@ import numpy as np
 
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase
 from neofoam_ui.adapters.neofoam._fields import _FieldAccess, _RegionContexts
-from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _source
+from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _qualified, _source
 from neofoam_ui.engine import Event, InitStep, Op, ProgramContext, ThreadedProgram
 from neofoam_ui.engine._wire import _init_dict
 
@@ -35,6 +35,8 @@ class ObservedNeoFoamSolver(_NeoFoamBase):
         self._run = run
         # argv[0] must be a program name: OpenFOAM's argList crashes on an empty argv.
         self.argv = argv or ["neofoam"]
+        #: The observer of the running program (each region's context is in its books).
+        self._stepper: Optional[_Stepper] = None
 
     def program(self, session: ProgramContext) -> Iterator[Event]:
         from neofoam.framework.execution_observer import observe  # noqa: PLC0415 - neofoam: the solver's venv only
@@ -44,11 +46,23 @@ class ObservedNeoFoamSolver(_NeoFoamBase):
                 return self._run(self.argv)
 
         thread = session.program_thread = ThreadedProgram(target)
-        stepper = _Stepper(session, thread.pause, thread.lanes)
+        stepper = self._stepper = _Stepper(session, thread.pause, thread.lanes)
         for event in thread:
             if event.kind == "end" and thread.result is not None:
                 session.ctx = _final_context(thread.result)
             yield event
+
+
+    def run_every_pass(self, region: Optional[str], ops: list[Op]) -> None:
+        """``engine.PassControl``: the region's ``ctx.run_every_pass`` names ``ops``.
+
+        The region's thread reads the set at each run of an op marked final; it is replaced,
+        never changed in place, so any thread may hand it over (NeoFOAM checks the names at
+        the start of a graph, and an op not marked final when it reaches it: only final ops
+        get here). A NeoFOAM without ``run_every_pass``, or a region not running yet: nothing."""
+        stepper = self._stepper
+        if stepper is not None:
+            stepper.run_every_pass(region, ops)
 
 
 def _final_context(result: Any) -> Any:
@@ -288,6 +302,10 @@ class _Stepper:
             residuals = getattr(getattr(op.func, "controller", None), "residuals", None) if coupling else None
             if isinstance(residuals, dict) and residuals:
                 extra["residuals"] = {str(k): float(v) for k, v in residuals.items()}
+            # the pass the test lets in is the loop's final one (its entry on ``ctx.loops``)
+            loops = getattr(ctx, "loops", None)
+            if result and loops and getattr(loops[-1], "final", False) is True:
+                extra["final"] = True
             # a region's coupling op: what its test handed each side
             exchanges = _exchanged(run.handed.pop(id(op.func), []))
             if exchanges:
@@ -299,6 +317,17 @@ class _Stepper:
                 run.stack.append((node, iteration))
             else:
                 self._finished(run, region, node)
+
+    # -- run every pass ---------------------------------------------------------------------
+
+    def run_every_pass(self, region: Optional[str], ops: list[Op]) -> None:
+        """Hand region ``region``'s context the names of ``ops`` (``ctx.run_every_pass``)."""
+        with self.lock:
+            run = self.runs.get(region)
+            ctx = None if run is None else run.ctx
+        if ctx is None or not hasattr(ctx, "run_every_pass"):
+            return
+        ctx.run_every_pass = {_qualified(op) for op in ops if op.final}  # a new set, in one step
 
     # -- coupling -------------------------------------------------------------------------
 

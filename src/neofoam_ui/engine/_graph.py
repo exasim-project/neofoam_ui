@@ -82,6 +82,10 @@ class Op:
     exchanges: list[Exchange] = field(default_factory=list)
     #: A short tag shown on the node, e.g. ``"leader"`` (the coupling op that decides).
     tag: Optional[str] = None
+    #: Runs only in the final pass of the wrapping (coupling) loops around it (NeoFOAM's
+    #: ``OperationMetadata.final``); a :class:`~neofoam_ui.engine.PassControl` solver can run
+    #: it in every pass instead (:meth:`~neofoam_ui.engine.Session.set_every_pass`).
+    final: bool = False
 
 
 @dataclass

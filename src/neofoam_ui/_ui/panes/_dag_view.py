@@ -13,6 +13,12 @@ if TYPE_CHECKING:
 
 __all__ = ()
 
+#: An op marked final (runs in the final pass of its wrapping loops only): its badge, a toggle
+#: to run it in every pass instead (``every_pass``, its region's choice).
+_EVERY = "every_pass.includes(props.data.ref)"
+_EVERY_TITLE = ("(" + _EVERY + " ? 'runs in every pass (debug)' : 'runs in the final pass only')"
+                " + ' of its coupling loops: click to toggle'")
+
 #: Background of a node in the timing heat map (``heat`` holds a CSS colour per node id). Nodes
 #: bind to ``data.ref``, the op they stand for.
 _HEAT = "heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''"
@@ -63,6 +69,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 html.Span("⊕ {{ props.data.injected_by }}", classes="nf-badge",
                           v_if="props.data.injected_by")
                 html.Span("⇄ {{ props.data.exchange }}", classes="nf-cpl", v_if="props.data.exchange")
+                _every_pass_toggle()
 
         with CustomNode("init"):
             with html.Div(classes=(
@@ -102,6 +109,9 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                               v_if="loop_res[props.data.ref]")
                     html.Span("{{ props.data.tag }}", classes="nf-tag", v_if="props.data.tag",
                               title="decides whether the coupling group runs another pass")
+                    html.Span("final pass", classes="nf-tag nf-final-pass", v_if="loop_final[props.data.ref]",
+                              title="the pass running now is the loop's last: the ops marked final run in it")
+                _every_pass_toggle()
                 html.Div("test: {{ props.data.test }}", classes="nf-loop-test", v_if="!props.data.control")
                 html.Div("⇄ {{ props.data.exchange }}", classes="nf-cpl nf-loop-cpl", v_if="props.data.exchange")
                 html.Div("{{ heat_ms[props.data.ref] ? heat_ms[props.data.ref] + ' · ' : '' }}"
@@ -189,6 +199,13 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
     editor._attributes["min_zoom"] = ':min-zoom="0.1"'
 
 
+def _every_pass_toggle() -> None:
+    """The badge of an op marked final; a click runs it in every pass (or the final one only)."""
+    html.Span("{{ " + _EVERY + " ? '↻ every pass' : 'final' }}",
+              classes=("['nf-every', { on: " + _EVERY + " }]",), v_if="props.data.final", title=(_EVERY_TITLE,),
+              raw_attrs=['@click.stop="trigger(\'nf_every_pass\', [props.data.ref])"'])
+
+
 def _inspector(step: Callable[[str, Optional[str]], Any]) -> None:
     """The selected node, the call stack and the breakpoints (``step``: "Run to here")."""
     html.Div("Inspector", classes="nf-h")
@@ -269,6 +286,7 @@ def _drawer(drawer: Any) -> None:
         html.Div("● breakpoint — click the gutter left of a node")
         html.Div("click a field: ops that wrote (orange) / read (blue) it")
         html.Div("dashed ▭ ⊕ injected by an optional model")
+        html.Div("'final': runs in the final pass of its coupling loops only; click: '↻ every pass' (debug)")
         with html.Div(v_if="regions.length"):
             html.Div("▢ a box per region: its own solver, graph and thread (its region's colour);"
                      " a token per box, every step moves all of them")

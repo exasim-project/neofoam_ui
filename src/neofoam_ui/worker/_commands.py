@@ -83,6 +83,13 @@ def _breakpoints(w: _Worker, cmd: dict[str, Any]) -> None:
     w.session.breakpoints = {str(i) for i in cmd["ids"]}
 
 
+@_command("every_pass")
+def _every_pass(w: _Worker, cmd: dict[str, Any]) -> None:
+    # At once, like breakpoints: each region's context gets a new set (the region's thread
+    # only reads it), so a running region takes it from its next run of the op.
+    w.session.set_every_pass(list(cmd["ids"]))
+
+
 @_command("delay")
 def _delay(w: _Worker, cmd: dict[str, Any]) -> None:
     w.session.delay = max(0.0, float(cmd["seconds"]))

@@ -22,6 +22,8 @@ def _convert(op: Any, injected: dict[int, str], ctx: Any = None) -> Op:
         doc=meta.description or _doc(target),
         source=_source(target),
         injected_by=injected.get(id(op)),
+        # runs in the final pass of its wrapping loops only (a NeoFOAM without it: never so)
+        final=bool(getattr(meta, "final", False)),
     )
     if op.operation_type == "iterative":
         predicate = op.func.func
@@ -43,6 +45,11 @@ def _convert(op: Any, injected: dict[int, str], ctx: Any = None) -> Op:
         return Op(name, "loop", op.func, [_convert(c, injected, ctx) for c in op.sub_operations],
                   test=test, exchanges=exchanges, tag=tag, **common)
     return Op(name, "action", op.run, guard=guard, **common)
+
+
+def _qualified(op: Op) -> str:
+    """NeoFOAM's ``Operation.name`` of a converted op: ``[<domain>.]<op_name>``."""
+    return f"{op.domain}.{op.name}" if op.domain else op.name
 
 
 def _scheme(coupling: Any, ctx: Any) -> Optional[str]:

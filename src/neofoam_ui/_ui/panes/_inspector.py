@@ -38,6 +38,8 @@ def _inspector_model(model: _RunModel, sel: Optional[str], bps: Iterable[str]) -
             rows.append({"k": "injected by", "v": f"⊕ model {info['injected_by']}"})
         if info.get("tag"):
             rows.append({"k": "tag", "v": info["tag"]})
+        if info.get("final"):
+            rows.append({"k": "final", "v": "runs in the final pass of its coupling loops (toggle on its box)"})
         for ex in info.get("exchanges") or ([info["exchange"]] if info.get("exchange") else []):
             rows.append({"k": "exchange", "v": f"{', '.join(ex.get('data') or ())} ← "
                          f"{ex.get('partner') or '—'} ({ex['source']})"

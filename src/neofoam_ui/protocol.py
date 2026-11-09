@@ -54,8 +54,8 @@ WAIT_ENV = "NEOFOAM_UI_WAIT"
 
 # -- UI → worker ----------------------------------------------------------------------------------
 
-COMMANDS = frozenset({"step", "pause", "breakpoints", "delay", "watch", "wait", "ack", "view", "live",
-                      "frames", "stop"})
+COMMANDS = frozenset({"step", "pause", "breakpoints", "every_pass", "delay", "watch", "wait", "ack", "view",
+                      "live", "frames", "stop"})
 
 # -- worker → UI ----------------------------------------------------------------------------------
 

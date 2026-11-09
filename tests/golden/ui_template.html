@@ -191,6 +191,9 @@ delay {{ delay_ms }} ms
 <span class="nf-cpl" v-if="props.data.exchange">
 ⇄ {{ props.data.exchange }}
 </span>
+<span @click.stop="trigger('nf_every_pass', [props.data.ref])" :class="['nf-every', { on: every_pass.includes(props.data.ref) }]" :title="(every_pass.includes(props.data.ref) ? 'runs in every pass (debug)' : 'runs in the final pass only') + ' of its coupling loops: click to toggle'" v-if="props.data.final">
+{{ every_pass.includes(props.data.ref) ? '↻ every pass' : 'final' }}
+</span>
 </div>
 </template>
 <template v-slot:node-init=props>
@@ -231,7 +234,13 @@ delay {{ delay_ms }} ms
 <span class="nf-tag" title="decides whether the coupling group runs another pass" v-if="props.data.tag">
 {{ props.data.tag }}
 </span>
+<span class="nf-tag nf-final-pass" title="the pass running now is the loop's last: the ops marked final run in it" v-if="loop_final[props.data.ref]">
+final pass
+</span>
 </div>
+<span @click.stop="trigger('nf_every_pass', [props.data.ref])" :class="['nf-every', { on: every_pass.includes(props.data.ref) }]" :title="(every_pass.includes(props.data.ref) ? 'runs in every pass (debug)' : 'runs in the final pass only') + ' of its coupling loops: click to toggle'" v-if="props.data.final">
+{{ every_pass.includes(props.data.ref) ? '↻ every pass' : 'final' }}
+</span>
 <div class="nf-loop-test" v-if="!props.data.control">
 test: {{ props.data.test }}
 </div>
@@ -344,8 +353,8 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w519-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w520-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w527-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w528-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -440,7 +449,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w564-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w572-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -683,6 +692,9 @@ click a field: ops that wrote (orange) / read (blue) it
 </div>
 <div >
 dashed ▭ ⊕ injected by an optional model
+</div>
+<div >
+'final': runs in the final pass of its coupling loops only; click: '↻ every pass' (debug)
 </div>
 <div v-if="regions.length">
 <div >

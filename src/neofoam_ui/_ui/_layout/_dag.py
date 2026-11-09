@@ -124,6 +124,8 @@ def _ops(
                 "test": op.get("test"),
                 # a coupling node: the partner it takes data from, e.g. "x ← b"
                 "exchange": _exchange_text(op), "tag": op.get("tag"),
+                # runs in the final pass of its wrapping loops only (a toggle: every pass)
+                "final": bool(op.get("final")),
                 # an open loop's control node (its body is drawn below it)
                 "control": is_open,
             },
@@ -372,7 +374,8 @@ def _place(ops: list[dict[str, Any]], cx: float, y_of: dict[str, float], collaps
             "data": {"label": op["name"], "ref": _ref(op), "number": op.get("pos") or op.get("number") or "",
                      "collapsed": _ref(op) in collapsed, "size": _count(op), "color": _node_color(op, "domain"),
                      "guard": op.get("guard"), "injected_by": op.get("injected_by"), "test": op.get("test"),
-                     "exchange": _exchange_text(op), "tag": op.get("tag"), "control": is_open},
+                     "exchange": _exchange_text(op), "tag": op.get("tag"), "final": bool(op.get("final")),
+                     "control": is_open},
             "width": w, "height": h, "style": {"width": f"{w}px", "height": f"{h}px"},
             "draggable": False, "selectable": False, "connectable": False,
         })
