@@ -14,6 +14,7 @@ dependencies = [
     "trame-vuetify>=3.0",
     "trame-flow>=2.2.2",
     "trame-plotly>=3.0",
+    "trame-dockview>=2.0.1",
 ]
 
 [project.optional-dependencies]
