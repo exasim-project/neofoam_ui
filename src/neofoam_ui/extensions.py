@@ -1,9 +1,12 @@
 """Extending the UI without editing it: panes, registered through an :class:`ExtensionRegistry`.
 
 A pane is a factory ``factory(ctx) -> Pane`` (``ctx``: the app, as a :class:`PaneContext`).
-The built-in ones (DAG, Field, Plots) come first; extension panes follow in the
-order they were added. A pane with a :class:`PaneToggle` gets a toolbar button bound to
-its state key; ``placement="side"`` puts it beside the field view, ``"main"`` in the canvas.
+The built-in ones (Step view, Plots, CFD 3D) come first; extension panes follow in the
+order they were added. Each pane is a view of the dock (the main area: tabs, splits, free
+docking) with a launcher in the left activity bar (and the phone's panel picker); its
+:class:`PaneToggle` names it, and its ``key`` is the trame state flag that is true while the
+view shows (open and not behind another tab). ``placement`` is kept for compatibility: both
+values make a dock view.
 
 Register them
 
@@ -32,12 +35,15 @@ _Handler = Callable[[dict[str, Any]], None]
 
 @dataclass(frozen=True)
 class PaneToggle:
-    """A pane's toolbar button: ``key`` is the trame state flag that shows the pane."""
+    """A pane's launcher: ``key`` is the trame state flag that is true while the pane shows;
+    ``label`` its tab title, ``icon`` an ``mdi-*`` icon, ``title`` the tooltip, ``short`` the
+    phone picker's label (default: ``label``)."""
 
     key: str
     label: str
     icon: str
     title: str
+    short: str = ""
 
 
 class PaneContext(Protocol):
@@ -76,7 +82,7 @@ class Pane(Protocol):
     css: str
 
     def build(self) -> None:
-        """The pane's widgets (called once, inside its slot)."""
+        """The pane's widgets (called once, inside its dock view's template)."""
 
     def reset(self) -> None:
         """Defaults of its state: at start-up and on every restart (before the new worker)."""
@@ -88,7 +94,7 @@ class Pane(Protocol):
         """A worker started: send it this pane's settings."""
 
     def layout_changed(self) -> None:
-        """A pane opened or closed (e.g. refit a diagram)."""
+        """A pane was shown or hidden (e.g. refit a diagram)."""
 
     def wants_frames(self) -> bool:
         """The worker should render field-view frames for this pane."""

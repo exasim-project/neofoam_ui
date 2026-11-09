@@ -1,4 +1,5 @@
-"""The DAG pane's widgets: the activity diagram, its inspector, and the containment tree."""
+"""The DAG pane's widgets: the activity diagram (the step view) and its side panels: inspector,
+call stack, breakpoints, containment tree and legend."""
 
 from __future__ import annotations
 
@@ -26,8 +27,6 @@ _HEAT = "heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''"
 
 def _canvas(pane: _DagPane, minimap: str) -> None:
     """The diagram (``minimap``: when its minimap shows)."""
-    html.Div("{{ status }}", classes="nf-status",
-             style=("failed ? 'color:#d22' : running ? '' : 'color:#e0362c'",))
     with html.Div(classes="nf-regions", v_if="regions.length"):
         with html.Span(v_for="r in regions", key="r.name", classes="nf-region"):
             html.Span(classes="nf-dot", style=("`background:${r.color}`",))
@@ -207,8 +206,7 @@ def _every_pass_toggle() -> None:
 
 
 def _inspector(step: Callable[[str, Optional[str]], Any]) -> None:
-    """The selected node, the call stack and the breakpoints (``step``: "Run to here")."""
-    html.Div("Inspector", classes="nf-h")
+    """The selected node (``step``: "Run to here")."""
     with html.Div(v_if="insp"):
         with html.Div(classes="nf-sect"):
             with html.Div(classes="px-3 pb-1 d-flex align-center", style="gap: 8px;"):
@@ -246,11 +244,17 @@ def _inspector(step: Callable[[str, Optional[str]], Any]) -> None:
             v3.VBtn("Run to here", size="small", variant="tonal",
                     disabled=("!connected || running || finished",),
                     click=(lambda node: step("run_to", node), "[insp.id]"))
-    html.Div("Select a node.", v_if="!insp", classes="px-3 text-caption")
-    html.Div("Call stack", classes="nf-h mt-2")
+    html.Div("Select a node.", v_if="!insp", classes="px-3 py-2 text-caption")
+
+
+def _callstack() -> None:
+    """Where each region is: its op, the loops around it and their passes."""
     with html.Div(classes="nf-stack"):
         html.Div("{{ c }}", v_for="(c, i) in callstack", key="i")
-    html.Div("Breakpoints", classes="nf-h mt-2")
+
+
+def _breakpoints() -> None:
+    """The breakpoints: a click selects the node, × removes it."""
     with html.Div(classes="nf-tree"):
         with html.Div(v_for="b in bp_list", key="b.id", click="trigger('nf_select', [b.id])"):
             html.Span("●", classes="nf-bpmark")
@@ -261,11 +265,8 @@ def _inspector(step: Callable[[str, Optional[str]], Any]) -> None:
              classes="px-3 text-caption", style="opacity:.6")
 
 
-def _drawer(drawer: Any) -> None:
-    """The containment tree and the legend."""
-    drawer.width = 250
-    drawer.temporary = ("is_mobile",)
-    html.Div("Containment", classes="nf-h")
+def _tree() -> None:
+    """The containment tree: the init steps and the ops per region; a click selects."""
     with html.Div(classes="nf-tree"):
         with html.Div(
             v_for="n in tree", key="n.id",
@@ -279,7 +280,10 @@ def _drawer(drawer: Any) -> None:
                       v_if="n.kind !== 'activity'")
             html.Span("{{ n.kind === 'loop' ? '↺ ' : '' }}{{ n.name }}",
                       style=("n.kind === 'activity' ? 'font-weight:600; opacity:.75' : ''",))
-    html.Div("Legend", classes="nf-h mt-2")
+
+
+def _legend() -> None:
+    """What the diagram's marks mean."""
     with html.Div(classes="text-caption px-3", style="line-height: 1.9; opacity: .8;"):
         html.Div("▭ action · red = next (token) · green = ran this time step")
         html.Div("( loop ◇ ) loop: pass · residuals; ◇ its test (hover: the test); ▾/▸ collapse")

@@ -1,18 +1,21 @@
 """The DAG pane: the activity diagram of the run, its token, breakpoints, timing and highlights.
 
-It shows one view at a time, the initialization or the execution (``dag_view``: ``"init"`` /
+The step view: it shows one graph at a time, the initialization or the execution (``dag_view``: ``"init"`` /
 ``"exec"``, a toolbar toggle). The view follows the run's phase: it switches to ``init`` when
 an init step runs and to ``exec`` when the first execution op does; a choice of the user holds
 until the next change of phase. ``dag_view`` is UI state only, the worker never sees it.
 
-Closed (or no visible browser tab) the worker is told nobody watches (``watch``): a run then
-sends no per-event messages at all. The inspector and the containment tree (drawer) belong
-to it too; the shell places them.
+Hidden (``dag_on`` false: the step view closed or behind another tab, or no visible browser
+tab) the worker is told nobody watches (``watch``): a run then sends no per-event messages at
+all. The inspector, call stack, breakpoints, containment tree and legend belong to it too:
+side panels (:meth:`side_panels`), the shell places them.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
+
+from trame.widgets import client
 
 from neofoam_ui._ui._format import _fmt_ms
 from neofoam_ui._ui._layout._dag import _build_flow
@@ -28,8 +31,9 @@ __all__ = ()
 
 class _DagPane(BasePane):
     name = "dag"
-    toggle = PaneToggle("dag_on", "DAG", "mdi-sitemap-outline",
-                        "the activity diagram; closed, a run reports no events and the solver runs as without the UI")
+    toggle = PaneToggle("dag_on", "Step view", "mdi-sitemap-outline",
+                        "the activity diagram; hidden, a run reports no events and the solver runs as without the UI",
+                        short="Step")
     placement = "main"
 
     def __init__(self, app: StepperApp) -> None:
@@ -103,9 +107,10 @@ class _DagPane(BasePane):
             self.editor.clear_graph()
 
     def build(self) -> None:
-        sides = [p.toggle.key for p in self.app.panes if p.placement == "side" and p.toggle]
-        _dag_view._canvas(self, " && ".join(["!is_mobile", *(f"!{k}" for k in sides)]))
+        _dag_view._canvas(self, "!nf_phone")
         self.editor._attributes["min_zoom"] = ':min-zoom="0.1"'
+        # the diagram mounts whenever the step view opens (or the page loads): it gets the graph
+        client.ClientTriggers(mounted="trigger('nf_dag_mounted')")
 
     def register_triggers(self) -> None:
         """The templates call these by name; after the page is built (the diagram's own click
@@ -117,12 +122,20 @@ class _DagPane(BasePane):
         server.trigger("nf_collapse")(self.toggle_collapse)
         server.trigger("nf_box")(self.toggle_box)
         server.trigger("nf_field")(self.highlight_field)
+        server.trigger("nf_dag_mounted")(self.mounted)
 
-    def build_inspector(self) -> None:
-        _dag_view._inspector(self.app.step)
+    def side_panels(self) -> dict[str, Callable[[], None]]:
+        """The narrow panels of the diagram, by panel id (the shell's sidebars)."""
+        return {"tree": _dag_view._tree, "callstack": _dag_view._callstack,
+                "breakpoints": _dag_view._breakpoints,
+                "inspector": lambda: _dag_view._inspector(self.app.step), "legend": _dag_view._legend}
 
-    def build_drawer(self, drawer: Any) -> None:
-        _dag_view._drawer(drawer)
+    def mounted(self) -> None:
+        """A diagram mounted in a browser (the step view opened, or the page loaded): its graph
+        is pushed (not state), so send it again, and fit it."""
+        if self.editor is not None:
+            self.editor.graph = self.editor.graph
+            self.editor.fit_view()
 
     def handlers(self) -> Mapping[str, Any]:
         return {"graph": self._on_graph, "log": self._on_log, "paused": self._on_paused}

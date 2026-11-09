@@ -1,4 +1,4 @@
-"""A pane from outside: registered without editing the app, it gets a toolbar toggle, a slot,
+"""A pane from outside: registered without editing the app, it gets a launcher, a dock view,
 the worker's messages, and a say in whether frames are rendered."""
 
 from trame.app import get_server
@@ -46,12 +46,18 @@ def test_an_extension_pane_takes_part_like_a_built_in_one():
     registry.add_pane(Residuals)
     server, app = _app("ext_pane", registry)
     pane = app.pane("residuals")
-    html_ = server.state._pending_update["trame__template_main"]
-    assert 'click="rs_on = !rs_on"' in html_ and "mdi-chart-bell-curve" in html_  # its toggle
-    assert "fv_on || pt_on || rs_on" in html_  # it widens the grid like a side pane
-    assert "!dag_on && !fv_on && !pt_on && !rs_on" in html_  # and counts for "all closed"
-    assert "{{ rs_lines.length }} lines" in html_
-    assert any(".nf-rs { flex: 1 1 0; }" in str(v) for v in server.state._pending_update.values())
+    pending = server.state._pending_update
+    html_ = pending["trame__template_main"]
+    # its launcher in the activity bar and the phone's picker, after the built-in views
+    assert html_.count("window.nfL.toggle('residuals')") == 3 and "mdi-chart-bell-curve" in html_
+    assert html_.index("toggle('fields')") < html_.index("toggle('residuals')") < html_.index("toggle('tree')")
+    # a view of the dock: its widgets are a template of their own, shown while rs_on
+    assert "{{ rs_lines.length }} lines" in pending["trame__template_nf_p_residuals"]
+    view = next(p for p in app.panels if p.id == "residuals")
+    assert (view.kind, view.flag, view.title, view.template) == ("main", "rs_on", "Residuals", "nf_p_residuals")
+    script = next(v for k, v in pending.items() if k.startswith("trame__inline_script_"))
+    assert '"id": "residuals"' in script and '"flag": "rs_on"' in script
+    assert any(".nf-rs { flex: 1 1 0; }" in str(v) for v in pending.values())
     assert app.state.rs_on is False and app.state.rs_lines == []
 
     sent = []

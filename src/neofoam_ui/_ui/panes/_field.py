@@ -77,7 +77,8 @@ class _FieldPane(BasePane):
     """The field view; it also asks the worker for the frames every pane needs (``view``)."""
 
     name = "field"
-    toggle = PaneToggle("fv_on", "Field", "mdi-palette", "show a solver field on the mesh, refreshed at every pause")
+    toggle = PaneToggle("fv_on", "CFD 3D", "mdi-cube-outline",
+                        "a solver field on the mesh (Catalyst), refreshed at every pause")
     css = _FIELD_CSS
 
     def __init__(self, ctx: PaneContext) -> None:

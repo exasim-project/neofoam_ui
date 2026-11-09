@@ -99,9 +99,14 @@ def test_trame_state_and_triggers_unchanged():
 
 
 def test_trame_template_unchanged():
+    """The page and the panels' templates (the dock, the sidebars and the phone show those)."""
     server, _ = _app("contract_template")
-    html = server.state._pending_update["trame__template_main"]
-    html = re.sub(r"trigger__\d+", "trigger__N", html) + "\n"
+    pending = server.state._pending_update
+    names = ["main"] + sorted(k[len("trame__template_"):] for k in pending
+                              if k.startswith("trame__template_nf_p_"))
+    html = "".join(f"<!-- template {n} -->\n{pending['trame__template_' + n]}\n" for n in names)
+    html = re.sub(r"trigger__\d+", "trigger__N", html)
+    html = re.sub(r"(inline_style_|inline_script_|_node_editor_)\d+", r"\1N", html)
     assert html == _golden("ui_template.html", html)
 
 

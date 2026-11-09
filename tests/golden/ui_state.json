@@ -39,13 +39,63 @@
   "hl": {},
   "hl_field": null,
   "insp": null,
-  "is_mobile": false,
   "logs": [],
   "loop_final": {},
   "loop_iter": {},
   "loop_res": {},
-  "main_drawer": true,
   "minimap_on": false,
+  "nf_dk": {
+   "open": {},
+   "vis": {}
+  },
+  "nf_drawer": false,
+  "nf_lay": {
+   "col": {
+    "breakpoints": true
+   },
+   "phone": [
+    "step"
+   ],
+   "side": {
+    "breakpoints": {
+     "open": true,
+     "ord": 1,
+     "side": "left"
+    },
+    "callstack": {
+     "open": true,
+     "ord": 1,
+     "side": "right"
+    },
+    "inspector": {
+     "open": true,
+     "ord": 0,
+     "side": "right"
+    },
+    "legend": {
+     "open": false,
+     "ord": 4,
+     "side": "right"
+    },
+    "options": {
+     "open": false,
+     "ord": 3,
+     "side": "right"
+    },
+    "tree": {
+     "open": true,
+     "ord": 0,
+     "side": "left"
+    },
+    "vars": {
+     "open": false,
+     "ord": 2,
+     "side": "right"
+    }
+   },
+   "v": 1
+  },
+  "nf_phone": null,
   "pt_charts": [],
   "pt_msg": "the tables' rows appear after the first post_process (once initialized)",
   "pt_names": [],
@@ -70,6 +120,7 @@
  "triggers": [
   "nf_box",
   "nf_collapse",
+  "nf_dag_mounted",
   "nf_every_pass",
   "nf_field",
   "nf_key",

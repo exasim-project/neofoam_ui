@@ -1,6 +1,6 @@
 """The app: wires the worker link, the state pushes, the message dispatch and the panes.
 
-The UI should cost the solver next to nothing: with the DAG pane closed (or no browser
+The UI should cost the solver next to nothing: with the step view hidden (or no browser
 watching) a run sends no per-event messages; the worker never waits for this process
 unless "wait for UI" is on; and state reaches the browser at most every 1/15 s while running.
 """
@@ -64,6 +64,8 @@ class StepperApp:
         self.dag = _DagPane(self)
         self.panes: list[Pane] = [self.dag, _FieldPane(self), _PlotsPane(self)]
         self.panes += [factory(self) for factory in registry.panes]
+        #: The panels of the layout (built with the page, :mod:`neofoam_ui._ui._panels`).
+        self.panels: list[Any] = []
         self.dispatch = _Dispatcher()
         self.dispatch.add({"graph": self.model.graph, "log_error": self._on_log_error, "stdout": self._on_stdout,
                            "skipped": self._on_skipped, "breakpoint": self._on_breakpoint,
@@ -157,8 +159,6 @@ class StepperApp:
         s.callstack = []
         s.follow = True
         s.minimap_on = bool(s.minimap_on)  # off by default; the choice survives a restart
-        if s.is_mobile is None:
-            s.is_mobile = False
         if s.delay_ms is None:
             s.delay_ms = self.delay_ms
         if s.wait_ui is None:

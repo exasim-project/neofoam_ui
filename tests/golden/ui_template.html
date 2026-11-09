@@ -1,14 +1,17 @@
+<!-- template main -->
 <VApp >
-<VAppBar density="compact">
-<VAppBarNavIcon @click="main_drawer = !main_drawer" />
-<VToolbarTitle class="nf-btxt">
-DAG stepper
-</VToolbarTitle>
-<VChip class="mr-2 nf-wide" size="small" variant="tonal" prependIcon="mdi-function-variant">
+<trame-style :css="trame__inline_style_N" />
+<trame-script :script="trame__inline_script_N" />
+<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="window.nfL && window.nfL.init()" />
+<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="let shown = window.document.visibilityState !== 'hidden'; if (shown) trigger('nf_viewer', [true]); window.document.addEventListener('visibilitychange', () => { const now = window.document.visibilityState !== 'hidden'; if (now !== shown) { shown = now; trigger('nf_viewer', [now]); } }); window.addEventListener('pagehide', () => { if (shown) { shown = false; trigger('nf_viewer', [false]); } })" />
+<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="window.addEventListener('keydown', (e) => { const k = {F11: e.shiftKey ? 'out' : 'into', F10: 'over', F8: 'run'}[e.key]; if (k) { e.preventDefault(); trigger('nf_key', [k]); } })" />
+<div class="nf-shell">
+<header class="nf-tb">
+<VChip class="nf-chip" size="small" variant="tonal" prependIcon="mdi-function-variant">
 {{ solver_name }}
 </VChip>
-<div class="nf-tools">
-<VBtn class="mx-1" title="Run until breakpoint or end (F8)" :disabled="!connected || running || finished" size="small" color="primary" variant="flat" @click="trigger('trigger__N')">
+<span class="nf-sep" />
+<VBtn class="nf-btn" title="Run until breakpoint or end (F8)" :disabled="!connected || running || finished" size="small" color="primary" variant="flat" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-play
 </VIcon>
@@ -16,7 +19,7 @@ mdi-play
 Run
 </span>
 </VBtn>
-<VBtn class="mx-1" title="Pause" :disabled="!running" size="small" variant="text" @click="trigger('trigger__N')">
+<VBtn class="nf-btn" title="Pause" :disabled="!running" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-pause
 </VIcon>
@@ -24,7 +27,7 @@ mdi-pause
 Pause
 </span>
 </VBtn>
-<VBtn class="mx-1" title="Stop" :disabled="!connected || finished" size="small" variant="text" @click="trigger('trigger__N')">
+<VBtn class="nf-btn" title="Stop" :disabled="!connected || finished" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-stop
 </VIcon>
@@ -32,7 +35,7 @@ mdi-stop
 Stop
 </span>
 </VBtn>
-<VBtn class="mx-1" title="Restart" :disabled="false" size="small" variant="text" @click="trigger('trigger__N')">
+<VBtn class="nf-btn" title="Restart" :disabled="false" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-restart
 </VIcon>
@@ -40,8 +43,8 @@ mdi-restart
 Restart
 </span>
 </VBtn>
-<VDivider class="mx-1" vertical />
-<VBtn class="mx-1" title="Step into (F11)" :disabled="!connected || running || finished" size="small" variant="text" @click="trigger('trigger__N')">
+<span class="nf-sep" />
+<VBtn class="nf-btn" title="Step into (F11)" :disabled="!connected || running || finished" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-debug-step-into
 </VIcon>
@@ -49,7 +52,7 @@ mdi-debug-step-into
 Into
 </span>
 </VBtn>
-<VBtn class="mx-1" title="Step over (F10)" :disabled="!connected || running || finished" size="small" variant="text" @click="trigger('trigger__N')">
+<VBtn class="nf-btn" title="Step over (F10)" :disabled="!connected || running || finished" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-debug-step-over
 </VIcon>
@@ -57,7 +60,7 @@ mdi-debug-step-over
 Over
 </span>
 </VBtn>
-<VBtn class="mx-1" title="Step out (Shift+F11)" :disabled="!connected || running || finished || (cur_kind !== 'init' && depth === 0)" size="small" variant="text" @click="trigger('trigger__N')">
+<VBtn class="nf-btn" title="Step out (Shift+F11)" :disabled="!connected || running || finished || (cur_kind !== 'init' && depth === 0)" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-debug-step-out
 </VIcon>
@@ -65,7 +68,7 @@ mdi-debug-step-out
 Out
 </span>
 </VBtn>
-<VBtn class="mx-1" title="Next time step" :disabled="!connected || running || finished" size="small" variant="text" @click="trigger('trigger__N')">
+<VBtn class="nf-btn" title="Next time step" :disabled="!connected || running || finished" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-skip-next
 </VIcon>
@@ -73,7 +76,7 @@ mdi-skip-next
 Next time step
 </span>
 </VBtn>
-<VBtn class="mx-1" title="Skip init" :disabled="!connected || running || finished || cur_kind !== 'init'" size="small" variant="text" @click="trigger('trigger__N')">
+<VBtn class="nf-btn" title="Skip init" :disabled="!connected || running || finished || cur_kind !== 'init'" size="small" variant="text" @click="trigger('trigger__N')">
 <VIcon size="small">
 mdi-fast-forward
 </VIcon>
@@ -81,8 +84,8 @@ mdi-fast-forward
 Skip init
 </span>
 </VBtn>
-<VDivider class="mx-1" vertical />
-<VBtnToggle class="mx-1" style="flex: none;" title="show the initialization or the execution graph" v-show="dag_on" v-model="dag_view" density="compact" variant="outlined" mandatory divided>
+<span class="nf-sep" v-show="dag_on" />
+<VBtnToggle class="nf-seg" title="show the initialization or the execution graph" v-show="dag_on" v-model="dag_view" density="compact" variant="outlined" mandatory divided>
 <VBtn size="small" value="init">
 Init
 </VBtn>
@@ -90,65 +93,1226 @@ Init
 Execution
 </VBtn>
 </VBtnToggle>
-<VDivider class="mx-1" vertical />
-<VBtn class="mx-1 nf-view" title="the activity diagram; closed, a run reports no events and the solver runs as without the UI" size="small" :color="dag_on ? 'primary' : undefined" :variant="dag_on ? 'tonal' : 'text'" @click="dag_on = !dag_on">
+<span class="nf-sep nf-brk" />
+<span :class="['nf-status', failed ? 'err' : running ? 'run' : 'stop']" :title="status">
+{{ status }}
+</span>
+<span class="nf-grow" />
+<VBtn :class="['nf-gear', { on: nf_phone ? nf_lay.phone.includes('options') : nf_lay.side.options.open }]" title="Options: delay, wait for UI, follow, timing, minimap" size="small" icon variant="text" @click="window.nfL.toggle('options')">
 <VIcon size="small">
+mdi-cog-outline
+</VIcon>
+</VBtn>
+</header>
+<div class="nf-body" v-if="nf_phone === false">
+<nav class="nf-abar left">
+<span class="nf-lbl">
+main
+</span>
+<button :class="['ab', nf_dk.vis.step ? 'on' : nf_dk.open.step ? 'bg' : '']" title="Step view: the activity diagram; hidden, a run reports no events and the solver runs as without the UI" @click="window.nfL.toggle('step')">
+<VIcon size="20">
 mdi-sitemap-outline
 </VIcon>
-<span class="nf-btxt ml-1">
-DAG
-</span>
-</VBtn>
-<VBtn class="mx-1 nf-view" title="show a solver field on the mesh, refreshed at every pause" size="small" :color="fv_on ? 'primary' : undefined" :variant="fv_on ? 'tonal' : 'text'" @click="fv_on = !fv_on">
-<VIcon size="small">
-mdi-palette
-</VIcon>
-<span class="nf-btxt ml-1">
-Field
-</span>
-</VBtn>
-<VBtn class="mx-1 nf-view" title="plot NeoFOAM's post-processing tables over time" size="small" :color="pt_on ? 'primary' : undefined" :variant="pt_on ? 'tonal' : 'text'" @click="pt_on = !pt_on">
-<VIcon size="small">
+</button>
+<button :class="['ab', nf_dk.vis.plots ? 'on' : nf_dk.open.plots ? 'bg' : '']" title="Plots: plot NeoFOAM's post-processing tables over time" @click="window.nfL.toggle('plots')">
+<VIcon size="20">
 mdi-chart-line
 </VIcon>
-<span class="nf-btxt ml-1">
-Plots
+</button>
+<button :class="['ab', nf_dk.vis.cfd ? 'on' : nf_dk.open.cfd ? 'bg' : '']" title="CFD 3D: a solver field on the mesh (Catalyst), refreshed at every pause" @click="window.nfL.toggle('cfd')">
+<VIcon size="20">
+mdi-cube-outline
+</VIcon>
+</button>
+<button :class="['ab', nf_dk.vis.console ? 'on' : nf_dk.open.console ? 'bg' : '']" title="Console: the simulation console, newest first" @click="window.nfL.toggle('console')">
+<VIcon size="20">
+mdi-console
+</VIcon>
+</button>
+<button :class="['ab', nf_dk.vis.fields ? 'on' : nf_dk.open.fields ? 'bg' : '']" title="Field table: min / max / mean of every field and who wrote it last; a click highlights its ops" @click="window.nfL.toggle('fields')">
+<VIcon size="20">
+mdi-table
+</VIcon>
+</button>
+<span class="nf-div" />
+<span class="nf-lbl">
+left
 </span>
-</VBtn>
-<VDivider class="mx-1" vertical />
-<VMenu location="bottom end" :closeOnContentClick="false">
-<template v-slot:activator="{ props }">
-<VBtn class="mx-1" title="delay, wait for UI, follow, timing, minimap" v-bind="props" size="small" variant="text">
-<VIcon size="small">
+<button :class="['ab', nf_lay.side.tree.open ? 'on' : '']" title="Containment: the init steps and the ops per region; a click selects" v-if="nf_lay.side.tree.side === 'left'" @click="window.nfL.toggle('tree')">
+<VIcon size="20">
+mdi-file-tree-outline
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.breakpoints.open ? 'on' : '']" title="Breakpoints" v-if="nf_lay.side.breakpoints.side === 'left'" @click="window.nfL.toggle('breakpoints')">
+<VIcon size="20">
+mdi-record-circle-outline
+</VIcon>
+<span class="nf-badge" v-if="bps.length">
+{{ bps.length }}
+</span>
+</button>
+<button :class="['ab', nf_lay.side.inspector.open ? 'on' : '']" title="Inspector: the selected node" v-if="nf_lay.side.inspector.side === 'left'" @click="window.nfL.toggle('inspector')">
+<VIcon size="20">
+mdi-information-outline
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.callstack.open ? 'on' : '']" title="Call stack: where each region is: its op, the loops around it" v-if="nf_lay.side.callstack.side === 'left'" @click="window.nfL.toggle('callstack')">
+<VIcon size="20">
+mdi-layers-outline
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.vars.open ? 'on' : '']" title="Variables (ctx): the solver context's scalars" v-if="nf_lay.side.vars.side === 'left'" @click="window.nfL.toggle('vars')">
+<VIcon size="20">
+mdi-code-braces
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.options.open ? 'on' : '']" title="Options: step delay, wait for UI, follow, timing, minimap" v-if="nf_lay.side.options.side === 'left'" @click="window.nfL.toggle('options')">
+<VIcon size="20">
 mdi-tune
 </VIcon>
-<span class="nf-btxt ml-1">
+</button>
+<button :class="['ab', nf_lay.side.legend.open ? 'on' : '']" title="Legend: what the diagram's marks mean" v-if="nf_lay.side.legend.side === 'left'" @click="window.nfL.toggle('legend')">
+<VIcon size="20">
+mdi-help-circle-outline
+</VIcon>
+</button>
+</nav>
+<aside class="nf-sbar left" v-if="Object.values(nf_lay.side).some(s => s.open && s.side === 'left')">
+<section data-id="tree" :class="['nf-panel', { collapsed: nf_lay.col.tree }]" :style="{ order: nf_lay.side.tree.ord }" v-if="nf_lay.side.tree.open && nf_lay.side.tree.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-file-tree-outline
+</VIcon>
+<span class="t" title="the init steps and the ops per region; a click selects">
+Containment
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('tree')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('tree')">
+{{ nf_lay.col.tree ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('tree')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.tree">
+<trame-template templateName="nf_p_tree" />
+</div>
+</section>
+<section data-id="breakpoints" :class="['nf-panel', { collapsed: nf_lay.col.breakpoints }]" :style="{ order: nf_lay.side.breakpoints.ord }" v-if="nf_lay.side.breakpoints.open && nf_lay.side.breakpoints.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-record-circle-outline
+</VIcon>
+<span class="t">
+Breakpoints
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('breakpoints')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('breakpoints')">
+{{ nf_lay.col.breakpoints ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('breakpoints')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.breakpoints">
+<trame-template templateName="nf_p_breakpoints" />
+</div>
+</section>
+<section data-id="inspector" :class="['nf-panel', { collapsed: nf_lay.col.inspector }]" :style="{ order: nf_lay.side.inspector.ord }" v-if="nf_lay.side.inspector.open && nf_lay.side.inspector.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-information-outline
+</VIcon>
+<span class="t" title="the selected node">
+Inspector
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('inspector')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('inspector')">
+{{ nf_lay.col.inspector ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('inspector')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.inspector">
+<trame-template templateName="nf_p_inspector" />
+</div>
+</section>
+<section data-id="callstack" :class="['nf-panel', { collapsed: nf_lay.col.callstack }]" :style="{ order: nf_lay.side.callstack.ord }" v-if="nf_lay.side.callstack.open && nf_lay.side.callstack.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-layers-outline
+</VIcon>
+<span class="t" title="where each region is: its op, the loops around it">
+Call stack
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('callstack')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('callstack')">
+{{ nf_lay.col.callstack ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('callstack')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.callstack">
+<trame-template templateName="nf_p_callstack" />
+</div>
+</section>
+<section data-id="vars" :class="['nf-panel', { collapsed: nf_lay.col.vars }]" :style="{ order: nf_lay.side.vars.ord }" v-if="nf_lay.side.vars.open && nf_lay.side.vars.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-code-braces
+</VIcon>
+<span class="t" title="the solver context's scalars">
+Variables (ctx)
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('vars')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('vars')">
+{{ nf_lay.col.vars ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('vars')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.vars">
+<trame-template templateName="nf_p_vars" />
+</div>
+</section>
+<section data-id="options" :class="['nf-panel', { collapsed: nf_lay.col.options }]" :style="{ order: nf_lay.side.options.ord }" v-if="nf_lay.side.options.open && nf_lay.side.options.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-tune
+</VIcon>
+<span class="t" title="step delay, wait for UI, follow, timing, minimap">
 Options
 </span>
-</VBtn>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('options')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('options')">
+{{ nf_lay.col.options ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('options')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.options">
+<trame-template templateName="nf_p_options" />
+</div>
+</section>
+<section data-id="legend" :class="['nf-panel', { collapsed: nf_lay.col.legend }]" :style="{ order: nf_lay.side.legend.ord }" v-if="nf_lay.side.legend.open && nf_lay.side.legend.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-help-circle-outline
+</VIcon>
+<span class="t" title="what the diagram's marks mean">
+Legend
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('legend')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('legend')">
+{{ nf_lay.col.legend ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('legend')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.legend">
+<trame-template templateName="nf_p_legend" />
+</div>
+</section>
+</aside>
+<main class="nf-main">
+<dock-view :ref="(el) => trame.refs['nf_dock'] = el" theme="Light" defaultRenderer="always" @ready="window.nfL.ready()" @removePanel="window.nfL.removed($event)" @layoutChanged="window.nfL.layout($event)" @panelVisibility="window.nfL.vis($event)" />
+</main>
+<aside class="nf-sbar right" v-if="Object.values(nf_lay.side).some(s => s.open && s.side === 'right')">
+<section data-id="tree" :class="['nf-panel', { collapsed: nf_lay.col.tree }]" :style="{ order: nf_lay.side.tree.ord }" v-if="nf_lay.side.tree.open && nf_lay.side.tree.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-file-tree-outline
+</VIcon>
+<span class="t" title="the init steps and the ops per region; a click selects">
+Containment
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('tree')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('tree')">
+{{ nf_lay.col.tree ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('tree')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.tree">
+<trame-template templateName="nf_p_tree" />
+</div>
+</section>
+<section data-id="breakpoints" :class="['nf-panel', { collapsed: nf_lay.col.breakpoints }]" :style="{ order: nf_lay.side.breakpoints.ord }" v-if="nf_lay.side.breakpoints.open && nf_lay.side.breakpoints.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-record-circle-outline
+</VIcon>
+<span class="t">
+Breakpoints
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('breakpoints')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('breakpoints')">
+{{ nf_lay.col.breakpoints ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('breakpoints')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.breakpoints">
+<trame-template templateName="nf_p_breakpoints" />
+</div>
+</section>
+<section data-id="inspector" :class="['nf-panel', { collapsed: nf_lay.col.inspector }]" :style="{ order: nf_lay.side.inspector.ord }" v-if="nf_lay.side.inspector.open && nf_lay.side.inspector.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-information-outline
+</VIcon>
+<span class="t" title="the selected node">
+Inspector
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('inspector')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('inspector')">
+{{ nf_lay.col.inspector ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('inspector')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.inspector">
+<trame-template templateName="nf_p_inspector" />
+</div>
+</section>
+<section data-id="callstack" :class="['nf-panel', { collapsed: nf_lay.col.callstack }]" :style="{ order: nf_lay.side.callstack.ord }" v-if="nf_lay.side.callstack.open && nf_lay.side.callstack.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-layers-outline
+</VIcon>
+<span class="t" title="where each region is: its op, the loops around it">
+Call stack
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('callstack')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('callstack')">
+{{ nf_lay.col.callstack ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('callstack')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.callstack">
+<trame-template templateName="nf_p_callstack" />
+</div>
+</section>
+<section data-id="vars" :class="['nf-panel', { collapsed: nf_lay.col.vars }]" :style="{ order: nf_lay.side.vars.ord }" v-if="nf_lay.side.vars.open && nf_lay.side.vars.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-code-braces
+</VIcon>
+<span class="t" title="the solver context's scalars">
+Variables (ctx)
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('vars')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('vars')">
+{{ nf_lay.col.vars ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('vars')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.vars">
+<trame-template templateName="nf_p_vars" />
+</div>
+</section>
+<section data-id="options" :class="['nf-panel', { collapsed: nf_lay.col.options }]" :style="{ order: nf_lay.side.options.ord }" v-if="nf_lay.side.options.open && nf_lay.side.options.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-tune
+</VIcon>
+<span class="t" title="step delay, wait for UI, follow, timing, minimap">
+Options
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('options')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('options')">
+{{ nf_lay.col.options ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('options')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.options">
+<trame-template templateName="nf_p_options" />
+</div>
+</section>
+<section data-id="legend" :class="['nf-panel', { collapsed: nf_lay.col.legend }]" :style="{ order: nf_lay.side.legend.ord }" v-if="nf_lay.side.legend.open && nf_lay.side.legend.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-help-circle-outline
+</VIcon>
+<span class="t" title="what the diagram's marks mean">
+Legend
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('legend')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('legend')">
+{{ nf_lay.col.legend ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('legend')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.legend">
+<trame-template templateName="nf_p_legend" />
+</div>
+</section>
+</aside>
+<nav class="nf-abar right">
+<span class="nf-lbl">
+right
+</span>
+<button :class="['ab', nf_lay.side.tree.open ? 'on' : '']" title="Containment: the init steps and the ops per region; a click selects" v-if="nf_lay.side.tree.side === 'right'" @click="window.nfL.toggle('tree')">
+<VIcon size="20">
+mdi-file-tree-outline
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.breakpoints.open ? 'on' : '']" title="Breakpoints" v-if="nf_lay.side.breakpoints.side === 'right'" @click="window.nfL.toggle('breakpoints')">
+<VIcon size="20">
+mdi-record-circle-outline
+</VIcon>
+<span class="nf-badge" v-if="bps.length">
+{{ bps.length }}
+</span>
+</button>
+<button :class="['ab', nf_lay.side.inspector.open ? 'on' : '']" title="Inspector: the selected node" v-if="nf_lay.side.inspector.side === 'right'" @click="window.nfL.toggle('inspector')">
+<VIcon size="20">
+mdi-information-outline
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.callstack.open ? 'on' : '']" title="Call stack: where each region is: its op, the loops around it" v-if="nf_lay.side.callstack.side === 'right'" @click="window.nfL.toggle('callstack')">
+<VIcon size="20">
+mdi-layers-outline
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.vars.open ? 'on' : '']" title="Variables (ctx): the solver context's scalars" v-if="nf_lay.side.vars.side === 'right'" @click="window.nfL.toggle('vars')">
+<VIcon size="20">
+mdi-code-braces
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.options.open ? 'on' : '']" title="Options: step delay, wait for UI, follow, timing, minimap" v-if="nf_lay.side.options.side === 'right'" @click="window.nfL.toggle('options')">
+<VIcon size="20">
+mdi-tune
+</VIcon>
+</button>
+<button :class="['ab', nf_lay.side.legend.open ? 'on' : '']" title="Legend: what the diagram's marks mean" v-if="nf_lay.side.legend.side === 'right'" @click="window.nfL.toggle('legend')">
+<VIcon size="20">
+mdi-help-circle-outline
+</VIcon>
+</button>
+</nav>
+</div>
+<nav class="nf-pbar" v-if="nf_phone">
+<button class="nf-pmenu" title="All panels" @click="nf_drawer = true">
+<VIcon size="20">
+mdi-menu
+</VIcon>
+<span >
+All
+</span>
+</button>
+<div class="nf-pscroll">
+<button :class="['pb2', nf_lay.phone.includes('step') ? 'on' : '']" title="Step view: the activity diagram; hidden, a run reports no events and the solver runs as without the UI" @click="window.nfL.toggle('step')">
+<VIcon size="20">
+mdi-sitemap-outline
+</VIcon>
+<span >
+Step
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('plots') ? 'on' : '']" title="Plots: plot NeoFOAM's post-processing tables over time" @click="window.nfL.toggle('plots')">
+<VIcon size="20">
+mdi-chart-line
+</VIcon>
+<span >
+Plots
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('cfd') ? 'on' : '']" title="CFD 3D: a solver field on the mesh (Catalyst), refreshed at every pause" @click="window.nfL.toggle('cfd')">
+<VIcon size="20">
+mdi-cube-outline
+</VIcon>
+<span >
+CFD 3D
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('console') ? 'on' : '']" title="Console: the simulation console, newest first" @click="window.nfL.toggle('console')">
+<VIcon size="20">
+mdi-console
+</VIcon>
+<span >
+Console
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('fields') ? 'on' : '']" title="Field table: min / max / mean of every field and who wrote it last; a click highlights its ops" @click="window.nfL.toggle('fields')">
+<VIcon size="20">
+mdi-table
+</VIcon>
+<span >
+Fields
+</span>
+</button>
+<span class="nf-pgap" />
+<button :class="['pb2', nf_lay.phone.includes('tree') ? 'on' : '']" title="Containment: the init steps and the ops per region; a click selects" @click="window.nfL.toggle('tree')">
+<VIcon size="20">
+mdi-file-tree-outline
+</VIcon>
+<span >
+Tree
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('breakpoints') ? 'on' : '']" title="Breakpoints" @click="window.nfL.toggle('breakpoints')">
+<VIcon size="20">
+mdi-record-circle-outline
+</VIcon>
+<span >
+Breaks
+</span>
+<span class="nf-badge" v-if="bps.length">
+{{ bps.length }}
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('inspector') ? 'on' : '']" title="Inspector: the selected node" @click="window.nfL.toggle('inspector')">
+<VIcon size="20">
+mdi-information-outline
+</VIcon>
+<span >
+Inspect
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('callstack') ? 'on' : '']" title="Call stack: where each region is: its op, the loops around it" @click="window.nfL.toggle('callstack')">
+<VIcon size="20">
+mdi-layers-outline
+</VIcon>
+<span >
+Stack
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('vars') ? 'on' : '']" title="Variables (ctx): the solver context's scalars" @click="window.nfL.toggle('vars')">
+<VIcon size="20">
+mdi-code-braces
+</VIcon>
+<span >
+Vars
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('options') ? 'on' : '']" title="Options: step delay, wait for UI, follow, timing, minimap" @click="window.nfL.toggle('options')">
+<VIcon size="20">
+mdi-tune
+</VIcon>
+<span >
+Options
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('legend') ? 'on' : '']" title="Legend: what the diagram's marks mean" @click="window.nfL.toggle('legend')">
+<VIcon size="20">
+mdi-help-circle-outline
+</VIcon>
+<span >
+Legend
+</span>
+</button>
+</div>
+</nav>
+<div class="nf-pstack" v-if="nf_phone">
+<section data-id="step" :class="['nf-panel', { collapsed: nf_lay.col.step }]" :style="{ order: nf_lay.phone.indexOf('step') }" v-if="nf_lay.phone.includes('step')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-sitemap-outline
+</VIcon>
+<span class="t" title="the activity diagram; hidden, a run reports no events and the solver runs as without the UI">
+Step view
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('step')">
+{{ nf_lay.col.step ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('step')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.step">
+<trame-template templateName="nf_p_step" />
+</div>
+</section>
+<section data-id="plots" :class="['nf-panel', { collapsed: nf_lay.col.plots }]" :style="{ order: nf_lay.phone.indexOf('plots') }" v-if="nf_lay.phone.includes('plots')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-chart-line
+</VIcon>
+<span class="t" title="plot NeoFOAM's post-processing tables over time">
+Plots
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('plots')">
+{{ nf_lay.col.plots ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('plots')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.plots">
+<trame-template templateName="nf_p_plots" />
+</div>
+</section>
+<section data-id="cfd" :class="['nf-panel', { collapsed: nf_lay.col.cfd }]" :style="{ order: nf_lay.phone.indexOf('cfd') }" v-if="nf_lay.phone.includes('cfd')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-cube-outline
+</VIcon>
+<span class="t" title="a solver field on the mesh (Catalyst), refreshed at every pause">
+CFD 3D
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('cfd')">
+{{ nf_lay.col.cfd ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('cfd')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.cfd">
+<trame-template templateName="nf_p_cfd" />
+</div>
+</section>
+<section data-id="console" :class="['nf-panel', { collapsed: nf_lay.col.console }]" :style="{ order: nf_lay.phone.indexOf('console') }" v-if="nf_lay.phone.includes('console')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-console
+</VIcon>
+<span class="t" title="the simulation console, newest first">
+Console
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('console')">
+{{ nf_lay.col.console ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('console')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.console">
+<trame-template templateName="nf_p_console" />
+</div>
+</section>
+<section data-id="fields" :class="['nf-panel', { collapsed: nf_lay.col.fields }]" :style="{ order: nf_lay.phone.indexOf('fields') }" v-if="nf_lay.phone.includes('fields')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-table
+</VIcon>
+<span class="t" title="min / max / mean of every field and who wrote it last; a click highlights its ops">
+Field table
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('fields')">
+{{ nf_lay.col.fields ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('fields')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.fields">
+<trame-template templateName="nf_p_fields" />
+</div>
+</section>
+<section data-id="tree" :class="['nf-panel', { collapsed: nf_lay.col.tree }]" :style="{ order: nf_lay.phone.indexOf('tree') }" v-if="nf_lay.phone.includes('tree')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-file-tree-outline
+</VIcon>
+<span class="t" title="the init steps and the ops per region; a click selects">
+Containment
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('tree')">
+{{ nf_lay.col.tree ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('tree')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.tree">
+<trame-template templateName="nf_p_tree" />
+</div>
+</section>
+<section data-id="breakpoints" :class="['nf-panel', { collapsed: nf_lay.col.breakpoints }]" :style="{ order: nf_lay.phone.indexOf('breakpoints') }" v-if="nf_lay.phone.includes('breakpoints')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-record-circle-outline
+</VIcon>
+<span class="t">
+Breakpoints
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('breakpoints')">
+{{ nf_lay.col.breakpoints ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('breakpoints')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.breakpoints">
+<trame-template templateName="nf_p_breakpoints" />
+</div>
+</section>
+<section data-id="inspector" :class="['nf-panel', { collapsed: nf_lay.col.inspector }]" :style="{ order: nf_lay.phone.indexOf('inspector') }" v-if="nf_lay.phone.includes('inspector')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-information-outline
+</VIcon>
+<span class="t" title="the selected node">
+Inspector
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('inspector')">
+{{ nf_lay.col.inspector ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('inspector')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.inspector">
+<trame-template templateName="nf_p_inspector" />
+</div>
+</section>
+<section data-id="callstack" :class="['nf-panel', { collapsed: nf_lay.col.callstack }]" :style="{ order: nf_lay.phone.indexOf('callstack') }" v-if="nf_lay.phone.includes('callstack')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-layers-outline
+</VIcon>
+<span class="t" title="where each region is: its op, the loops around it">
+Call stack
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('callstack')">
+{{ nf_lay.col.callstack ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('callstack')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.callstack">
+<trame-template templateName="nf_p_callstack" />
+</div>
+</section>
+<section data-id="vars" :class="['nf-panel', { collapsed: nf_lay.col.vars }]" :style="{ order: nf_lay.phone.indexOf('vars') }" v-if="nf_lay.phone.includes('vars')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-code-braces
+</VIcon>
+<span class="t" title="the solver context's scalars">
+Variables (ctx)
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('vars')">
+{{ nf_lay.col.vars ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('vars')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.vars">
+<trame-template templateName="nf_p_vars" />
+</div>
+</section>
+<section data-id="options" :class="['nf-panel', { collapsed: nf_lay.col.options }]" :style="{ order: nf_lay.phone.indexOf('options') }" v-if="nf_lay.phone.includes('options')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-tune
+</VIcon>
+<span class="t" title="step delay, wait for UI, follow, timing, minimap">
+Options
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('options')">
+{{ nf_lay.col.options ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('options')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.options">
+<trame-template templateName="nf_p_options" />
+</div>
+</section>
+<section data-id="legend" :class="['nf-panel', { collapsed: nf_lay.col.legend }]" :style="{ order: nf_lay.phone.indexOf('legend') }" v-if="nf_lay.phone.includes('legend')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-help-circle-outline
+</VIcon>
+<span class="t" title="what the diagram's marks mean">
+Legend
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('legend')">
+{{ nf_lay.col.legend ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('legend')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.legend">
+<trame-template templateName="nf_p_legend" />
+</div>
+</section>
+<div class="nf-pempty" v-if="!nf_lay.phone.length">
+Nothing shown. Tap an icon above to show a panel.
+</div>
+</div>
+<footer class="nf-foot">
+<span class="nf-grow" />
+<span class="nf-mut">
+Layout is remembered in this browser ·
+</span>
+<button class="nf-lnk" @click="window.nfL.reset()">
+Reset layout
+</button>
+<span class="nf-mut nf-dhint">
+· drag tabs to split or dock · ⇄ moves a side panel to the other sidebar
+</span>
+</footer>
+</div>
+<div class="nf-scrim" v-if="nf_phone && nf_drawer" @click="nf_drawer = false" />
+<aside :class="['nf-drawer', { open: nf_drawer }]" v-if="nf_phone">
+<div class="nf-dh">
+<span class="nf-grow">
+Panels
+</span>
+<button class="hb" title="close" @click="nf_drawer = false">
+×
+</button>
+</div>
+<div class="nf-dl">
+<div class="nf-dsec">
+Views
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('step') }]" @click="window.nfL.toggle('step')">
+<VIcon size="18">
+mdi-sitemap-outline
+</VIcon>
+<span >
+Step view
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('plots') }]" @click="window.nfL.toggle('plots')">
+<VIcon size="18">
+mdi-chart-line
+</VIcon>
+<span >
+Plots
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('cfd') }]" @click="window.nfL.toggle('cfd')">
+<VIcon size="18">
+mdi-cube-outline
+</VIcon>
+<span >
+CFD 3D
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('console') }]" @click="window.nfL.toggle('console')">
+<VIcon size="18">
+mdi-console
+</VIcon>
+<span >
+Console
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('fields') }]" @click="window.nfL.toggle('fields')">
+<VIcon size="18">
+mdi-table
+</VIcon>
+<span >
+Field table
+</span>
+<i class="nf-sw" />
+</div>
+<div class="nf-dsec">
+Panels
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('tree') }]" @click="window.nfL.toggle('tree')">
+<VIcon size="18">
+mdi-file-tree-outline
+</VIcon>
+<span >
+Containment
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('breakpoints') }]" @click="window.nfL.toggle('breakpoints')">
+<VIcon size="18">
+mdi-record-circle-outline
+</VIcon>
+<span >
+Breakpoints
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('inspector') }]" @click="window.nfL.toggle('inspector')">
+<VIcon size="18">
+mdi-information-outline
+</VIcon>
+<span >
+Inspector
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('callstack') }]" @click="window.nfL.toggle('callstack')">
+<VIcon size="18">
+mdi-layers-outline
+</VIcon>
+<span >
+Call stack
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('vars') }]" @click="window.nfL.toggle('vars')">
+<VIcon size="18">
+mdi-code-braces
+</VIcon>
+<span >
+Variables (ctx)
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('options') }]" @click="window.nfL.toggle('options')">
+<VIcon size="18">
+mdi-tune
+</VIcon>
+<span >
+Options
+</span>
+<i class="nf-sw" />
+</div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('legend') }]" @click="window.nfL.toggle('legend')">
+<VIcon size="18">
+mdi-help-circle-outline
+</VIcon>
+<span >
+Legend
+</span>
+<i class="nf-sw" />
+</div>
+</div>
+<div class="nf-df">
+<span >
+Tap to show or hide. Shown panels stack in the order you open them, newest on top.
+</span>
+<div class="d-flex" style="gap: 8px;">
+<button class="nf-sbtn" @click="window.nfL.only('step')">
+Step view only
+</button>
+<button class="nf-sbtn" @click="window.nfL.reset()">
+Reset layout
+</button>
+</div>
+</div>
+</aside>
+</VApp>
+<!-- template nf_p_breakpoints -->
+<div class="nf-pc nf-pc-side nf-pc-breakpoints">
+<div class="nf-tree">
+<div :key="b.id" v-for="b in bp_list" @click="trigger('nf_select', [b.id])">
+<span class="nf-bpmark">
+●
+</span>
+<span >
+{{ b.name }}
+</span>
+<VSpacer  />
+<VIcon @click.stop="trigger('nf_toggle_bp', [b.id])" size="x-small">
+mdi-close
+</VIcon>
+</div>
+</div>
+<div class="px-3 text-caption" style="opacity:.6" v-if="!bp_list.length">
+Click the gutter left of a node to add one.
+</div>
+</div>
+<!-- template nf_p_callstack -->
+<div class="nf-pc nf-pc-side nf-pc-callstack">
+<div class="nf-stack">
+<div :key="i" v-for="(c, i) in callstack">
+{{ c }}
+</div>
+</div>
+</div>
+<!-- template nf_p_cfd -->
+<div class="nf-pc nf-pc-main nf-pc-cfd">
+<div class="nf-field" v-show="fv_on">
+<div class="nf-field-bar">
+<VSelect :key="`w774-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w775-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
+<VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
+<VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
+<span class="nf-field-msg">
+{{ fv_msg }}
+</span>
+</div>
+<img class="nf-field-img" v-show="fv_src" alt="in-situ view" :src="fv_src" />
+<div class="nf-field-regions" v-if="!fv_src && fields_rows.some(f => f.region)">
+<div class="nf-field-region" :style="`border-left-color:${f.color}`" :key="f.name" v-for="f in fields_rows.filter(f => f.region)">
+<span class="nf-mono" :style="`color:${f.color}`">
+{{ f.name }}
+</span>
+<span >
+{{ f.min === f.max ? f.mean : f.min + ' … ' + f.max + ' (mean ' + f.mean + ')' }}
+</span>
+</div>
+</div>
+<div class="nf-field-empty" v-show="!fv_src">
+{{ fv_msg }}
+</div>
+</div>
+</div>
+<!-- template nf_p_console -->
+<div class="nf-pc nf-pc-main nf-pc-console">
+<div class="nf-console">
+<div :class="l.c" :key="i" v-for="(l, i) in logs">
+{{ l.t }}
+</div>
+</div>
+</div>
+<!-- template nf_p_fields -->
+<div class="nf-pc nf-pc-main nf-pc-fields">
+<VTable class="nf-vars" density="compact" fixedHeader>
+<thead >
+<tr >
+<th >
+field
+</th>
+<th >
+min
+</th>
+<th >
+max
+</th>
+<th >
+mean
+</th>
+<th >
+last written by
+</th>
+</tr>
+</thead>
+<tbody >
+<tr :class="{ changed: f.changed, hl: f.field === hl_field }" style="cursor: pointer;" title="highlight the ops that write / read this field" :key="f.name" v-for="f in fields_rows" @click="trigger('nf_field', [f.field])">
+<td class="nf-mono" :style="f.color ? `color:${f.color}` : ''">
+<span class="nf-dot mr-1" :style="`background:${f.color}`" v-if="f.color" />
+<span >
+{{ f.name }}
+</span>
+</td>
+<td >
+{{ f.min }}
+</td>
+<td >
+{{ f.max }}
+</td>
+<td >
+{{ f.mean }}
+</td>
+<td style="opacity:.7">
+{{ f.written_by }}
+</td>
+</tr>
+</tbody>
+</VTable>
+<div class="nf-empty" v-if="!fields_rows.length">
+The fields appear at the first pause after initialization.
+</div>
+</div>
+<!-- template nf_p_inspector -->
+<div class="nf-pc nf-pc-side nf-pc-inspector">
+<div v-if="insp">
+<div class="nf-sect">
+<div class="px-3 pb-1 d-flex align-center" style="gap: 8px;">
+<span class="nf-dot" :style="`background:${insp.color}`" />
+<span class="text-subtitle-1 font-weight-bold">
+{{ insp.name }}
+</span>
+</div>
+<div class="px-3 text-caption" style="opacity:.7">
+{{ insp.type }}
+</div>
+<div class="nf-kv mt-1">
+<template :key="r.k" v-for="r in insp.rows">
+<span >
+{{ r.k }}
+</span>
+<span class="nf-mono" style="word-break: break-all;">
+{{ r.v }}
+</span>
 </template>
-<VCard class="pa-3 d-flex flex-column" style="min-width: 280px;">
+</div>
+<div class="px-3 mt-2 text-body-2" style="opacity:.8" v-if="insp.doc">
+{{ insp.doc }}
+</div>
+</div>
+<div class="nf-sect">
+<div class="nf-h">
+Navigate
+</div>
+<div class="px-3">
+<VChip class="mr-1 mb-1" :key="n.dir + n.id" v-for="n in insp.nav" size="small" variant="tonal" @click="trigger('nf_select', [n.id])">
+{{ n.dir }} {{ n.name }}
+</VChip>
+</div>
+</div>
+<div class="nf-sect" v-if="insp.seen.length">
+<div class="nf-h">
+Observed writes
+</div>
+<div class="px-3">
+<VChip class="mr-1 mb-1" :key="'s' + f" v-for="f in insp.seen" size="x-small" color="warning" variant="tonal" prependIcon="mdi-pencil" @click="trigger('nf_field', [f])">
+{{ f }}
+</VChip>
+</div>
+</div>
+<div class="nf-sect" v-if="insp.reads.length || insp.writes.length">
+<div class="nf-h">
+Reads / writes (declared)
+</div>
+<div class="px-3">
+<VChip class="mr-1 mb-1" :key="'r' + f" v-for="f in insp.reads" size="x-small" prependIcon="mdi-arrow-down">
+{{ f }}
+</VChip>
+<VChip class="mr-1 mb-1" :key="'w' + f" v-for="f in insp.writes" size="x-small" color="warning" prependIcon="mdi-pencil">
+{{ f }}
+</VChip>
+</div>
+</div>
+<div class="nf-sect px-3 pt-2">
+<VBtn class="mr-2" size="small" variant="tonal" @click="trigger('nf_toggle_bp', [insp.id])">
+{{ insp.bp ? 'Remove breakpoint' : 'Add breakpoint' }}
+</VBtn>
+<VBtn :disabled="!connected || running || finished" size="small" variant="tonal" @click="trigger('trigger__N', [insp.id])">
+Run to here
+</VBtn>
+</div>
+</div>
+<div class="px-3 py-2 text-caption" v-if="!insp">
+Select a node.
+</div>
+</div>
+<!-- template nf_p_legend -->
+<div class="nf-pc nf-pc-side nf-pc-legend">
+<div class="text-caption px-3" style="line-height: 1.9; opacity: .8;">
+<div >
+▭ action · red = next (token) · green = ran this time step
+</div>
+<div >
+( loop ◇ ) loop: pass · residuals; ◇ its test (hover: the test); ▾/▸ collapse
+</div>
+<div >
+● breakpoint — click the gutter left of a node
+</div>
+<div >
+click a field: ops that wrote (orange) / read (blue) it
+</div>
+<div >
+dashed ▭ ⊕ injected by an optional model
+</div>
+<div >
+'final': runs in the final pass of its coupling loops only; click: '↻ every pass' (debug)
+</div>
+<div v-if="regions.length">
+<div >
+▢ a box per region: its own solver, graph and thread (its region's colour); a token per box, every step moves all of them
+</div>
+<div >
+⏳ amber: the region waits for its partner's data; it moves once that arrives
+</div>
+<div >
+⇄ coupling node: hands its op the partner's data
+</div>
+<div >
+⇄ (loop) a region's coupling op: its test hands the region the partners' data; 'leader': the one that decides whether the group goes on
+</div>
+<div >
+- - coupling line, through the interface's ≈ mapping chip (its kind; hover or tap: how the data goes onto the partner's points, mapped or as is, the points per side, what each side sends); red, moving: exchanging now
+</div>
+</div>
+</div>
+</div>
+<!-- template nf_p_options -->
+<div class="nf-pc nf-pc-side nf-pc-options">
+<div class="nf-opts">
 <div class="d-flex align-center">
 <span class="text-caption mr-2" style="white-space: nowrap; min-width: 82px;">
 delay {{ delay_ms }} ms
 </span>
-<VSlider style="min-width: 140px;" title="pause after every event while running, to follow the token (0: none; only with the DAG pane open)" v-model="delay_ms" max="1000" min="0" step="10" density="compact" hideDetails />
+<VSlider style="min-width: 120px;" title="pause after every event while running, to follow the token (0: none; only while the step view shows)" v-model="delay_ms" max="1000" min="0" step="10" density="compact" hideDetails />
 </div>
 <VCheckbox title="the solver waits until every event and frame is shown (slower); off, it never waits and a lagging UI skips some" v-model="wait_ui" label="wait for UI" density="compact" hideDetails />
-<VCheckbox v-model="follow" label="follow" density="compact" hideDetails />
+<VCheckbox v-model="follow" label="follow (pan to the token)" density="compact" hideDetails />
 <VCheckbox title="tint nodes by their summed run time" v-model="heat_on" label="timing" density="compact" hideDetails />
-<VCheckbox title="the DAG's minimap" v-model="minimap_on" label="minimap" density="compact" hideDetails />
-</VCard>
-</VMenu>
+<VCheckbox title="the step view's minimap" v-model="minimap_on" label="minimap" density="compact" hideDetails />
+<div class="nf-empty" v-if="!dag_on">
+Step view hidden: the solver runs as it would without the UI (breakpoints and Pause still work).
 </div>
-</VAppBar>
-<VMain >
-<div :class="['nf-grid', { fv: fv_on || pt_on }]">
-<div class="nf-canvas">
-<div class="nf-diagram" v-show="dag_on">
-<div class="nf-status" :style="failed ? 'color:#d22' : running ? '' : 'color:#e0362c'">
-{{ status }}
+<VBtn class="mt-2" title="the default panels and dock; the layout is remembered per browser" size="small" variant="tonal" prependIcon="mdi-view-dashboard-outline" @click="window.nfL.reset()">
+Reset layout
+</VBtn>
 </div>
+</div>
+<!-- template nf_p_plots -->
+<div class="nf-pc nf-pc-main nf-pc-plots">
+<div class="nf-field nf-pt" v-show="pt_on">
+<div class="nf-field-bar">
+<VIcon size="small">
+mdi-chart-line
+</VIcon>
+<span class="text-body-2 font-weight-medium">
+Post-processing tables
+</span>
+<VSelect :key="`w764-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<span class="nf-field-msg">
+{{ pt_msg }}
+</span>
+</div>
+<div class="nf-pt-list" v-if="pt_on && pt_charts.length">
+<div class="nf-pt-chart" :key="ptc.name" v-for="ptc in pt_charts">
+<trame-plotly :style="`height: ${ptc.layout.height}px`" :data="ptc.data" :layout="ptc.layout" :displayModeBar="false" responsive />
+<div class="nf-pt-note" v-if="ptc.note">
+{{ ptc.note }}
+</div>
+</div>
+</div>
+<div class="nf-field-empty" v-show="!pt_charts.length">
+{{ pt_names.length && !pt_sel.length ? 'pick tables to plot' : pt_msg }}
+</div>
+</div>
+</div>
+<!-- template nf_p_step -->
+<div class="nf-pc nf-pc-main nf-pc-step">
 <div class="nf-regions" v-if="regions.length">
 <span class="nf-region" :key="r.name" v-for="r in regions">
 <span class="nf-dot" :style="`background:${r.color}`" />
@@ -157,10 +1321,10 @@ delay {{ delay_ms }} ms
 </span>
 </span>
 </div>
-<node-editor :ref="(el) => trame.refs['_node_editor_2'] = el" :class="ex_hot.map(k => 'hot-' + k)" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="document.activeElement && document.activeElement.blur()" :min-zoom="0.1">
+<node-editor :ref="(el) => trame.refs['_node_editor_N'] = el" :class="ex_hot.map(k => 'hot-' + k)" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="document.activeElement && document.activeElement.blur()" :min-zoom="0.1">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
-<MiniMap v-show="minimap_on && !is_mobile && !fv_on && !pt_on" pannable zoomable />
+<MiniMap v-show="minimap_on && !nf_phone" pannable zoomable />
 <template v-slot:node-action=props>
 <div :class="['nf-node', 'nf-action', { cur: cur_nodes.includes(props.data.ref), wait: wait_nodes.includes(props.data.ref), sel: props.data.ref === selected, done: visited.includes(props.data.ref) && !cur_nodes.includes(props.data.ref), inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
 <Handle id="t" position="top" type="target" />
@@ -339,259 +1503,10 @@ execution graph appears after initialization (it needs the run context)
 </div>
 </template>
 </node-editor>
+<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="trigger('nf_dag_mounted')" />
 </div>
-<div class="nf-idle" v-show="!dag_on && !fv_on && !pt_on">
-All panes are closed: the solver runs as it would without the UI (breakpoints and Pause still work).
-</div>
-<div class="nf-field" v-show="fv_on">
-<div class="nf-field-bar">
-<VSelect :key="`w492-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w493-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
-<VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
-<VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
-<VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
-<span class="nf-field-msg">
-{{ fv_msg }}
-</span>
-</div>
-<img class="nf-field-img" v-show="fv_src" alt="in-situ view" :src="fv_src" />
-<div class="nf-field-regions" v-if="!fv_src && fields_rows.some(f => f.region)">
-<div class="nf-field-region" :style="`border-left-color:${f.color}`" :key="f.name" v-for="f in fields_rows.filter(f => f.region)">
-<span class="nf-mono" :style="`color:${f.color}`">
-{{ f.name }}
-</span>
-<span >
-{{ f.min === f.max ? f.mean : f.min + ' … ' + f.max + ' (mean ' + f.mean + ')' }}
-</span>
-</div>
-</div>
-<div class="nf-field-empty" v-show="!fv_src">
-{{ fv_msg }}
-</div>
-</div>
-<div class="nf-field nf-pt" v-show="pt_on">
-<div class="nf-field-bar">
-<VIcon size="small">
-mdi-chart-line
-</VIcon>
-<span class="text-body-2 font-weight-medium">
-Post-processing tables
-</span>
-<VSelect :key="`w508-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
-<span class="nf-field-msg">
-{{ pt_msg }}
-</span>
-</div>
-<div class="nf-pt-list" v-if="pt_on && pt_charts.length">
-<div class="nf-pt-chart" :key="ptc.name" v-for="ptc in pt_charts">
-<trame-plotly :style="`height: ${ptc.layout.height}px`" :data="ptc.data" :layout="ptc.layout" :displayModeBar="false" responsive />
-<div class="nf-pt-note" v-if="ptc.note">
-{{ ptc.note }}
-</div>
-</div>
-</div>
-<div class="nf-field-empty" v-show="!pt_charts.length">
-{{ pt_names.length && !pt_sel.length ? 'pick tables to plot' : pt_msg }}
-</div>
-</div>
-</div>
-<div class="nf-side">
-<div class="nf-h">
-Inspector
-</div>
-<div v-if="insp">
-<div class="nf-sect">
-<div class="px-3 pb-1 d-flex align-center" style="gap: 8px;">
-<span class="nf-dot" :style="`background:${insp.color}`" />
-<span class="text-subtitle-1 font-weight-bold">
-{{ insp.name }}
-</span>
-</div>
-<div class="px-3 text-caption" style="opacity:.7">
-{{ insp.type }}
-</div>
-<div class="nf-kv mt-1">
-<template :key="r.k" v-for="r in insp.rows">
-<span >
-{{ r.k }}
-</span>
-<span class="nf-mono" style="word-break: break-all;">
-{{ r.v }}
-</span>
-</template>
-</div>
-<div class="px-3 mt-2 text-body-2" style="opacity:.8" v-if="insp.doc">
-{{ insp.doc }}
-</div>
-</div>
-<div class="nf-sect">
-<div class="nf-h">
-Navigate
-</div>
-<div class="px-3">
-<VChip class="mr-1 mb-1" :key="n.dir + n.id" v-for="n in insp.nav" size="small" variant="tonal" @click="trigger('nf_select', [n.id])">
-{{ n.dir }} {{ n.name }}
-</VChip>
-</div>
-</div>
-<div class="nf-sect" v-if="insp.seen.length">
-<div class="nf-h">
-Observed writes
-</div>
-<div class="px-3">
-<VChip class="mr-1 mb-1" :key="'s' + f" v-for="f in insp.seen" size="x-small" color="warning" variant="tonal" prependIcon="mdi-pencil" @click="trigger('nf_field', [f])">
-{{ f }}
-</VChip>
-</div>
-</div>
-<div class="nf-sect" v-if="insp.reads.length || insp.writes.length">
-<div class="nf-h">
-Reads / writes (declared)
-</div>
-<div class="px-3">
-<VChip class="mr-1 mb-1" :key="'r' + f" v-for="f in insp.reads" size="x-small" prependIcon="mdi-arrow-down">
-{{ f }}
-</VChip>
-<VChip class="mr-1 mb-1" :key="'w' + f" v-for="f in insp.writes" size="x-small" color="warning" prependIcon="mdi-pencil">
-{{ f }}
-</VChip>
-</div>
-</div>
-<div class="nf-sect px-3 pt-2">
-<VBtn class="mr-2" size="small" variant="tonal" @click="trigger('nf_toggle_bp', [insp.id])">
-{{ insp.bp ? 'Remove breakpoint' : 'Add breakpoint' }}
-</VBtn>
-<VBtn :disabled="!connected || running || finished" size="small" variant="tonal" @click="trigger('trigger__N', [insp.id])">
-Run to here
-</VBtn>
-</div>
-</div>
-<div class="px-3 text-caption" v-if="!insp">
-Select a node.
-</div>
-<div class="nf-h mt-2">
-Call stack
-</div>
-<div class="nf-stack">
-<div :key="i" v-for="(c, i) in callstack">
-{{ c }}
-</div>
-</div>
-<div class="nf-h mt-2">
-Breakpoints
-</div>
-<div class="nf-tree">
-<div :key="b.id" v-for="b in bp_list" @click="trigger('nf_select', [b.id])">
-<span class="nf-bpmark">
-●
-</span>
-<span >
-{{ b.name }}
-</span>
-<VSpacer  />
-<VIcon @click.stop="trigger('nf_toggle_bp', [b.id])" size="x-small">
-mdi-close
-</VIcon>
-</div>
-</div>
-<div class="px-3 text-caption" style="opacity:.6" v-if="!bp_list.length">
-Click the gutter left of a node to add one.
-</div>
-</div>
-<div class="nf-bottom">
-<div >
-<div class="nf-h">
-Simulation console (newest first)
-</div>
-<div class="nf-console">
-<div :class="l.c" :key="i" v-for="(l, i) in logs">
-{{ l.t }}
-</div>
-</div>
-</div>
-<div >
-<div class="nf-h">
-Variables (ctx)
-</div>
-<div class="px-3 py-1 nf-mono">
-<span class="mr-3" :key="s.k" v-for="s in scalars">
-{{ s.k }}={{ s.v }}  
-</span>
-</div>
-<VTable class="nf-vars" density="compact">
-<thead >
-<tr >
-<th >
-field
-</th>
-<th >
-min
-</th>
-<th >
-max
-</th>
-<th >
-mean
-</th>
-<th >
-last written by
-</th>
-</tr>
-</thead>
-<tbody >
-<tr :class="{ changed: f.changed, hl: f.field === hl_field }" style="cursor: pointer;" title="highlight the ops that write / read this field" :key="f.name" v-for="f in fields_rows" @click="trigger('nf_field', [f.field])">
-<td class="nf-mono" :style="f.color ? `color:${f.color}` : ''">
-<span class="nf-dot mr-1" :style="`background:${f.color}`" v-if="f.color" />
-<span >
-{{ f.name }}
-</span>
-</td>
-<td >
-{{ f.min }}
-</td>
-<td >
-{{ f.max }}
-</td>
-<td >
-{{ f.mean }}
-</td>
-<td style="opacity:.7">
-{{ f.written_by }}
-</td>
-</tr>
-</tbody>
-</VTable>
-</div>
-</div>
-</div>
-</VMain>
-<VFooter class="my-0 py-0" border app>
-<VProgressCircular class="ml-n3 mr-1" width="3" color="#04a94d" :indeterminate="!!trame__busy" size="16" />
-<a href="https://kitware.github.io/trame/" class="text-grey-lighten-1 text-caption text-decoration-none" target="_blank">Powered by trame</a>
-<VSpacer  />
-<VTooltip location="top">
-<template v-slot:activator="{ props }">
-<VIcon class="mr-4" v-bind="props" size="14">
-mdi-help-circle
-</VIcon>
-</template>
-<pre >
-server == 3.15.0
-common == 1.2.9
-dockview == 2.0.1
-plotly == 3.1.2
-client == 3.13.6
-trame == 3.13.2
-vuetify == 3.3.0
-flow == 2.2.2
-</pre>
-</VTooltip>
-<a href="https://www.kitware.com/" class="text-grey-lighten-1 text-caption text-decoration-none" target="_blank">© 2025 Kitware Inc.</a>
-</VFooter>
-<VNavigationDrawer v-model="main_drawer" width="250" location="left" disableResizeWatcher disableRouteWatcher permanent :temporary="is_mobile">
-<div class="nf-h">
-Containment
-</div>
+<!-- template nf_p_tree -->
+<div class="nf-pc nf-pc-side nf-pc-tree">
 <div class="nf-tree">
 <div :class="{ sel: n.id === selected, cur: cur_nodes.includes(n.id) || cur_tests.includes(n.id), done: visited.includes(n.id) && !cur_nodes.includes(n.id) }" :style="`padding-left: ${12 + n.depth * 14}px`" :key="n.id" v-for="n in tree" @click="trigger('nf_select', [n.id])">
 <span class="nf-bpmark">
@@ -603,49 +1518,20 @@ Containment
 </span>
 </div>
 </div>
-<div class="nf-h mt-2">
-Legend
 </div>
-<div class="text-caption px-3" style="line-height: 1.9; opacity: .8;">
-<div >
-▭ action · red = next (token) · green = ran this time step
-</div>
-<div >
-( loop ◇ ) loop: pass · residuals; ◇ its test (hover: the test); ▾/▸ collapse
-</div>
-<div >
-● breakpoint — click the gutter left of a node
-</div>
-<div >
-click a field: ops that wrote (orange) / read (blue) it
-</div>
-<div >
-dashed ▭ ⊕ injected by an optional model
-</div>
-<div >
-'final': runs in the final pass of its coupling loops only; click: '↻ every pass' (debug)
-</div>
-<div v-if="regions.length">
-<div >
-▢ a box per region: its own solver, graph and thread (its region's colour); a token per box, every step moves all of them
-</div>
-<div >
-⏳ amber: the region waits for its partner's data; it moves once that arrives
-</div>
-<div >
-⇄ coupling node: hands its op the partner's data
-</div>
-<div >
-⇄ (loop) a region's coupling op: its test hands the region the partners' data; 'leader': the one that decides whether the group goes on
-</div>
-<div >
-- - coupling line, through the interface's ≈ mapping chip (its kind; hover or tap: how the data goes onto the partner's points, mapped or as is, the points per side, what each side sends); red, moving: exchanging now
+<!-- template nf_p_vars -->
+<div class="nf-pc nf-pc-side nf-pc-vars">
+<table class="nf-kvt" v-if="scalars.length">
+<tr :key="s.k" v-for="s in scalars">
+<td >
+{{ s.k }}
+</td>
+<td class="nf-mono">
+{{ s.v }}
+</td>
+</tr>
+</table>
+<div class="nf-empty" v-if="!scalars.length">
+The context's scalars appear at the first pause.
 </div>
 </div>
-</div>
-</VNavigationDrawer>
-<trame-style :css="trame__inline_style_2" />
-<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="let shown = window.document.visibilityState !== 'hidden'; if (shown) trigger('nf_viewer', [true]); window.document.addEventListener('visibilitychange', () => { const now = window.document.visibilityState !== 'hidden'; if (now !== shown) { shown = now; trigger('nf_viewer', [now]); } }); window.addEventListener('pagehide', () => { if (shown) { shown = false; trigger('nf_viewer', [false]); } })" />
-<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="set('is_mobile', window.innerWidth < 900); if (window.innerWidth < 900) set('main_drawer', false)" />
-<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="window.addEventListener('keydown', (e) => { const k = {F11: e.shiftKey ? 'out' : 'into', F10: 'over', F8: 'run'}[e.key]; if (k) { e.preventDefault(); trigger('nf_key', [k]); } })" />
-</VApp>
