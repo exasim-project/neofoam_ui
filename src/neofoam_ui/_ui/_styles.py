@@ -82,6 +82,9 @@ html, body { overflow: hidden; }
 .nf-kvt td { padding: 2px 12px; border-bottom: 1px solid var(--nf-line); }
 .nf-kvt td:first-child { color: var(--nf-muted); width: 40%; }
 .nf-opts { padding: 2px 12px 8px; }
+.nf-opts .v-selection-control { min-height: 30px; }
+.nf-opts .v-label { font-size: 13px; }
+.nf-opts .v-selection-control__wrapper, .nf-opts .v-selection-control__input { width: 30px; height: 30px; }
 .nf-pc > .nf-field { flex: 1 1 auto; min-height: 0; border-left: 0; }
 /* the dock (trame-dockview, theme Light): cards like the side panels */
 .nf-main .dockview-theme-light { --dv-background-color: var(--nf-bg); --dv-group-view-background-color: var(--nf-panel);
