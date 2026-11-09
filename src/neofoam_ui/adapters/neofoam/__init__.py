@@ -13,7 +13,7 @@ Two modes:
 
 A NeoFOAM solver is one factory away: ``--solver mypkg:my_solver`` with
 ``def my_solver(): return neofoam_solver("neofoam.solver.mySolver.mySolver", "mySolver")``
-(:func:`incompressible_fluid` is exactly that).
+(:func:`incompressible_fluid` is exactly that; :func:`multi_run` runs a multi-region case).
 
 Tree mode takes apart what ``Solver.initialize()`` + ``execution_graph`` + ``DAGResolver``
 do in a solver's ``run()`` so the engine can pause between the pieces:
@@ -31,8 +31,9 @@ Needs neofoam importable (pybFoam + a sourced OpenFOAM) and the case directory
 as the working directory, exactly like ``neofoam solver <name>``.
 """
 
-from neofoam_ui.adapters.neofoam._factory import has_observer, incompressible_fluid, neofoam_solver
+from neofoam_ui.adapters.neofoam._factory import has_observer, incompressible_fluid, multi_run, neofoam_solver
 from neofoam_ui.adapters.neofoam._observed import ObservedNeoFoamSolver
 from neofoam_ui.adapters.neofoam._tree import NeoFoamSolver
 
-__all__ = ["NeoFoamSolver", "ObservedNeoFoamSolver", "has_observer", "incompressible_fluid", "neofoam_solver"]
+__all__ = ["NeoFoamSolver", "ObservedNeoFoamSolver", "has_observer", "incompressible_fluid", "multi_run",
+           "neofoam_solver"]

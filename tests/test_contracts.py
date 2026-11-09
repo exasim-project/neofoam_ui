@@ -171,7 +171,7 @@ PUBLIC = {
     "neofoam_ui.pptables": ["NodeDescriber", "describe_table", "observe", "register_describer", "rows_message"],
     "neofoam_ui.adapters": [],
     "neofoam_ui.adapters.neofoam": ["NeoFoamSolver", "ObservedNeoFoamSolver", "has_observer",
-                                    "incompressible_fluid", "neofoam_solver"],
+                                    "incompressible_fluid", "multi_run", "neofoam_solver"],
     "neofoam_ui.toy": [],
     "neofoam_ui.toy.heat1d": ["Heat1D", "Heat1DContext", "run_plain"],
 }

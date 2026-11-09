@@ -156,6 +156,7 @@ def catalyst_execute(info):
         GetScalarBar(GetColorTransferFunction(_shown[0]), view).Visibility = 0
     _shown[0] = field
     lut.ApplyPreset("Viridis (matplotlib)", True)
+    lut.NanColor = [0.75, 0.75, 0.75]  # cells of a region without this field (merged regions)
     index = -1 if comp in (None, "mag") else int(comp)
     lo, hi = _range(field, index)
     lut.RescaleTransferFunction(lo, hi if hi > lo else lo + 1e-30)

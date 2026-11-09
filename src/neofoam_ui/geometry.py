@@ -158,6 +158,28 @@ def cell_centres_geometry(centres: np.ndarray, note: str = "") -> dict[str, Any]
     return {"kind": "points", "points": pts, **({"note": note} if note else {})}
 
 
+def merged(geoms: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Several polyhedral geometries as one (cells in the order given); ``None`` unless all
+    are polyhedral. Point, face and cell numbers of each part are shifted past the previous."""
+    if not geoms or any(g["kind"] != "polyhedral" for g in geoms):
+        return None
+    points, conn, offsets, cell_faces, cell_offsets = [], [], [np.zeros(1, np.int64)], [], [np.zeros(1, np.int64)]
+    n_points = n_conn = n_faces = n_cell_faces = 0
+    for g in geoms:
+        points.append(g["points"])
+        conn.append(np.asarray(g["conn"], np.int64) + n_points)
+        offsets.append(np.asarray(g["offsets"][1:], np.int64) + n_conn)
+        cell_faces.append(np.asarray(g["cell_faces"], np.int64) + n_faces)
+        cell_offsets.append(np.asarray(g["cell_offsets"][1:], np.int64) + n_cell_faces)
+        n_points += len(g["points"])
+        n_conn += len(g["conn"])
+        n_faces += len(g["offsets"]) - 1
+        n_cell_faces += len(g["cell_faces"])
+    return {"kind": "polyhedral", "points": np.ascontiguousarray(np.concatenate(points), dtype=float),
+            "offsets": np.concatenate(offsets), "conn": np.concatenate(conn),
+            "cell_offsets": np.concatenate(cell_offsets), "cell_faces": np.concatenate(cell_faces)}
+
+
 def cell_count(geom: dict[str, Any]) -> int:
     if geom["kind"] == "polyhedral":
         return len(geom["cell_offsets"]) - 1

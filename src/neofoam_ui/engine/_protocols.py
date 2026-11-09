@@ -133,7 +133,7 @@ class Region(Protocol):
 
 @runtime_checkable
 class RegionProvider(Protocol):
-    """A solver with several mesh regions (CHT, FSI); the first is the one viewed for now."""
+    """A solver with several mesh regions (CHT, FSI); the view draws them together."""
 
     def regions(self, ctx: Any) -> list[Region]: ...
 

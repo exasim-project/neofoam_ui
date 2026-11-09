@@ -50,3 +50,13 @@ def neofoam_solver(module: str, spec: str, run: str = "run", name: Optional[str]
 def incompressible_fluid() -> Any:
     """``neofoam solver incompressiblefluid`` (pybFoam backend)."""
     return neofoam_solver("neofoam.solver.incompressibleFluid.incompressibleFluid", "incompressibleFluid")
+
+
+def multi_run() -> Any:
+    """``neofoam solver multiRun``: every region of the case (``system/controlDict``
+    ``regionSolvers``), coupled, in threads; the field view draws all regions together.
+    Observed mode only."""
+    if not _observed():
+        raise RuntimeError("multiRun needs NeoFOAM's execution observer (observed mode)")
+    mod = importlib.import_module("neofoam.solver.multiRun.multiRun")
+    return ObservedNeoFoamSolver("multiRun", lambda argv: mod.run(), ["neofoam"])

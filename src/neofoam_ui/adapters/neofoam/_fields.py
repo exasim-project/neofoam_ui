@@ -15,6 +15,20 @@ __all__ = ()
 _OLD_COPY = re.compile(r"(_0)+$|PrevIter$")
 
 
+def _internal(field: Any) -> Optional[np.ndarray]:
+    """The cell values of a geometric field: pybFoam ``internalField()`` or NeoN
+    ``internal_vector()`` (copied to the host); ``None`` for anything else."""
+    try:
+        if hasattr(field, "internalField"):
+            return np.asarray(field.internalField())
+        if hasattr(field, "internal_vector"):
+            vector = field.internal_vector()
+            return np.asarray(vector.copy_to_host() if hasattr(vector, "copy_to_host") else vector)
+    except Exception:  # noqa: BLE001 - not readable now: left out of the view
+        return None
+    return None
+
+
 class _RegionContexts(dict):  # type: ignore[type-arg]
     """The contexts of a multi-region run (multiRun), by region: the session's context.
 
@@ -88,10 +102,9 @@ class _FieldAccess:
             if isinstance(field, np.ndarray):
                 out[name] = np.atleast_1d(field)
                 continue
-            try:
-                out[name] = np.asarray(field.internalField())
-            except Exception:  # not a geometric field (or no internalField)
-                continue
+            values = _internal(field)
+            if values is not None:
+                out[name] = values
         return out
 
     def view_fields(self, ctx: Any) -> dict[str, np.ndarray]:

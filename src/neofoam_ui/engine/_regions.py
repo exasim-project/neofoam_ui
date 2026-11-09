@@ -1,10 +1,10 @@
-"""Mesh regions as the field view sees them: today one, the solver's own mesh and fields.
+"""Mesh regions as the field view sees them: the solver's own mesh and fields, or several.
 
 A multi-region solver (CHT, FSI) implements :class:`~neofoam_ui.engine.RegionProvider`;
 any other solver is adapted to one region named :data:`DEFAULT_REGION` (OpenFOAM's
 ``region0``) from its optional ``mesh`` / ``view_fields`` and its ``fields``.
-The view renders the first region (one Catalyst channel ``grid``); its geometry cache and
-field identities are keyed by region already.
+The view merges all regions into one grid (one Catalyst channel ``grid``); its geometry
+cache and field identities are keyed by region.
 """
 
 from __future__ import annotations

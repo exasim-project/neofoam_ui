@@ -23,6 +23,14 @@ def _polymesh_dir(region: str, rank: int, size: int) -> str:
     return os.path.join(*parts, "polyMesh")
 
 
+def _region_dir(region: Any) -> Optional[str]:
+    """``<region>/constant/polyMesh`` of a multiRun region (its own case directory), if there."""
+    if not isinstance(region, str) or not region:
+        return None
+    directory = os.path.join(region, "constant", "polyMesh")
+    return directory if os.path.isdir(directory) else None
+
+
 class _PolyMeshGeometry:
     """``mesh(ctx)``: this rank's polyMesh as polyhedra (static meshes)."""
 
@@ -38,7 +46,7 @@ class _PolyMeshGeometry:
         if mesh is None:
             return None
         n_cells = int(mesh.nCells())
-        directory = _polymesh_dir(DEFAULT_REGION, *rank_info())
+        directory = _region_dir(getattr(ctx, "region", None)) or _polymesh_dir(DEFAULT_REGION, *rank_info())
         try:
             return polyhedral(read_polymesh(directory), n_cells)
         except (OSError, ValueError, IndexError):

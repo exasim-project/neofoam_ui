@@ -18,7 +18,7 @@ from neofoam_ui import catalyst
 from neofoam_ui.engine._protocols import RenderBackend, Renderer
 from neofoam_ui.engine._regions import _regions_of
 from neofoam_ui.engine._tracking import _fingerprint
-from neofoam_ui.geometry import cell_count
+from neofoam_ui.geometry import cell_count, merged
 
 if TYPE_CHECKING:
     from neofoam_ui.engine._session import Session
@@ -27,6 +27,23 @@ __all__ = ()
 
 #: Seconds after which a live frame reads the renderer's pipeline back again (colour range etc.).
 _DESCRIBE_EVERY = 5.0
+
+
+def _merged_fields(parts: list[tuple[int, dict[str, np.ndarray]]]) -> dict[str, np.ndarray]:
+    """The fields of regions merged into one grid (``parts``: each region's cell count and fields).
+
+    A field missing in a region, or of another number of components there, is NaN in it."""
+    shapes: dict[str, tuple[int, ...]] = {}
+    for _, fields in parts:
+        for k, v in fields.items():
+            shapes.setdefault(k, v.shape[1:])
+    out = {}
+    for k, shape in shapes.items():
+        out[k] = np.concatenate([
+            f[k].astype(float, copy=False) if k in f and f[k].shape[1:] == shape else np.full((n, *shape), np.nan)
+            for n, f in parts])
+    out.setdefault("region", np.concatenate([np.full(n, float(i)) for i, (n, _) in enumerate(parts)]))
+    return out
 
 
 class _CatalystBackend:
@@ -94,11 +111,9 @@ class _FieldView:
 
     # -- one frame ------------------------------------------------------------------------
 
-    def _cells(self) -> Optional[tuple[str, dict[str, Any], dict[str, np.ndarray]]]:
-        """The viewed region (the first), its geometry (built once) and its cell-sized fields;
-        ``None`` = no geometry."""
+    def _region_cells(self, region: Any) -> Optional[tuple[dict[str, Any], dict[str, np.ndarray]]]:
+        """One region's geometry (built once) and its cell-sized fields; ``None`` = no geometry."""
         s = self._s
-        region = self._regions(s.ctx)[0]
         geom = self._geometry.get(region.name)
         if geom is None:
             try:
@@ -110,7 +125,27 @@ class _FieldView:
             return None
         n = cell_count(geom)
         fields = {k: np.asarray(v) for k, v in region.fields(s.ctx).items()}
-        return region.name, geom, {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
+        return geom, {k: v for k, v in fields.items() if v.ndim in (1, 2) and len(v) == n}
+
+    def _cells(self) -> Optional[tuple[str, dict[str, Any], dict[str, np.ndarray]]]:
+        """The viewed cells: every region with a mesh, drawn together; ``None`` = no geometry.
+
+        Several regions (CHT) are merged into one grid: a field is the regions' values one
+        after the other, NaN (drawn grey) where a region has no field of that name or shape;
+        ``region`` numbers the regions. A region whose geometry cannot be merged (not
+        polyhedral) leaves only the first region in view."""
+        parts = [(r.name, c) for r in self._regions(self._s.ctx) if (c := self._region_cells(r)) is not None]
+        if not parts:
+            return None
+        if len(parts) == 1:
+            return parts[0][0], *parts[0][1]
+        name = "+".join(n for n, _ in parts)
+        geom = self._geometry.get(name)
+        if geom is None:
+            geom = self._geometry[name] = merged([g for _, (g, _) in parts]) or False
+        if not geom:
+            return parts[0][0], *parts[0][1]
+        return name, geom, _merged_fields([(cell_count(g), f) for _, (g, f) in parts])
 
     def _published(self, fields: dict[str, np.ndarray], params: dict[str, str]) -> dict[str, np.ndarray]:
         """What the renderer gets: the viewed field, or all for a renderer that uses them all."""

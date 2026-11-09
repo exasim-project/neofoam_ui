@@ -16,7 +16,7 @@ from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
 from neofoam_ui.catalyst._blueprint import _blueprint
 from neofoam_ui.catalyst._native import _import
 from neofoam_ui.engine import Session
-from neofoam_ui.geometry import cell_centres_geometry, polyhedral, read_polymesh
+from neofoam_ui.geometry import cell_centres_geometry, cell_count, merged, polyhedral, read_polymesh
 from neofoam_ui.toy.heat1d import Heat1D
 
 HELPERS = os.path.join(os.path.dirname(__file__), "helpers")
@@ -658,7 +658,7 @@ insitu.finalize()
 
 
 class TwoRegions(Heat1D):
-    """A multi-region solver (e.g. CHT): the view shows the first region."""
+    """A multi-region solver (e.g. CHT) without cells to merge (lines): the view shows the first region."""
 
     def __init__(self):
         super().__init__()
@@ -687,7 +687,7 @@ def test_a_region_provider_is_viewed_by_its_first_region(fake_catalyst):
     frame = of(messages, "frame")[-1]
     assert frame["field"] == "T_fluid" and [f["name"] for f in frame["fields"]] == ["T_fluid"]
     session.advance("time_step")
-    assert session.solver.meshed == ["fluid"]  # the geometry is built once per region
+    assert session.solver.meshed == ["fluid", "solid"]  # the geometry is built once per region
 
 
 def test_a_render_backend_can_replace_catalyst():
@@ -723,3 +723,59 @@ def test_a_render_backend_can_replace_catalyst():
     session.finalize_view()
     assert of(messages, "frame")[-1]["file"] == "frame.png"
     assert backend.rendered == [["T", "T_old", "kappa", "source_mask"], "finalized"]
+
+
+def hexes(n, x0=0.0):
+    """``n`` unit hexahedra along x from ``x0`` (each with its own points and faces)."""
+    quads = [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+    cube = np.array([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                     (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)], float)
+    points = np.concatenate([cube + (x0 + i, 0, 0) for i in range(n)])
+    conn = np.array([8 * i + v for i in range(n) for q in quads for v in q])
+    return {"kind": "polyhedral", "points": points, "offsets": np.arange(0, 24 * n + 1, 4),
+            "conn": conn, "cell_offsets": np.arange(0, 6 * n + 1, 6), "cell_faces": np.arange(6 * n)}
+
+
+def test_merged_shifts_points_faces_and_cells():
+    a, b = hexes(2), hexes(3, x0=5.0)
+    m = merged([a, b])
+    assert cell_count(m) == 5 and len(m["points"]) == 40 and len(m["offsets"]) == 31
+    last = m["cell_faces"][m["cell_offsets"][4]:m["cell_offsets"][5]]  # the last cell of b
+    face = m["conn"][m["offsets"][last[0]]:m["offsets"][last[0] + 1]]
+    assert m["points"][face].min(axis=0).tolist() == [7.0, 0.0, 0.0]
+    assert merged([a, {"kind": "line", "x": np.zeros(2)}]) is None
+
+
+class TwoMeshedRegions(Heat1D):
+    """A CHT-like solver whose regions have polyhedral cells: the view draws both together."""
+
+    def regions(self, ctx):
+        n = len(ctx.x)
+
+        class Region:
+            def __init__(self, name, cells, fields):
+                self.name, self._cells, self._fields = name, cells, fields
+
+            def mesh(self, ctx):
+                return hexes(self._cells, x0=0.0 if self.name == "fluid" else 100.0)
+
+            def fields(self, ctx):
+                return self._fields(ctx)
+
+        return [Region("fluid", n, lambda c: {"T": c.fields["T"], "U": np.ones((n, 3))}),
+                Region("solid", 2, lambda c: {"T": np.full(2, 7.0)})]
+
+
+def test_regions_with_cells_are_merged_into_one_view(fake_catalyst):
+    session, messages = session_after_init(TwoMeshedRegions())
+    session.set_view("T")
+    n = len(session.ctx.x)
+    frame = of(messages, "frame")[-1]
+    assert frame["field"] == "T"
+    assert {f["name"] for f in frame["fields"]} == {"T", "U", "region"}
+    call = renders(fake_catalyst)[-1]
+    assert len(call["geom"]["cell_offsets"]) - 1 == n + 2
+    assert call["fields"]["T"][-2:].tolist() == [7.0, 7.0]
+    session.set_view("U")
+    U = renders(fake_catalyst)[-1]["fields"]["U"]
+    assert U.shape == (n + 2, 3) and np.isnan(U[-2:]).all() and (U[:n] == 1).all()
