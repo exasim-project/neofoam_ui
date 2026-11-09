@@ -107,14 +107,6 @@ mdi-palette
 Field
 </span>
 </VBtn>
-<VBtn class="mx-1 nf-view" title="show the post-processing pipelines (NeoFOAM tables, Catalyst/ParaView) as diagrams" size="small" :color="pp_on ? 'primary' : undefined" :variant="pp_on ? 'tonal' : 'text'" @click="pp_on = !pp_on">
-<VIcon size="small">
-mdi-graph-outline
-</VIcon>
-<span class="nf-btxt ml-1">
-Pipeline
-</span>
-</VBtn>
 <VBtn class="mx-1 nf-view" title="plot NeoFOAM's post-processing tables over time" size="small" :color="pt_on ? 'primary' : undefined" :variant="pt_on ? 'tonal' : 'text'" @click="pt_on = !pt_on">
 <VIcon size="small">
 mdi-chart-line
@@ -151,7 +143,7 @@ delay {{ delay_ms }} ms
 </div>
 </VAppBar>
 <VMain >
-<div :class="['nf-grid', { fv: fv_on || pp_on || pt_on }]">
+<div :class="['nf-grid', { fv: fv_on || pt_on }]">
 <div class="nf-canvas">
 <div class="nf-diagram" v-show="dag_on">
 <div class="nf-status" :style="failed ? 'color:#d22' : running ? '' : 'color:#e0362c'">
@@ -165,10 +157,10 @@ delay {{ delay_ms }} ms
 </span>
 </span>
 </div>
-<node-editor :ref="(el) => trame.refs['_node_editor_3'] = el" :class="ex_hot.map(k => 'hot-' + k)" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="document.activeElement && document.activeElement.blur()" :min-zoom="0.1">
+<node-editor :ref="(el) => trame.refs['_node_editor_2'] = el" :class="ex_hot.map(k => 'hot-' + k)" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('trigger__N', [$event.node.data && ($event.node.data.ref || $event.node.data.loop) || $event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="document.activeElement && document.activeElement.blur()" :min-zoom="0.1">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
-<MiniMap v-show="minimap_on && !is_mobile && !fv_on && !pp_on && !pt_on" pannable zoomable />
+<MiniMap v-show="minimap_on && !is_mobile && !fv_on && !pt_on" pannable zoomable />
 <template v-slot:node-action=props>
 <div :class="['nf-node', 'nf-action', { cur: cur_nodes.includes(props.data.ref), wait: wait_nodes.includes(props.data.ref), sel: props.data.ref === selected, done: visited.includes(props.data.ref) && !cur_nodes.includes(props.data.ref), inj: !!props.data.injected_by, cpl: !!props.data.exchange, hlw: hl[props.data.ref] === 'w', hlr: hl[props.data.ref] === 'r' }]" :style="heat[props.data.ref] ? `background:${heat[props.data.ref]}` : ''">
 <Handle id="t" position="top" type="target" />
@@ -348,13 +340,13 @@ execution graph appears after initialization (it needs the run context)
 </template>
 </node-editor>
 </div>
-<div class="nf-idle" v-show="!dag_on && !fv_on && !pp_on && !pt_on">
+<div class="nf-idle" v-show="!dag_on && !fv_on && !pt_on">
 All panes are closed: the solver runs as it would without the UI (breakpoints and Pause still work).
 </div>
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w527-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w528-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w492-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w493-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -377,70 +369,6 @@ All panes are closed: the solver runs as it would without the UI (breakpoints an
 {{ fv_msg }}
 </div>
 </div>
-<div class="nf-field nf-pp" v-show="pp_on">
-<div class="nf-field-bar">
-<VIcon size="small">
-mdi-graph-outline
-</VIcon>
-<span class="text-body-2 font-weight-medium">
-Post-processing pipeline
-</span>
-<span class="nf-field-msg">
-{{ pp_msg }}
-</span>
-</div>
-<div class="nf-pp-flow" v-show="pp_graph">
-<node-editor :ref="(el) => trame.refs['_node_editor_4'] = el" style="width: 100%; height: 100%;" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" :min-zoom="0.1">
-<Background gap="16" size="1" patternColor="#c3c8d2" />
-<Controls :showInteractive="false" />
-<template v-slot:node-pp=props>
-<div class="nf-node nf-pp-node">
-<Handle id="t" position="top" type="target" />
-<Handle id="b" position="bottom" type="source" />
-<span class="nf-stripe" :style="`background:${props.data.color}`" />
-<div class="nf-pp-body">
-<div class="nf-pp-head">
-<span class="nf-label">
-{{ props.data.label }}
-</span>
-<span class="nf-meta" title="time of the last execute (rank 0)" v-if="pp_ms[props.id]">
-{{ pp_ms[props.id] }}
-</span>
-</div>
-<div class="nf-pp-type">
-{{ props.data.kind }} · {{ props.data.type }}
-</div>
-<div class="nf-pp-kv">
-<template :key="i" v-for="(r, i) in props.data.settings">
-<span >
-{{ r[0] }}
-</span>
-<span :title="r[1]">
-{{ r[1] }}
-</span>
-</template>
-</div>
-</div>
-</div>
-</template>
-<template v-slot:node-activity=props>
-<div class="nf-node nf-activity">
-<div class="nf-activity-title" :title="props.data.label">
-<span >
-{{ props.data.label }}
-</span>
-<span class="nf-meta" title="time of the table's last compute (rank 0)" v-if="pp_ms[props.id]">
- · {{ pp_ms[props.id] }}
-</span>
-</div>
-</div>
-</template>
-</node-editor>
-</div>
-<div class="nf-field-empty" v-show="!pp_graph">
-{{ pp_msg }}
-</div>
-</div>
 <div class="nf-field nf-pt" v-show="pt_on">
 <div class="nf-field-bar">
 <VIcon size="small">
@@ -449,7 +377,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w572-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w508-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -650,6 +578,7 @@ mdi-help-circle
 <pre >
 server == 3.15.0
 common == 1.2.9
+dockview == 2.0.1
 plotly == 3.1.2
 client == 3.13.6
 trame == 3.13.2

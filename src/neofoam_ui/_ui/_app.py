@@ -23,7 +23,6 @@ from neofoam_ui._ui._pusher import _Pusher
 from neofoam_ui._ui._worker_link import _WorkerLink
 from neofoam_ui._ui.panes._dag import _DagPane
 from neofoam_ui._ui.panes._field import _FieldPane
-from neofoam_ui._ui.panes._pipeline import _PipelinePane
 from neofoam_ui._ui.panes._plots import _PlotsPane
 from neofoam_ui.extensions import ExtensionRegistry, Pane
 from neofoam_ui.protocol import CATALYST_ENV
@@ -63,7 +62,7 @@ class StepperApp:
         registry = registry if registry is not None else ExtensionRegistry()
         registry.load_entry_points()
         self.dag = _DagPane(self)
-        self.panes: list[Pane] = [self.dag, _FieldPane(self), _PipelinePane(self), _PlotsPane(self)]
+        self.panes: list[Pane] = [self.dag, _FieldPane(self), _PlotsPane(self)]
         self.panes += [factory(self) for factory in registry.panes]
         self.dispatch = _Dispatcher()
         self.dispatch.add({"graph": self.model.graph, "log_error": self._on_log_error, "stdout": self._on_stdout,

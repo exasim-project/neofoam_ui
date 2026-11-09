@@ -48,8 +48,8 @@ def test_an_extension_pane_takes_part_like_a_built_in_one():
     pane = app.pane("residuals")
     html_ = server.state._pending_update["trame__template_main"]
     assert 'click="rs_on = !rs_on"' in html_ and "mdi-chart-bell-curve" in html_  # its toggle
-    assert "fv_on || pp_on || pt_on || rs_on" in html_  # it widens the grid like a side pane
-    assert "!dag_on && !fv_on && !pp_on && !pt_on && !rs_on" in html_  # and counts for "all closed"
+    assert "fv_on || pt_on || rs_on" in html_  # it widens the grid like a side pane
+    assert "!dag_on && !fv_on && !pt_on && !rs_on" in html_  # and counts for "all closed"
     assert "{{ rs_lines.length }} lines" in html_
     assert any(".nf-rs { flex: 1 1 0; }" in str(v) for v in server.state._pending_update.values())
     assert app.state.rs_on is False and app.state.rs_lines == []

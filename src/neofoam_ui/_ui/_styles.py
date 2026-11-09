@@ -1,7 +1,7 @@
 """The shell's CSS: grid, toolbar, drawer, console, and the activity diagram's nodes.
 
-Each pane adds its own (``Pane.css``); the pipeline pane borrows the ``nf-field`` frame of
-the field pane and the ``nf-node`` / ``nf-activity`` looks of the diagram.
+Each pane adds its own (``Pane.css``); the plots pane borrows the ``nf-field`` frame of
+the field pane.
 """
 
 __all__ = ()
@@ -33,7 +33,6 @@ _CSS = r"""
   .nf-grid.fv { grid-template-rows: auto auto auto; }
   .nf-grid.fv .nf-diagram { flex: none; height: 52vh; }
   .nf-grid.fv .nf-field { flex: none; height: 62vh; border-left: 0; border-top: 1px solid rgba(128,128,128,.25); }
-  .nf-grid.fv .nf-pp { height: 70vh; }
   .nf-grid.fv .nf-pt { height: auto; }
   .nf-grid.fv .nf-pt .nf-pt-list { overflow: visible; }
   .nf-bottom { grid-column: 1; grid-row: 2; grid-template-columns: 1fr; }
@@ -48,7 +47,7 @@ _CSS = r"""
   .nf-tools > .nf-view { order: 1; }
   .nf-tools .v-btn { min-width: 0; padding: 0 8px; }  /* Run…Restart and the three panes fit 390 px */
   /* the field image at its own aspect, not letterboxed into a fixed height */
-  .nf-grid.fv .nf-field:not(.nf-pp) { height: auto; }
+  .nf-grid.fv .nf-field { height: auto; }
   .nf-grid.fv .nf-field-img { flex: none; height: auto; }
   .nf-grid.fv .nf-field-empty { min-height: 30vh; }
   .v-footer { display: none; }

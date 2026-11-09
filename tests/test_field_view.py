@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from neofoam_ui import catalyst
-from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow as build_pipeline_flow
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
 from neofoam_ui.catalyst._blueprint import _blueprint
 from neofoam_ui.catalyst._native import _import
@@ -300,20 +299,6 @@ def test_a_failing_description_keeps_the_frames(monkeypatch):
     assert len(frames) == 2 and all(f["file"] and "pipeline" not in f for f in frames)
     reports = [m for m in of(messages, "stdout") if "no proxy manager" in m["text"]]
     assert len(reports) == 1  # once, then no more diagrams
-
-
-def test_pipeline_layout_layers_by_data_flow():
-    desc = {"script": "x.py", "edges": [{"source": "a", "target": "b"}, {"source": "b", "target": "c"},
-                                        {"source": "a", "target": "e"}, {"source": "c", "target": "gone"}],
-            "nodes": [{"id": i, "kind": k, "name": i, "type": k, "settings": [["k", "v"]] * n}
-                      for i, k, n in (("e", "extractor", 1), ("c", "view", 2), ("b", "filter", 0),
-                                      ("a", "source", 0))]}
-    flow = build_pipeline_flow(desc)
-    pos = {n["id"]: n["position"]["y"] for n in flow["nodes"] if n["type"] == "pp"}
-    assert pos["a"] < pos["b"] < pos["c"]
-    assert pos["a"] < pos["e"] < pos["c"]  # e is fed by a only: the row below it
-    assert flow["nodes"][0]["data"]["label"] == "ParaView (Catalyst) · x.py"
-    assert {(e["source"], e["target"]) for e in flow["edges"]} == {("a", "b"), ("b", "c"), ("a", "e")}
 
 
 class Extra(Heat1D):

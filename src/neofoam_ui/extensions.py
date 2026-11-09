@@ -1,7 +1,7 @@
 """Extending the UI without editing it: panes, registered through an :class:`ExtensionRegistry`.
 
 A pane is a factory ``factory(ctx) -> Pane`` (``ctx``: the app, as a :class:`PaneContext`).
-The built-in ones (DAG, Field, Pipeline, Plots) come first; extension panes follow in the
+The built-in ones (DAG, Field, Plots) come first; extension panes follow in the
 order they were added. A pane with a :class:`PaneToggle` gets a toolbar button bound to
 its state key; ``placement="side"`` puts it beside the field view, ``"main"`` in the canvas.
 

@@ -13,7 +13,6 @@ from typing import Any, NamedTuple
 from trame.app import get_server
 
 from neofoam_ui.engine import Session
-from neofoam_ui._ui._layout._pipeline import _build_pipeline_flow as build_pipeline_flow
 from neofoam_ui._ui.panes._table_history import _TableHistory as TableHistory
 from neofoam_ui.app import StepperApp
 from neofoam_ui.pptables import _describe, describe_table, observe, register_describer, rows_message
@@ -258,25 +257,6 @@ def test_a_registered_describer_describes_its_nodes(monkeypatch):
     assert by_id["nf:p_mean:1"]["kind"] == "aggregator"  # the others: the generic reading
 
 
-def test_tables_are_drawn_as_frames_without_catalyst():
-    tables = [describe_table(t) for t in processor()._tables] * 5
-    tables = [{**t, "name": f"{t['name']}{i}",
-               "nodes": [{**n, "id": f"{i}{n['id']}"} for n in t["nodes"]],
-               "edges": [{**e, "source": f"{i}{e['source']}", "target": f"{i}{e['target']}"}
-                         for e in t["edges"]]} for i, t in enumerate(tables)]
-    flow = build_pipeline_flow(None, tables)
-    frames = [n for n in flow["nodes"] if n["type"] == "activity"]
-    assert [f["id"] for f in frames] == [f"pp:act:{t['name']}" for t in tables]
-    assert frames[0]["data"]["label"] == "NeoFOAM post-processing · p_mean0"
-    assert len({f["position"]["y"] for f in frames}) > 1  # wrapped onto further rows
-    inner = [n for n in flow["nodes"] if n.get("parentNode") == "pp:act:p_mean0"]
-    assert len(inner) == 7  # source, binary + its 3 selectors, mean, writer
-    labels = {e.get("label") for e in flow["edges"]}
-    assert {"left", "right", "region"} <= labels
-    both = build_pipeline_flow({"nodes": [], "edges": []}, tables[:1])
-    assert [n["id"] for n in both["nodes"] if n["type"] == "activity"] == ["pp:act", "pp:act:p_mean0"]
-
-
 # -- the engine hook ------------------------------------------------------------------------
 
 
@@ -349,21 +329,18 @@ def test_rows_that_come_and_go_leave_gaps_and_a_repeated_step_replaces():
     assert history.charts() == []
 
 
-def test_app_draws_tables_and_plots_their_rows():
+def test_app_plots_the_tables_rows():
     server = get_server("pptables_test", client_type="vue3")
     app = StepperApp(server, "neofoam_ui.toy.heat1d:Heat1D")
     tables = [describe_table(t) for t in processor()._tables]
     s = app.state
     with s:
         app.dispatch({"type": "pptables", "tables": tables})
-        assert s.pp_graph and "NeoFOAM: 2 tables" in s.pp_msg
-        frames = [n["id"] for n in app.pane("pipeline").editor.graph["nodes"] if n["type"] == "activity"]
-        assert frames == ["pp:act:p_mean", "pp:act:U_bins"]
+        assert "2 tables declared" in s.pt_msg
         # Catalyst not configured: the tables stay
         app.dispatch({"type": "frame", "file": None, "fields": [], "error": "in-situ view off"})
-        assert s.pp_graph and "in-situ view off" in s.pp_msg
         app.dispatch(msg("p_mean", 0.1, [[1.0]]))
-        assert s.pt_charts == []  # the Plots pane is closed: nothing sent
+        assert s.pt_charts == []  # the Plots view is hidden: nothing sent
         s.pt_on = True
         app.pane("plots").plot(force=True)
         # the select box offers every table; the first is chosen, only chosen ones are charted
@@ -373,7 +350,6 @@ def test_app_draws_tables_and_plots_their_rows():
         s.pt_sel = ["U_bins", "p_mean"]
         app.pane("plots").plot(force=True)
         assert [c["name"] for c in s.pt_charts] == ["p_mean", "U_bins"]  # declaration order
-        assert s.pp_ms["pp:act:p_mean"] == "0.5 ms"
         app._reset_state()  # what a restart does
         assert s.pt_charts == [] and app.pane("plots").history.charts() == [] and s.pt_on
         assert s.pt_sel == ["U_bins", "p_mean"]  # the choice survives
@@ -384,5 +360,4 @@ def test_no_tables_says_so():
     with app.state:
         app.dispatch({"type": "pptables", "tables": []})
     assert "declares no post-processing tables" in app.state.pt_msg
-    assert not app.state.pp_graph
     assert math.isfinite(app.pane("plots").plotted)
