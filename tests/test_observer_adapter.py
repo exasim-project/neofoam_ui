@@ -187,41 +187,35 @@ def test_a_loop_driven_by_a_bound_method_shows_its_class():
     assert _convert(loop, {}).test == "Predicate()"
 
 
-class Model:
-    """Just enough of a pydantic model class: its field names."""
-
-    def __init__(self, *fields):
-        self.model_fields = dict.fromkeys(fields)
-
-
 def _coupling(kind="nearest-neighbor", points=(2, 3)):
-    """Fake NeoFOAM coupling ops of regions a and b (public read API: region, label, sides,
-    exchange_of() with name / partner / mapping.kind, partner() as a label, is_leader,
+    """Fake NeoFOAM coupling ops of regions a and b (public read API: region, label, ports,
+    exchange_of() with name / partner(region) / mapping.type, partner() as a label, is_leader,
     controller); b's leads."""
-    sides = {r: SimpleNamespace(region=r, patch=f"to_{p}", receives=Model("T", "h"), mapped=("T",),
-                                points=n)
+    ports = {r: SimpleNamespace(region=r, name=f"to_{p}", receives=(SimpleNamespace(names=("T", "h")),),
+                                mapped=("T",), points=n)
              for (r, p), n in zip((("a", "b"), ("b", "a")), points)}
 
-    class CouplingOp:
+    class CouplingLoopOp:
         def __init__(self, region, partner):
-            self.region, self.label, self.sides = region, f"{region}.couple", (sides[region],)
+            self.region, self.label, self.ports = region, f"{region}.couple", (ports[region],)
             self.is_leader = region == "b"
-            self.controller = SimpleNamespace(label="b.couple", parallel=False, residuals={}) \
-                if self.is_leader else None
-            self._exchange = SimpleNamespace(name="a-b", partner=(partner, f"to_{region}"),
-                                             mapping=SimpleNamespace(kind=kind))
+            self.controller = SimpleNamespace(label="b.couple", residuals={}) if self.is_leader else None
+            # the leader's op tells its loop's scheme; a's falls back to its region's coupling
+            self.loop = SimpleNamespace(scheme="serial") if self.is_leader else None
+            self._exchange = SimpleNamespace(name="a-b", partner=lambda _region: (partner, f"to_{region}"),
+                                             mapping=SimpleNamespace(type=kind))
             self.func = self._test
 
-        def exchange_of(self, side):
+        def exchange_of(self, port):
             return self._exchange
 
-        def partner(self, side):
-            return ".".join(self._exchange.partner)
+        def partner(self, port):
+            return ".".join(self._exchange.partner(self.region))
 
         def _test(self, ctx):
             return False
 
-    return CouplingOp("a", "b"), CouplingOp("b", "a")
+    return CouplingLoopOp("a", "b"), CouplingLoopOp("b", "a")
 
 
 def _loop(name, func, children=(), iterations=0):
@@ -231,16 +225,16 @@ def _loop(name, func, children=(), iterations=0):
 
 
 def _region_ctx(region, parallel=False, **fields):
-    coupling = SimpleNamespace(coupling=SimpleNamespace(parallel=parallel, group=("a", "b"), transport=None))
+    coupling = SimpleNamespace(coupling=SimpleNamespace(parallel=parallel, group=("a", "b"), comm_channel=None))
     return SimpleNamespace(region=region, models={"coupling": coupling}, fields=fields,
                            time=SimpleNamespace(value=0.0))
 
 
-def test_a_coupling_op_is_a_loop_whose_test_exchanges_one_per_side():
+def test_a_coupling_op_is_a_loop_whose_test_exchanges_one_per_port():
     a, b = _coupling()
     ops = [_convert(_loop(f"{r}.couple", c, [FakeOp("solve")]), {}, _region_ctx(r, parallel=True))
            for r, c in (("a", a), ("b", b))]
-    # a's scheme from its region's coupling, the leader's from its controller
+    # a's scheme from its region's coupling, the leader's from its op's coupling loop
     assert [(o.kind, o.test, o.tag) for o in ops] == [("loop", "exchange · parallel", None),
                                                       ("loop", "exchange · serial", "leader")]
     assert ops[0].exchanges == [
@@ -250,8 +244,8 @@ def test_a_coupling_op_is_a_loop_whose_test_exchanges_one_per_side():
 
 def test_a_coupling_op_s_mapping_tells_kind_and_points():
     a, _b = _coupling(kind="identity", points=(None, None))
-    side = a.sides[0]
-    assert _mapping(a.exchange_of(side), side) == PointMapping("identity", ("T",), None, None)
+    port = a.ports[0]
+    assert _mapping(a.exchange_of(port), port) == PointMapping("identity", ("T",), None, None)
     bare = SimpleNamespace()
     assert _mapping(SimpleNamespace(), bare) is None
 
@@ -281,7 +275,7 @@ def test_the_leader_s_test_reports_its_controller_s_residuals():
     assert {r[2]["region"] for r in tests} == {"b"}
 
 
-def test_a_coupling_op_s_test_records_what_it_handed_each_side():
+def test_a_coupling_op_s_test_records_what_it_handed_each_port():
     a, _b = _coupling()
     op = _loop("a.couple", a, [FakeOp("solve")])
     session = _recording(RegionSession())
@@ -291,7 +285,7 @@ def test_a_coupling_op_s_test_records_what_it_handed_each_side():
 
     stepper.before_loop_test(op, ctx, 1)
     # NeoFOAM's coupling_exchanged, from the test (a pydantic model iterates as (name, value))
-    stepper.coupling_exchanged(a, a.sides[0], [("T", np.array([0.5, 1.0])), ("h", 2.0)])
+    stepper.coupling_exchanged(a, a.ports[0], [("T", np.array([0.5, 1.0])), ("h", 2.0)])
     stepper.after_loop_test(op, ctx, 1, False)
 
     assert [extra.get("exchanges") for kind, _node, extra in session.records if kind == "test"] == [
@@ -318,7 +312,7 @@ def test_a_coupling_op_s_test_reports_its_region_s_fields():
         ("fields · b", 1.0, [[0.5]], "b"), ("fields · b", 2.0, [[0.5]], "b")]
 
 
-def test_a_receive_on_the_transport_shows_its_region_waiting_for_the_sender():
+def test_a_receive_on_the_comm_channel_shows_its_region_waiting_for_the_sender():
     calls = []
 
     class Lanes:
@@ -334,12 +328,12 @@ def test_a_receive_on_the_transport_shows_its_region_waiting_for_the_sender():
         def delivered(self, source, target, tag):
             calls.append(("sent", source, target, tag))
 
-    transport = SimpleNamespace(receive=lambda s, t, tag: 42, send=lambda s, t, tag, m: None)
+    comm_channel = SimpleNamespace(receive=lambda s, t, tag: 42, send=lambda s, t, tag, m: None)
     stepper = _Stepper(RegionSession(), lambda event: None, Lanes())
-    stepper._watch(transport)
-    stepper._watch(transport)  # (once)
-    transport.send("b", "a", "x1", 1.0)
-    assert transport.receive("b", "a", "x1") == 42
+    stepper._watch(comm_channel)
+    stepper._watch(comm_channel)  # (once)
+    comm_channel.send("b", "a", "x1", 1.0)
+    assert comm_channel.receive("b", "a", "x1") == 42
     assert calls == [("sent", "b", "a", "x1"), ("wait", "a", "b", "x1"), ("woke", "a")]
 
 
@@ -347,11 +341,11 @@ def test_a_coupling_outcome_is_a_table_row_per_time_step():
     session = RegionSession()
     stepper = _Stepper(session, lambda event: None)
     controller = SimpleNamespace(label="b.couple")
-    for passes, converged in [(20, True), (5, False)]:
-        stepper.coupling_finished(controller, SimpleNamespace(passes=passes, converged=converged,
+    for iterations, converged in [(20, True), (5, False)]:
+        stepper.coupling_finished(controller, SimpleNamespace(iterations=iterations, converged=converged,
                                                               residuals={"x": 1e-7}))
 
     assert [(m["name"], m["time"], m["columns"], m["values"]) for m in session.emitted] == [
-        ("coupling · b.couple", 1.0, ["passes", "converged", "residual x"], [[20.0, 1.0, 1e-7]]),
-        ("coupling · b.couple", 2.0, ["passes", "converged", "residual x"], [[5.0, 0.0, 1e-7]]),
+        ("coupling · b.couple", 1.0, ["iterations", "converged", "residual x"], [[20.0, 1.0, 1e-7]]),
+        ("coupling · b.couple", 2.0, ["iterations", "converged", "residual x"], [[5.0, 0.0, 1e-7]]),
     ]

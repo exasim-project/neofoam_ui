@@ -55,7 +55,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
                 Handle(position="right", type="source", id="r")
-                # the lines of a coupling node, in the gap between region boxes
+                # the lines of a coupling op, in the gap between region boxes
                 Handle(position="left", type="source", id="ls")
                 Handle(position="left", type="target", id="lt")
                 Handle(position="right", type="target", id="rt")
@@ -92,7 +92,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
                title=("props.data.control && props.data.test ? 'test: ' + props.data.test : ''",)):
                 Handle(position="top", type="target", id="t")
                 Handle(position="bottom", type="source", id="b")
-                # a loop in a region box: its data goes to a coupling node, which may feed it
+                # a loop in a region box: its data goes to a coupling action, which may feed it
                 Handle(position="right", type="source", id="r")
                 Handle(position="left", type="source", id="ls")
                 Handle(position="left", type="target", id="lt")
@@ -123,7 +123,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
         with CustomNode("exmap"):
             # an interface's mapping node, on its coupling line between the boxes: a chip with
             # the mapping kind, lit while the exchange runs. Hover (a tap focuses it) shows the
-            # rest in a popover, live: each side's points and, per way, what the sending side
+            # rest in a popover, live: each port's points and, per way, what the sending port
             # sends now, else the fields, marked mapped / as is / ? (see _styles)
             with html.Div(classes=("['nf-exmap', { hot: ex_hot.includes(props.data.key), unk: !props.data.kind }]",),
                           tabindex="0"):
@@ -163,7 +163,7 @@ def _canvas(pane: _DagPane, minimap: str) -> None:
             with html.Div(classes=("['nf-box', { closed: props.data.closed }]",),
                           style=("`border-color:${props.data.color}`",)):
                 with html.Div(classes="nf-box-head", style=("`color:${props.data.color}`",)):
-                    # an execution box collapses to its header and coupling nodes
+                    # an execution box collapses to its header and coupling ops
                     html.Span("{{ props.data.closed ? '▸' : '▾' }}", classes="nf-tog", v_if="props.data.toggle",
                               title="collapse / expand this solver",
                               raw_attrs=['@click.stop="trigger(\'nf_box\', [props.data.toggle])"'])
@@ -295,9 +295,9 @@ def _legend() -> None:
             html.Div("▢ a box per region: its own solver, graph and thread (its region's colour);"
                      " a token per box, every step moves all of them")
             html.Div("⏳ amber: the region waits for its partner's data; it moves once that arrives")
-            html.Div("⇄ coupling node: hands its op the partner's data")
+            html.Div("⇄ coupling action: hands its op the partner's data")
             html.Div("⇄ (loop) a region's coupling op: its test hands the region the partners' data;"
                      " 'leader': the one that decides whether the group goes on")
             html.Div("- - coupling line, through the interface's ≈ mapping chip (its kind; hover or tap:"
-                     " how the data goes onto the partner's points, mapped or as is, the points per side,"
-                     " what each side sends); red, moving: exchanging now")
+                     " how the data goes onto the partner's points, mapped or as is, the points per port,"
+                     " what each port sends); red, moving: exchanging now")

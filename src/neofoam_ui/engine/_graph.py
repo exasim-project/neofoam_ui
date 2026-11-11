@@ -10,10 +10,10 @@ __all__ = ()
 
 @dataclass(frozen=True)
 class PointMapping:
-    """How a coupling node's data reaches its side's interface points (preCICE's "mapping").
+    """How a coupling op's data reaches its port's interface points (preCICE's "mapping").
 
     The partner's data lives on the partner's interface points; the node hands it over on its
-    own side's points. Point fields (one value per point) are mapped, the others (one value for
+    own port's points. Point fields (one value per point) are mapped, the others (one value for
     the whole interface) are handed over as they are. Every field is optional: ``None`` means
     the solver does not tell.
     """
@@ -23,16 +23,16 @@ class PointMapping:
     kind: Optional[str] = None
     #: Names of :attr:`Exchange.data` mapped point by point; the others are handed over unmapped.
     mapped: Optional[tuple[str, ...]] = None
-    #: Interface points of the partner's side (mapped from) and of this side (mapped onto).
+    #: Interface points of the partner's port (mapped from) and of this port (mapped onto).
     source_points: Optional[int] = None
     target_points: Optional[int] = None
 
 
 @dataclass(frozen=True)
 class Exchange:
-    """A coupling node's data exchange: the data of an op of the partner region, for the op after it.
+    """A coupling op's data exchange: the data of an op of the partner region, for the op after it.
 
-    A coupling node is an action of a multi-region solver that runs right before the op it
+    A coupling action is an action of a multi-region solver that runs right before the op it
     belongs to and hands it the partner's data.
     """
 
@@ -42,7 +42,7 @@ class Exchange:
     data: tuple[str, ...] = ()
     #: The partner's region.
     partner: Optional[str] = None
-    #: How the data is mapped onto this side's interface points (``None``: not known).
+    #: How the data is mapped onto this port's interface points (``None``: not known).
     mapping: Optional[PointMapping] = None
     #: The exchange's name, which both of its ends share (``None``: the solver does not tell).
     name: Optional[str] = None
@@ -75,9 +75,9 @@ class Op:
     pos: str = ""
     #: The region of a multi-region solver the op belongs to (``None``: the solver's own).
     region: Optional[str] = None
-    #: A coupling node's data exchange (``None``: not a coupling node).
+    #: A coupling action's data exchange (``None``: not a coupling action).
     exchange: Optional[Exchange] = None
-    #: A region's coupling op (a loop whose test exchanges): one exchange per coupled side;
+    #: A region's coupling loop (a loop whose test exchanges): one exchange per coupled port;
     #: takes the place of ``exchange``.
     exchanges: list[Exchange] = field(default_factory=list)
     #: A short tag shown on the node, e.g. ``"leader"`` (the coupling op that decides).

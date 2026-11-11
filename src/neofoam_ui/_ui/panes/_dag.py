@@ -59,10 +59,10 @@ class _DagPane(BasePane):
         self._closed: frozenset[str] = frozenset()
         #: The regions in the order of the execution view's boxes (kept over restarts).
         self._box_order: list[str] = []
-        #: The coupling line of each coupling node (its key), and the line's two regions.
+        #: The coupling line of each coupling op (its key), and the line's two regions.
         self._line_of: dict[str, list[str]] = {}
         self._line_name: dict[str, Optional[str]] = {}
-        self._line_sides: dict[str, tuple[str, str]] = {}
+        self._line_regions: dict[str, tuple[str, str]] = {}
         #: Browser tabs showing the app (visible ones); none = nobody watches the DAG.
         self.viewers = 0
         self._watching: Optional[bool] = None
@@ -217,7 +217,7 @@ class _DagPane(BasePane):
             self.rebuild(fit=False)
         if ev["kind"] in ("init", "exec", "test"):
             self._follow_phase("init" if ev["kind"] == "init" else "exec")
-        # the lines of a coupling node next to run (or of a coupling op whose test exchanges
+        # the lines of a coupling action next to run (or of a coupling loop whose test exchanges
         # next) are hot, in any region; any other pause cools them
         keys: list[str] = []
         for e in _paused_events(ev):
@@ -244,7 +244,7 @@ class _DagPane(BasePane):
         self._closed = self._boxes_shut()
         graph = _build_flow(self.model.init_steps, self.model.ops or None, s.solver_name, collapsed, view,
                             tuple(self._regions), self._closed)
-        self._node_of, self._line_of, self._line_sides = {}, {}, {}
+        self._node_of, self._line_of, self._line_regions = {}, {}, {}
         boxes = sorted((n["position"]["x"], n["id"][len("exec::box:"):]) for n in graph["nodes"]
                        if n["id"].startswith("exec::box:"))
         if boxes:
@@ -254,7 +254,7 @@ class _DagPane(BasePane):
             self._node_of.setdefault(ref, n["id"])
             if n["type"] == "exmap":
                 data = n["data"]
-                self._line_sides[data["key"]] = (data["left"], data["right"])
+                self._line_regions[data["key"]] = (data["left"], data["right"])
                 self._line_name[data["key"]] = data.get("name")
                 for ref in data["nodes"]:  # (a coupling op may sit on several lines)
                     self._line_of.setdefault(ref, []).append(data["key"])
@@ -273,8 +273,8 @@ class _DagPane(BasePane):
             self.rebuild()
 
     def _exchanged(self, msg: dict[str, Any]) -> None:
-        """A coupling node ran, or a coupling op's test exchanged: its lines are hot, and show
-        what each side was handed (``exchanges``; a coupling node's single ``exchange``)."""
+        """A coupling action ran, or a coupling loop's test exchanged: its lines are hot, and show
+        what each port was handed (``exchanges``; a coupling action's single ``exchange``)."""
         s = self.app.state
         keys = self._line_of.get(msg["node"], [])
         if (s.ex_hot or []) != keys:
@@ -287,7 +287,7 @@ class _DagPane(BasePane):
             ends = {str(item.get("from")), str(item.get("to"))}
             key = next((k for k in keys if item.get("exchange") is not None
                         and self._line_name.get(k) == item["exchange"]), None) or \
-                next((k for k in keys if set(map(str, self._line_sides.get(k, ()))) == ends), None)
+                next((k for k in keys if set(map(str, self._line_regions.get(k, ()))) == ends), None)
             if key is None:
                 continue
             text = " ".join(f"{name} = {value}" for name, value in item.get("data", {}).items())
@@ -372,7 +372,7 @@ class _DagPane(BasePane):
         return frozenset(s.boxes_closed or ()) - inside
 
     def toggle_box(self, region: str) -> None:
-        """Close a region's box to its coupling nodes, or open it again."""
+        """Close a region's box to its coupling ops, or open it again."""
         s = self.app.state
         closed = list(s.boxes_closed or ())
         if region in closed:

@@ -355,10 +355,10 @@ def test_the_init_view_draws_known_regions_before_they_initialize():
     assert nodes["init::box:a"]["position"]["x"] < nodes["init::box:b"]["position"]["x"]
 
 
-def test_the_dag_pane_shows_what_a_coupling_node_hands_over_and_heats_its_line():
+def test_the_dag_pane_shows_what_a_coupling_action_hands_over_and_heats_its_line():
     state = SimpleNamespace(ex_vals={}, ex_hot=[])
     pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"c/couple_b.x": ["0"], "c/couple_a.x": ["0"]},
-                           _line_sides={"0": ("a", "b")}, _line_name={"0": None})
+                           _line_regions={"0": ("a", "b")}, _line_name={"0": None})
     exchanged = lambda msg: _DagPane._exchanged(pane, msg)  # noqa: E731
     exchanged({"node": "c/couple_b.x", "exchange": {"from": "a", "to": "b", "data": {"x": "1.5"}}})
     assert state.ex_hot == ["0"] and state.ex_vals == {"0": {"a": "x = 1.5"}}
@@ -372,7 +372,7 @@ def test_a_coupling_op_s_test_heats_all_its_lines_and_fills_each_by_exchange_nam
     state = SimpleNamespace(ex_vals={}, ex_hot=[])
     # b's coupling op sits on the lines a-b (0) and b-c (1)
     pane = SimpleNamespace(app=SimpleNamespace(state=state), _line_of={"g/b.couple": ["0", "1"]},
-                           _line_sides={"0": ("a", "b"), "1": ("b", "c")}, _line_name={"0": "a-b", "1": "b-c"})
+                           _line_regions={"0": ("a", "b"), "1": ("b", "c")}, _line_name={"0": "a-b", "1": "b-c"})
     _DagPane._exchanged(pane, {"node": "g/b.couple", "kind": "test", "exchanges": [
         {"from": "a", "to": "b", "exchange": "a-b", "data": {"x": "1"}},
         {"from": "c", "to": "b", "exchange": "b-c", "data": {"x": "2"}}]})
@@ -390,13 +390,13 @@ def test_field_rows_are_grouped_per_region_in_the_boxes_order():
 def test_a_region_fields_table_is_drawn_in_the_region_s_colour():
     history = _TableHistory()
     history.add({"name": "fields · b", "time": 1.0, "columns": ["x"], "values": [[0.5]], "region": "b",
-                 "x": "coupling pass"})
+                 "x": "coupling iteration"})
     (chart,) = history.charts()
     assert chart["data"][0]["line"]["color"] == _REGION.color("b")
-    assert chart["layout"]["xaxis"]["title"]["text"] == "coupling pass"
+    assert chart["layout"]["xaxis"]["title"]["text"] == "coupling iteration"
 
 
-def test_the_wire_carries_a_coupling_node_s_mapping_only_when_known():
+def test_the_wire_carries_a_coupling_action_s_mapping_only_when_known():
     plain = op_dict(Op("couple_a.x", "action", lambda ctx: None, exchange=Exchange("b.solve", ("x",), "b")))
     assert "mapping" not in plain["exchange"]
     told = op_dict(Op("couple_a.x", "action", lambda ctx: None,

@@ -81,7 +81,7 @@ def _inspector_model(model: _RunModel, sel: Optional[str], bps: Iterable[str]) -
 
 
 def _mapping_text(mapping: dict[str, Any], data: Iterable[str]) -> str:
-    """A coupling node's mapping, e.g. ``nearest-neighbor, 4 → 3 points; mapped T, as is h``."""
+    """A coupling op's mapping, e.g. ``nearest-neighbor, 4 → 3 points; mapped T, as is h``."""
     pts = lambda n: "?" if n is None else str(n)  # noqa: E731
     text = f"{mapping.get('kind') or 'unknown'}, {pts(mapping.get('source_points'))} → " \
            f"{pts(mapping.get('target_points'))} points"

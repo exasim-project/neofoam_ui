@@ -33,9 +33,9 @@ def _op_dict(op: Op) -> dict[str, Any]:
     if op.final:  # optional: runs in the final pass of its wrapping loops only
         out["final"] = True
     exchanges = op.exchanges or ([op.exchange] if op.exchange is not None else [])
-    if exchanges:  # optional: only coupling nodes / coupling ops
+    if exchanges:  # optional: only coupling actions / coupling loops
         out["exchanges"] = [_exchange_dict(x) for x in exchanges]
-        out["exchange"] = out["exchanges"][0]  # (the one of a coupling node, as before)
+        out["exchange"] = out["exchanges"][0]  # (the one of a coupling action, as before)
     return out
 
 

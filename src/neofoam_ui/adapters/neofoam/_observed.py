@@ -5,7 +5,7 @@ threads report to the same observer, concurrently. Everything the stepper follow
 (the loop stack, the ops open, the nodes taken in a pass, the context) is therefore kept per
 region (``ctx.region``, :class:`_RegionRun`) and booked under one lock; the region's events
 pause in the engine's per-region gate (``Event.region``). The regions exchange data only
-through their transport, whose blocking receives the stepper watches to show a region
+through their comm channel, whose blocking receives the stepper watches to show a region
 "waiting for" its partner.
 """
 
@@ -18,10 +18,18 @@ from typing import Any, Callable, Iterator, Optional
 import numpy as np
 
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase
-from neofoam_ui.adapters.neofoam._fields import _FieldAccess, _RegionContexts
-from neofoam_ui.adapters.neofoam._ops import _convert, _doc, _qualified, _source
+from neofoam_ui.adapters.neofoam._fields import _own_fields, _RegionContexts
+from neofoam_ui.adapters.neofoam._ops import (
+    _convert,
+    _doc,
+    _exchange_of,
+    _qualified,
+    _region_coupling,
+    _source,
+)
 from neofoam_ui.engine import Event, InitStep, Op, ProgramContext, ThreadedProgram
 from neofoam_ui.engine._wire import _init_dict
+from neofoam_ui.pptables._rows import table_row
 
 __all__ = ()
 
@@ -79,12 +87,6 @@ def _region(ctx: Any) -> Optional[str]:
     return None if region is None else str(region)
 
 
-def _region_coupling(ctx: Any) -> Any:
-    """The region's ``RegionCoupling`` (``Coupling.of(ctx).coupling``), or ``None``."""
-    coupling = (getattr(ctx, "models", None) or {}).get("coupling")
-    return getattr(coupling, "coupling", None)
-
-
 class _RegionRun:
     """What the stepper follows of one run: one region's thread (or the only one)."""
 
@@ -101,11 +103,11 @@ class _RegionRun:
         self.taken: dict[str, set[str]] = {}
         #: Node of the loop test between before_loop_test and after_loop_test.
         self.test_node: Optional[str] = None
-        #: What the region's coupling op hands its sides in its running loop test
-        #: (``coupling_exchanged``): ``(side, partner region, exchange name, data)`` by op.
+        #: What the region's coupling op hands its ports in its running loop test
+        #: (``coupling_exchanged``): ``(port, partner region, exchange name, data)`` by op.
         self.handed: dict[int, list[tuple[Any, Any, Any, Any]]] = {}
-        #: The region's coupling passes so far: the x of its field table.
-        self.passes = 0
+        #: The region's coupling iterations so far: the x of its field table.
+        self.iterations = 0
         #: The last top-level node: once it ran, the region's run is done.
         self.last: Optional[str] = None
         #: The region's context.
@@ -206,7 +208,7 @@ class _Stepper:
             else:
                 coupling = _region_coupling(ctx)
                 group = list(getattr(coupling, "group", None) or ())
-                self._watch(getattr(coupling, "transport", None))
+                self._watch(getattr(coupling, "comm_channel", None))
                 self.contexts[region] = ctx
                 if group:  # (in stepping order, not the threads' order of arrival)
                     ordered = sorted(self.contexts.items(), key=lambda kv: group.index(kv[0]) if kv[0] in group else len(group))
@@ -297,8 +299,8 @@ class _Stepper:
                 return
             ms = (time.perf_counter() - run.t0) * 1e3
             extra: dict[str, Any] = {}
-            coupling = type(op.func).__name__ == "CouplingOp"
-            # the leader's coupling op: its controller decided on the residuals of the last pass
+            coupling = type(op.func).__name__ == "CouplingLoopOp"
+            # the leader's coupling op: its Leader decided on the residuals of the last iteration
             residuals = getattr(getattr(op.func, "controller", None), "residuals", None) if coupling else None
             if isinstance(residuals, dict) and residuals:
                 extra["residuals"] = {str(k): float(v) for k, v in residuals.items()}
@@ -306,7 +308,7 @@ class _Stepper:
             loops = getattr(ctx, "loops", None)
             if result and loops and getattr(loops[-1], "final", False) is True:
                 extra["final"] = True
-            # a region's coupling op: what its test handed each side
+            # a region's coupling op: what its test handed each port
             exchanges = _exchanged(run.handed.pop(id(op.func), []))
             if exchanges:
                 extra["exchanges"] = exchanges
@@ -331,19 +333,19 @@ class _Stepper:
 
     # -- coupling -------------------------------------------------------------------------
 
-    def _watch(self, transport: Any) -> None:
-        """Watch the regions' transport (``RegionCoupling.transport``): a receive that blocks
+    def _watch(self, comm_channel: Any) -> None:
+        """Watch the regions' comm channel (``ParticipantExchanges.comm_channel``): a receive that blocks
         shows its region as waiting for the sender, a send ends that wait.
 
-        The transport is NeoFOAM's only link between regions, so this is all a region ever
-        waits for. Patches the transport object (its ``receive`` / ``send``), once."""
-        if transport is None or self.lanes is None or id(transport) in self._watched:
+        The comm channel is NeoFOAM's only link between regions, so this is all a region ever
+        waits for. Patches the comm channel object (its ``receive`` / ``send``), once."""
+        if comm_channel is None or self.lanes is None or id(comm_channel) in self._watched:
             return
-        receive, send = getattr(transport, "receive", None), getattr(transport, "send", None)
+        receive, send = getattr(comm_channel, "receive", None), getattr(comm_channel, "send", None)
         if not callable(receive) or not callable(send):
             return
         lanes = self.lanes
-        self._watched.add(id(transport))
+        self._watched.add(id(comm_channel))
 
         def watched_receive(source: str, target: str, tag: str) -> Any:
             with lanes.waiting(str(target), str(source), str(tag)):
@@ -353,37 +355,33 @@ class _Stepper:
             lanes.delivered(str(source), str(target), str(tag))
             send(source, target, tag, message)
 
-        transport.receive, transport.send = watched_receive, watched_send
+        comm_channel.receive, comm_channel.send = watched_receive, watched_send
 
     def _region_fields(self, run: _RegionRun, region: Optional[str], ctx: Any) -> None:
         """At a region's coupling op test: its fields (their mean) as one row of a table
-        ``fields · <region>`` (Plots pane), x = the region's coupling passes so far."""
+        ``fields · <region>`` (Plots pane), x = the region's coupling iterations so far."""
         emit = getattr(self.s, "emit", None)
         if emit is None or region is None:
             return
-        fields = _FieldAccess()._own_fields(ctx)
-        run.passes += 1
+        fields = _own_fields(ctx)
+        run.iterations += 1
         if not fields:
             return
-        emit({"type": "pptable", "name": f"fields · {region}", "time": float(run.passes),
-              "columns": list(fields), "group_columns": [], "groups": [[]],
-              "values": [[float(np.mean(v)) if np.size(v) else None for v in fields.values()]],
-              "region": region, "x": "coupling pass"})
+        emit(table_row(f"fields · {region}", run.iterations, list(fields),
+                       [float(np.mean(v)) if np.size(v) else None for v in fields.values()],
+                       region=region, x="coupling iteration"))
 
-    def coupling_exchanged(self, coupling: Any, side: Any, data: Any) -> None:
-        """A region's coupling op is about to hand ``side`` the (mapped) ``data``, in its loop
+    def coupling_exchanged(self, coupling: Any, port: Any, data: Any) -> None:
+        """A region's coupling op is about to hand ``port`` the (mapped) ``data``, in its loop
         test; recorded with the test."""
-        try:
-            exchange = coupling.exchange_of(side)
-            partner, name = exchange.partner[0], exchange.name
-        except Exception:  # noqa: BLE001 - a view must never break the run
-            partner, name = None, None
+        found = _exchange_of(coupling, port)
+        partner, name = (None, None) if found is None else (found[1], getattr(found[0], "name", None))
         with self.lock:
             run = self.run_of(getattr(coupling, "region", None))
-            run.handed.setdefault(id(coupling), []).append((side, partner, name, data))
+            run.handed.setdefault(id(coupling), []).append((port, partner, name, data))
 
     def coupling_finished(self, coupling: Any, outcome: Any) -> None:
-        """A time step's coupling ended (the leader's controller, from its thread): its outcome
+        """A time step's coupling ended (the Leader, from its thread): its outcome
         as one row of a ``pptable`` (Plots pane).
 
         x is the coupling's run count, not the time.
@@ -395,24 +393,23 @@ class _Stepper:
             emit = getattr(self.s, "emit", None)
             if emit is None:
                 return
-            emit({"type": "pptable", "name": f"coupling · {label}", "time": float(run),
-                  "columns": ["passes", "converged", *(f"residual {q}" for q in residuals)],
-                  "group_columns": [], "groups": [[]],
-                  "values": [[float(outcome.passes), 1.0 if outcome.converged else 0.0,
-                              *(float(v) for v in residuals.values())]]})
+            emit(table_row(f"coupling · {label}", run,
+                           ["iterations", "converged", *(f"residual {q}" for q in residuals)],
+                           [float(outcome.iterations), 1.0 if outcome.converged else 0.0,
+                            *(float(v) for v in residuals.values())]))
 
 
 def _exchanged(handed: list[tuple[Any, Any, Any, Any]]) -> list[dict[str, Any]]:
-    """What a NeoFOAM coupling op's test handed its sides (``coupling_exchanged``): per side
+    """What a NeoFOAM coupling op's test handed its ports (``coupling_exchanged``): per port
     ``{"from", "to", "exchange", "data"}``, the partner's data relaxed and mapped onto the
-    side's points, each value summarised as text."""
+    port's points, each value summarised as text."""
     out = []
-    for side, partner, name, data in handed:
+    for port, partner, name, data in handed:
         try:
             values = {str(n): _summary(v) for n, v in data}
         except Exception:  # noqa: BLE001 - a view must never break the run
             continue
-        out.append({"from": None if partner is None else str(partner), "to": getattr(side, "region", None),
+        out.append({"from": None if partner is None else str(partner), "to": getattr(port, "region", None),
                     "exchange": None if name is None else str(name), "data": values})
     return out
 

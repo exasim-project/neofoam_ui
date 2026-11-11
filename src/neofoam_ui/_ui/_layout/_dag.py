@@ -6,13 +6,13 @@
   interface's mapping node between its two boxes, on the coupling line that joins them;
 * **Execution** (``view="exec"``) — the operation tree. A multi-region solver (every op
   carries its region) is drawn as one box per region, each that region's own graph, as its
-  solver runs alone on its own thread. Between the boxes only the coupling nodes are joined:
+  solver runs alone on its own thread. Between the boxes only the coupling ops are joined:
   one line per exchange, arrowheads at both ends, through the exchange's *mapping node* in
-  the gap (how the data goes from one side's interface points onto the other's, and what
-  each side sends). A coupling node is an action, or a region's *coupling op*: a loop whose
-  test exchanges (NeoFOAM's ``<region>.couple``), with one exchange per coupled side
-  (``exchanges``), so it may sit on several lines. The boxes share rows: the k-th coupling
-  node of every box sits on one row, so the lines are horizontal. A solver without regions
+  the gap (how the data goes from one port's interface points onto the other's, and what
+  each port sends). A coupling op is a *coupling action*, or a region's *coupling loop*: a
+  loop whose test exchanges (NeoFOAM's ``<region>.couple``), with one exchange per coupled
+  port (``exchanges``), so it may sit on several lines. The boxes share rows: the k-th
+  coupling op of every box sits on one row, so the lines are horizontal. A solver without regions
   is one tree, no boxes. There are no frames: a loop is its compact control node (one line:
   title, pass, residuals; the test diamond at its right end) above its body, with a
   ``[true]`` edge into the first op, a dashed back edge from the last op and a ``[false]``
@@ -122,7 +122,7 @@ def _ops(
                 "guard": op.get("guard"),
                 "injected_by": op.get("injected_by"),
                 "test": op.get("test"),
-                # a coupling node: the partner it takes data from, e.g. "x ← b"
+                # a coupling action: the partner it takes data from, e.g. "x ← b"
                 "exchange": _exchange_text(op), "tag": op.get("tag"),
                 # runs in the final pass of its wrapping loops only (a toggle: every pass)
                 "final": bool(op.get("final")),
@@ -181,7 +181,7 @@ def _loop_body(op: dict[str, Any], x: float, y: float, nodes: list[dict[str, Any
 
 
 def _exchanges(op: dict[str, Any]) -> list[dict[str, Any]]:
-    """What a coupling node or coupling op receives: one exchange per coupled side."""
+    """What a coupling action or coupling loop receives: one exchange per coupled port."""
     return op.get("exchanges") or ([op["exchange"]] if op.get("exchange") else [])
 
 
@@ -228,7 +228,7 @@ def _exec_view(ops: Optional[list[dict[str, Any]]], collapsed: frozenset[str],
 
 
 def _pairs(ops: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """The region pairs that exchange data (a coupling node and its partner region)."""
+    """The region pairs that exchange data (a coupling op and its partner region)."""
     out: list[tuple[str, str]] = []
     for op in ops:
         for x in _exchanges(op) if op.get("region") else ():
@@ -270,8 +270,8 @@ def _shown_ops(ops: list[dict[str, Any]], collapsed: frozenset[str]) -> list[dic
 
 def _rows(trees: dict[str, list[dict[str, Any]]], collapsed: frozenset[str]) -> dict[str, int]:
     """A row for every drawn op, shared by the boxes: each box's ops one per row, top down,
-    except that the k-th coupling node of every box takes one row (the first free in all of
-    them), so the coupling nodes of one exchange face each other."""
+    except that the k-th coupling op of every box takes one row (the first free in all of
+    them), so the coupling ops of one exchange face each other."""
     seqs = {r: _shown_ops(t, collapsed) for r, t in trees.items()}
     rows: dict[str, int] = {}
     at = dict.fromkeys(seqs, 0)
@@ -308,7 +308,7 @@ def _boxes(trees: dict[str, list[dict[str, Any]]], regions: list[str], rows: dic
            closed: frozenset[str] = frozenset()) -> None:
     """One box per region, side by side: its own tree in one column, each op on its row.
 
-    A ``closed`` region's box is narrow and holds only its coupling nodes, on their rows, so the
+    A ``closed`` region's box is narrow and holds only its coupling ops, on their rows, so the
     coupling lines stay attached."""
     heights: dict[int, float] = {}
     for tree in trees.values():
@@ -433,9 +433,9 @@ def _solver(ops: list[dict[str, Any]], x0: float, y0: float, suffix: str, nodes:
 
 
 def _interfaces(ops: list[dict[str, Any]], regions: list[str]) -> list[dict[str, Any]]:
-    """The exchanges between the boxes, one per pair of coupling nodes (or ops) of two regions
+    """The exchanges between the boxes, one per pair of coupling ops of two regions
     that take each other's data: ``{"key", "left", "right", "lx", "rx", "name"}``,
-    ``left``/``right`` the two coupling nodes in the boxes' order (``regions``), ``lx``/``rx``
+    ``left``/``right`` the two coupling ops in the boxes' order (``regions``), ``lx``/``rx``
     what each receives over this exchange. Ends pair by region and, when the solver names its
     exchanges, by name. ``key`` (``"0"``, ``"1"``, …) keys the exchange's line, its mapping
     node, its values (``ex_vals``) and its highlight (``ex_hot``)."""
@@ -460,10 +460,10 @@ def _interfaces(ops: list[dict[str, Any]], regions: list[str]) -> list[dict[str,
 
 def _mapping_data(face: dict[str, Any]) -> dict[str, Any]:
     """What an interface's mapping node shows (``data``): the data each way, mapped or not, the
-    mapping kind and each side's interface points; ``None`` where the solver does not tell.
+    mapping kind and each port's interface points; ``None`` where the solver does not tell.
 
-    A coupling node's ``exchange`` is what it *receives*: the right node's is the data that
-    goes left → right, mapped from the left side's points onto its own."""
+    A coupling op's ``exchange`` is what it *receives*: the right node's is the data that
+    goes left → right, mapped from the left port's points onto its own."""
     left, right = face["left"], face["right"]
     lx, rx = face.get("lx") or left["exchange"], face.get("rx") or right["exchange"]
     lm, rm = lx.get("mapping") or {}, rx.get("mapping") or {}
@@ -490,7 +490,7 @@ def _mapping_data(face: dict[str, Any]) -> dict[str, Any]:
 
 
 #: A mapping node: the place on a coupling line, between the boxes, where the data is mapped
-#: from one side's interface points onto the other's. A small chip (its kind); the rest of
+#: from one port's interface points onto the other's. A small chip (its kind); the rest of
 #: :func:`_mapping_data` shows on hover / tap.
 _MAP_W, _MAP_H = 148, 24
 
@@ -509,8 +509,8 @@ def _map_node(face: dict[str, Any], cx: float, cy: float) -> dict[str, Any]:
 def _between(ops: list[dict[str, Any]], regions: list[str], placed: dict[str, dict[str, Any]],
              out_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The lines between the region boxes: per exchange (:func:`_interfaces`) one from the left
-    coupling node through the interface's mapping node (``exmap``, in the middle of the gap) to
-    the right one, arrowheads at the coupling nodes. Both halves carry the line's class
+    coupling op through the interface's mapping node (``exmap``, in the middle of the gap) to
+    the right one, arrowheads at the coupling ops. Both halves carry the line's class
     (``cl-<key>``); the mapping node shows the data each way and is filled with the values
     while the run steps (``ex_vals``) and lit with the line (``ex_hot``)."""
     out: list[dict[str, Any]] = []
@@ -648,7 +648,7 @@ def _build_flow(
 
     ``collapsed``: ids of loops drawn without their body. ``regions``: regions known before
     they initialize (e.g. from an earlier run), boxes of the init view from the start.
-    ``closed``: regions whose execution box shows only its coupling nodes.
+    ``closed``: regions whose execution box shows only its coupling ops.
     """
     if view == "init":
         order: list[str] = list(regions)

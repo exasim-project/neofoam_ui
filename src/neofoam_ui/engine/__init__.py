@@ -1,7 +1,7 @@
 """Step-by-step execution of a solver graph — the core of the DAG stepper (no trame here).
 
 * :class:`Op`, :class:`InitStep` — the graph a solver describes (:class:`Exchange`: what a
-  coupling node of a multi-region solver hands over, :class:`PointMapping`: how it maps the
+  coupling op of a multi-region solver hands over, :class:`PointMapping`: how it maps the
   data onto its interface points); :class:`Event` — the point the engine is paused before;
 * :class:`Session` — drives one run event by event, see :mod:`neofoam_ui.engine._session`;
 * :class:`ThreadedProgram` — a solver that drives itself (calls back into the stepper);

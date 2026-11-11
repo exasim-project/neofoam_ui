@@ -29,6 +29,19 @@ def _internal(field: Any) -> Optional[np.ndarray]:
     return None
 
 
+def _own_fields(ctx: Any) -> dict[str, np.ndarray]:
+    """The cell fields of one context: geometric fields and plain numpy arrays."""
+    out: dict[str, np.ndarray] = {}
+    for name, field in (getattr(ctx, "fields", None) or {}).items():
+        if isinstance(field, np.ndarray):
+            out[name] = np.atleast_1d(field)
+            continue
+        values = _internal(field)
+        if values is not None:
+            out[name] = values
+    return out
+
+
 class _RegionContexts(dict):  # type: ignore[type-arg]
     """The contexts of a multi-region run (multiRun), by region: the session's context.
 
@@ -58,7 +71,7 @@ class _Region:
 
     def fields(self, ctx: Any) -> dict[str, np.ndarray]:
         if self._ctx is not None:
-            return self._solver._own_fields(self._ctx)
+            return _own_fields(self._ctx)
         return self._solver.view_fields(ctx)
 
 
@@ -90,22 +103,10 @@ class _FieldAccess:
     def fields(self, ctx: Any) -> dict[str, np.ndarray]:
         contexts = _region_contexts(ctx)
         if not contexts:
-            return self._own_fields(ctx)
+            return _own_fields(ctx)
         return {f"{region}.{name}": values
                 for region, region_ctx in contexts.items()
-                for name, values in self._own_fields(region_ctx).items()}
-
-    def _own_fields(self, ctx: Any) -> dict[str, np.ndarray]:
-        """The cell fields of one context: geometric fields and plain numpy arrays."""
-        out: dict[str, np.ndarray] = {}
-        for name, field in (getattr(ctx, "fields", None) or {}).items():
-            if isinstance(field, np.ndarray):
-                out[name] = np.atleast_1d(field)
-                continue
-            values = _internal(field)
-            if values is not None:
-                out[name] = values
-        return out
+                for name, values in _own_fields(region_ctx).items()}
 
     def view_fields(self, ctx: Any) -> dict[str, np.ndarray]:
         """:meth:`fields` plus every other vol field on the mesh's registry (``k``, ``nut``, …).

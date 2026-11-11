@@ -26,8 +26,8 @@ class _FinalOps(TwoRegions):
         self.stepper.run_every_pass(region, ops)
 
 
-def _graph_with_write(region, partner, transport, passes, fail_at):
-    ops = _region_graph(region, partner, transport, passes, fail_at)
+def _graph_with_write(region, partner, comm_channel, iterations, fail_at):
+    ops = _region_graph(region, partner, comm_channel, iterations, fail_at)
     couple = ops[0].sub_operations[-1]
     write = type(couple)("write")
     write.metadata.domain_name, write.metadata.final = "io", True

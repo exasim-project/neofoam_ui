@@ -1,5 +1,5 @@
 """A fake multiRun: two regions, each a solver on its own thread, that exchange data only
-through a transport with blocking receives (as NeoFOAM's ``run_regions``), reported through
+through a comm channel with blocking receives (as NeoFOAM's ``run_participants``), reported through
 the NeoFOAM observer adapter (``_Stepper``), with no neofoam needed.
 
 Each region's graph is ``time_loop { set_time_step, [prep,] <r>.couple { solve } }``; the
@@ -22,7 +22,7 @@ class Closed(RuntimeError):
     """A region waits for a region that left."""
 
 
-class Transport:
+class CommChannel:
     """A mailbox per (source, target, tag); a receive blocks until its message is there."""
 
     def __init__(self):
@@ -47,11 +47,11 @@ class Transport:
             self.cv.notify_all()
 
 
-class CouplingOp:
-    """A region's coupling op as the adapter reads it (no sides: no coupling lines)."""
+class CouplingLoopOp:
+    """A region's coupling op as the adapter reads it (no ports: no coupling lines)."""
 
     def __init__(self, region):
-        self.region, self.label, self.sides = region, f"{region}.couple", ()
+        self.region, self.label, self.ports = region, f"{region}.couple", ()
         self.is_leader, self.controller = region == "b", None
         self.func = lambda ctx: None
 
@@ -86,12 +86,12 @@ class Op:
             i += 1
 
 
-def _region_graph(region, partner, transport, passes, fail_at):
+def _region_graph(region, partner, comm_channel, iterations, fail_at):
     def couple(ctx, i):
-        if i > passes:
+        if i > iterations:
             return False
-        transport.send(region, partner, f"x{i}", float(ctx.fields["x"][0]))
-        ctx.models["received"] = transport.receive(partner, region, f"x{i}")
+        comm_channel.send(region, partner, f"x{i}", float(ctx.fields["x"][0]))
+        ctx.models["received"] = comm_channel.receive(partner, region, f"x{i}")
         return True
 
     def solve(ctx):
@@ -107,7 +107,7 @@ def _region_graph(region, partner, transport, passes, fail_at):
     if region == "b":
         body.append(Op("prep"))
     body.append(Op(f"{region}.couple", [Op("solve", body=solve)], test=couple,
-                   func=CouplingOp(region)))
+                   func=CouplingLoopOp(region)))
     return [Op("time_loop", body, test=lambda ctx, i: i <= 1)]
 
 
@@ -116,9 +116,9 @@ class TwoRegions(_FieldAccess):
 
     name = "multiRun"
 
-    def __init__(self, passes=2, fail_at=None):
-        self.passes, self.fail_at = passes, fail_at
-        self.transport = Transport()
+    def __init__(self, iterations=2, fail_at=None):
+        self.iterations, self.fail_at = iterations, fail_at
+        self.comm_channel = CommChannel()
         self.contexts = {}
 
     def program(self, session):
@@ -128,25 +128,25 @@ class TwoRegions(_FieldAccess):
             yield event
 
     def _region(self, region, partner):
-        stepper, transport = self.stepper, self.transport
+        stepper, comm_channel = self.stepper, self.comm_channel
         step = SimpleNamespace(name="fields", region=region, depends_on=[], category="field",
                                initializer=lambda ctx: None)
         stepper.init_steps([step])
         stepper.before_init_step(step, {})
-        coupling = SimpleNamespace(group=("a", "b"), transport=transport, parallel=False)
+        coupling = SimpleNamespace(group=("a", "b"), comm_channel=comm_channel, parallel=False)
         ctx = SimpleNamespace(region=region, fields={"x": np.zeros(1)}, mesh=None,
                               models={"coupling": SimpleNamespace(coupling=coupling), "solves": 0},
                               time=SimpleNamespace(value=0.0, delta_t=1.0, index=0, write_time=False))
         stepper.after_init_step(step, {}, ctx)
-        ops = _region_graph(region, partner, transport, self.passes, self.fail_at)
+        ops = _region_graph(region, partner, comm_channel, self.iterations, self.fail_at)
         stepper.operations(SimpleNamespace(ops=ops), ctx)
         for op in ops:
             op.run(stepper, ctx)
         return ctx
 
     def _run(self):
-        """As NeoFOAM's ``run_regions``: a thread per region; a failing one closes the
-        transport for all; the first error is raised once every thread ended."""
+        """As NeoFOAM's ``run_participants``: a thread per region; a failing one closes the
+        comm channel for all; the first error is raised once every thread ended."""
         errors = []
 
         def run(region, partner):
@@ -155,9 +155,9 @@ class TwoRegions(_FieldAccess):
             except BaseException as error:  # noqa: BLE001
                 errors.append(error)
                 for other in ("a", "b"):
-                    self.transport.close(other)
+                    self.comm_channel.close(other)
             finally:
-                self.transport.close(region)
+                self.comm_channel.close(region)
 
         threads = [threading.Thread(target=run, args=(r, p), name=r) for r, p in (("a", "b"), ("b", "a"))]
         for t in threads:

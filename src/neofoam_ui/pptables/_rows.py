@@ -25,14 +25,23 @@ def rows_message(name: str, time_value: float, result: Any, ms: Optional[float] 
     for row in result.grouped_values:
         values.append([_number(v) for v in row[:n_values]])
         groups.append([_label(v) for v in row[n_values:]])
-    message: dict[str, Any] = {
-        "type": "pptable", "name": name, "time": float(time_value),
-        "columns": headers[:n_values], "group_columns": headers[n_values:],
-        "values": values, "groups": groups,
-    }
+    message = _message(name, time_value, headers[:n_values], values, headers[n_values:], groups)
     if ms is not None:
         message["ms"] = round(ms, 3)
     return message
+
+
+def table_row(name: str, time_value: float, columns: list[str], row: list[Optional[float]],
+              **extra: Any) -> dict[str, Any]:
+    """One ungrouped row of the stepper's own table ``name`` as a ``pptable`` message;
+    ``extra`` adds keys (``region``; ``x``: the x axis's label when it is not the time)."""
+    return {**_message(name, time_value, columns, [row], [], [[]]), **extra}
+
+
+def _message(name: str, time_value: float, columns: list[str], values: list[list[Any]],
+             group_columns: list[str], groups: list[list[Any]]) -> dict[str, Any]:
+    return {"type": "pptable", "name": name, "time": float(time_value), "columns": columns,
+            "group_columns": group_columns, "values": values, "groups": groups}
 
 
 def _number(value: Any) -> Optional[float]:

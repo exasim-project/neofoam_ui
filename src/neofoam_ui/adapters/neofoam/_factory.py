@@ -30,6 +30,6 @@ def incompressible_fluid() -> Any:
 
 def multi_run() -> Any:
     """``neofoam solver multiRun``: every region of the case (``system/controlDict``
-    ``regionSolvers``), coupled, in threads; the field view draws all regions together."""
+    ``participants``), coupled, in threads; the field view draws all regions together."""
     mod = importlib.import_module("neofoam.solver.multiRun.multiRun")
     return ObservedNeoFoamSolver("multiRun", lambda argv: mod.run(), ["neofoam"])
