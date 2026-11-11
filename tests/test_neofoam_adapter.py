@@ -17,9 +17,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neofoam_ui.adapters.neofoam._fields import _internal
-from neofoam_ui.adapters.neofoam._mesh import _region_dir
-
 PYTHON = os.environ.get("NEOFOAM_PYTHON")
 pytestmark = pytest.mark.skipif(
     not PYTHON or not os.environ.get("WM_PROJECT_DIR"),
@@ -56,19 +53,10 @@ def _run(case: Path, mode: str, out: Path, **env: str) -> dict:
     return dict(np.load(out))
 
 
-def _has_observer() -> bool:
-    probe = "import neofoam.framework.execution_observer"
-    return subprocess.run([PYTHON, "-c", probe], env=_env(), capture_output=True).returncode == 0
-
-
 @pytest.mark.parametrize("step", ["step", "run"])
-@pytest.mark.parametrize("ui_mode", ["tree", "observed"])
-def test_stepping_matches_plain_run(tmp_path, ui_mode, step):
-    if ui_mode == "observed" and not _has_observer():
-        pytest.skip("this NeoFOAM has no execution observer")
+def test_stepping_matches_plain_run(tmp_path, step):
     plain = _run(_pitzdaily(tmp_path / "a"), "plain", tmp_path / "plain.npz")
-    stepped = _run(_pitzdaily(tmp_path / "b"), step, tmp_path / "step.npz",
-                   NEOFOAM_UI_MODE=ui_mode)
+    stepped = _run(_pitzdaily(tmp_path / "b"), step, tmp_path / "step.npz")
     assert set(plain) == {"U", "p", "phi"}
     for name in plain:
         np.testing.assert_array_equal(stepped[name], plain[name], err_msg=name)
@@ -79,13 +67,10 @@ def _has_postprocess() -> bool:
     return subprocess.run([PYTHON, "-c", probe], env=_env(), capture_output=True).returncode == 0
 
 
-@pytest.mark.parametrize("ui_mode", ["tree", "observed"])
-def test_post_processing_tables_reach_the_ui(tmp_path, ui_mode):
+def test_post_processing_tables_reach_the_ui(tmp_path):
     """The example tables (examples/pitzDaily): a diagram each, and rows equal to the CSVs."""
     if not _has_postprocess():
         pytest.skip("this NeoFOAM has no post-processing tables")
-    if ui_mode == "observed" and not _has_observer():
-        pytest.skip("this NeoFOAM has no execution observer")
     case = _pitzdaily(tmp_path)
     examples = Path(__file__).resolve().parents[1] / "examples" / "pitzDaily" / "system"
     for spec in examples.glob("postProcess.*"):
@@ -93,7 +78,7 @@ def test_post_processing_tables_reach_the_ui(tmp_path, ui_mode):
     commands = json.dumps({"cmd": "step", "mode": "run"}) + "\n"
     proc = subprocess.Popen([PYTHON, "-u", "-m", "neofoam_ui.worker",
                              "neofoam_ui.adapters.neofoam:incompressible_fluid"],
-                            cwd=case, env=_env(NEOFOAM_UI_MODE=ui_mode), stdin=subprocess.PIPE,
+                            cwd=case, env=_env(), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     proc.stdin.write(commands)
     proc.stdin.flush()
@@ -125,10 +110,10 @@ def test_post_processing_tables_reach_the_ui(tmp_path, ui_mode):
 
 
 def test_mpi_free_runs_keep_the_ranks_in_step(tmp_path):
-    """mpirun -np 2, observed: free runs (events passed on each rank), a breakpoint, a Pause,
+    """mpirun -np 2: free runs (events passed on each rank), a breakpoint, a Pause,
     single steps; every pause has the stats of both ranks, and the run ends cleanly."""
-    if not _has_observer() or not shutil.which("mpirun"):
-        pytest.skip("needs the execution observer and mpirun")
+    if not shutil.which("mpirun"):
+        pytest.skip("needs mpirun")
     case = _pitzdaily(tmp_path)
     for entry, value in (("numberOfSubdomains", "2"), ("method", "scotch")):
         subprocess.run(["foamDictionary", "-entry", entry, "-set", value, "system/decomposeParDict"],
@@ -139,7 +124,7 @@ def test_mpi_free_runs_keep_the_ranks_in_step(tmp_path):
         port = sock.getsockname()[1]
     proc = subprocess.Popen(["mpirun", "-np", "2", PYTHON, "-u", "-m", "neofoam_ui.worker",
                              "neofoam_ui.adapters.neofoam:incompressible_fluid"],
-                            cwd=case, env=_env(NEOFOAM_UI_MODE="observed", NEOFOAM_UI_SYNC=f"127.0.0.1:{port}"),
+                            cwd=case, env=_env(NEOFOAM_UI_SYNC=f"127.0.0.1:{port}"),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=open(tmp_path / "stderr", "w"), text=True)
     graph = []
@@ -184,22 +169,3 @@ def test_mpi_free_runs_keep_the_ranks_in_step(tmp_path):
         proc.kill()
         proc.wait()
 
-
-def test_neon_fields_are_read_through_internal_vector():
-    class Vector:
-        def copy_to_host(self):
-            return [1.0, 2.0]
-
-    class NeonField:
-        def internal_vector(self):
-            return Vector()
-
-    assert _internal(NeonField()).tolist() == [1.0, 2.0]
-    assert _internal(object()) is None
-
-
-def test_a_multirun_region_reads_its_own_case_directory(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "solid" / "constant" / "polyMesh").mkdir(parents=True)
-    assert _region_dir("solid") == os.path.join("solid", "constant", "polyMesh")
-    assert _region_dir("fluid") is None and _region_dir(None) is None

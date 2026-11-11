@@ -103,17 +103,14 @@ def _read_faces(path: str) -> tuple[np.ndarray, np.ndarray]:
         offsets, pos = _binary(data, pos, label)
         conn, _ = _binary(data, pos, label)
         return offsets.astype(np.int64), conn.astype(np.int64)
-    n, tokens = _ascii_numbers(data, pos)
-    flat = np.array(tokens, dtype=np.int64)
-    counts = np.empty(n, dtype=np.int64)
-    keep = np.ones(len(flat), dtype=bool)
-    i = 0
-    for f in range(n):  # "4(a b c d)" → 4 a b c d
-        counts[f] = flat[i]
-        keep[i] = False
-        i += 1 + flat[i]
-    offsets = np.concatenate([[0], np.cumsum(counts)])
-    return offsets, flat[keep]
+    # "4(a b c d)" per face → 4 -1 a b c d: the count is the number before each -1
+    n, start = _list_start(data, pos)
+    body = data[start:].rsplit(b")", 1)[0]
+    flat = np.array(body.replace(b"(", b" -1 ").replace(b")", b" ").split(), dtype=np.int64)
+    opens = np.flatnonzero(flat < 0)[:n]
+    keep = flat >= 0
+    keep[opens - 1] = False
+    return np.concatenate([[0], np.cumsum(flat[opens - 1])]), flat[keep]
 
 
 def read_polymesh(directory: str) -> dict[str, np.ndarray]:

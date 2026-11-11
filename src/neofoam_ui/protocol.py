@@ -24,7 +24,6 @@ __all__ = [
     "DELAY_ENV",
     "LOSSY",
     "MESSAGES",
-    "MODE_ENV",
     "RANK_OPS",
     "SYNC_ENV",
     "UI_URGENT",
@@ -45,8 +44,6 @@ CATALYST_SCRIPT_ENV = "NEOFOAM_UI_CATALYST_SCRIPT"
 CATALYST_LIVE_ENV = "NEOFOAM_UI_CATALYST_LIVE"
 #: ``host:port`` rank 0 listens on for the other ranks of an MPI run (set by the UI).
 SYNC_ENV = "NEOFOAM_UI_SYNC"
-#: ``tree`` or ``observed``: how the NeoFOAM adapter steps a solver (default: observed if possible).
-MODE_ENV = "NEOFOAM_UI_MODE"
 #: Default animation delay in ms (the UI's ``--delay``).
 DELAY_ENV = "NEOFOAM_UI_DELAY_MS"
 #: Default of "wait for UI" (the UI's ``--wait-ui``).

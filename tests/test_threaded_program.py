@@ -20,13 +20,13 @@ def events(solver, mode="into"):
     return session, seen
 
 
-def test_same_events_and_result_as_tree_mode():
-    tree, tree_events = events(Heat1D())
+def test_same_events_and_result_as_the_graph_solver():
+    graph, graph_events = events(Heat1D())
     driven, driven_events = events(SelfDriven())
-    assert driven_events == tree_events
-    assert driven.calls == tree.calls
+    assert driven_events == graph_events
+    assert driven.calls == graph.calls
     np.testing.assert_array_equal(driven.solver.fields(driven.ctx)["T"],
-                                  tree.solver.fields(tree.ctx)["T"])
+                                  graph.solver.fields(graph.ctx)["T"])
 
 
 def test_init_graph_is_known_at_start():
@@ -65,7 +65,7 @@ def test_closing_unwinds_the_solver_thread():
 
 
 @pytest.mark.parametrize("mode", ["over", "out", "run"])
-def test_other_modes_match_tree_mode(mode):
+def test_other_modes_match_the_graph_solver(mode):
     assert events(SelfDriven(), mode)[1] == events(Heat1D(), mode)[1]
 
 
@@ -82,7 +82,7 @@ def test_calls_run_on_the_solver_thread(finish):
     assert names == ["solver"]
 
 
-def test_tree_mode_calls_run_here():
+def test_a_graph_solver_calls_run_here():
     session = Session(Heat1D(), lambda m: None)
     names = []
     assert session.in_solver_thread(lambda: names.append(threading.current_thread().name))

@@ -7,20 +7,15 @@ from typing import Any, Optional
 
 import numpy as np
 
-from neofoam_ui.engine import DEFAULT_REGION
 from neofoam_ui.geometry import cell_centres_geometry, polyhedral, read_polymesh
 from neofoam_ui.parallel import rank_info
 
 __all__ = ()
 
 
-def _polymesh_dir(region: str, rank: int, size: int) -> str:
-    """``[processor<rank>/]constant/[<region>/]polyMesh`` (OpenFOAM's layout)."""
-    parts = [f"processor{rank}"] if size > 1 else []
-    parts.append("constant")
-    if region != DEFAULT_REGION:
-        parts.append(region)
-    return os.path.join(*parts, "polyMesh")
+def _polymesh_dir(rank: int, size: int) -> str:
+    """``[processor<rank>/]constant/polyMesh`` (OpenFOAM's layout, one region)."""
+    return os.path.join(*([f"processor{rank}"] if size > 1 else []), "constant", "polyMesh")
 
 
 def _region_dir(region: Any) -> Optional[str]:
@@ -46,7 +41,7 @@ class _PolyMeshGeometry:
         if mesh is None:
             return None
         n_cells = int(mesh.nCells())
-        directory = _region_dir(getattr(ctx, "region", None)) or _polymesh_dir(DEFAULT_REGION, *rank_info())
+        directory = _region_dir(getattr(ctx, "region", None)) or _polymesh_dir(*rank_info())
         try:
             return polyhedral(read_polymesh(directory), n_cells)
         except (OSError, ValueError, IndexError):

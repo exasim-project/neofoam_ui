@@ -230,7 +230,7 @@ class Session:
 
     def in_solver_thread(self, fn: Callable[[], Any], timeout: Optional[float] = None) -> bool:
         """Run ``fn`` on the thread the solver runs on; False if that timed out."""
-        if self.program_thread is None:  # tree mode: the solver runs on this thread
+        if self.program_thread is None:  # a GraphSolver: it runs on this thread
             fn()
             return True
         return self.program_thread.call(fn, timeout)
@@ -409,7 +409,7 @@ class Session:
         """
         self._free = params
         thread = self.program_thread
-        if thread is None:  # tree mode: the events come here cheaply anyway
+        if thread is None:  # a GraphSolver: the events come here cheaply anyway
             return
         if params is None:
             thread.skip = None
