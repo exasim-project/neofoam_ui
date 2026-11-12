@@ -124,7 +124,9 @@ class _FieldAccess:
         except Exception:  # no pybFoam mesh (another backend): the context fields only
             return out
         # registry names of the context fields already in (their key may differ)
-        seen = {f.name() for k, f in (getattr(ctx, "fields", None) or {}).items() if k in out}
+        # (a pybFoam field's name is a method, a NeoN field's a str)
+        names_of = ((f, getattr(f, "name", k)) for k, f in (getattr(ctx, "fields", None) or {}).items() if k in out)
+        seen = {str(name() if callable(name) else name) for _, name in names_of}
         for kind, names in kinds:
             for name in names:
                 if name in out or name in seen or _OLD_COPY.search(name):
