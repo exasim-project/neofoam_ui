@@ -33,6 +33,7 @@ def multi_run() -> Any:
     """``neofoam solver multiRun``: every region of the case (``system/controlDict``
     ``participants``), coupled, in threads; the field view draws all regions together."""
     mod = importlib.import_module("neofoam.solver.multiRun.multiRun")
+    register_insitu()
     return ObservedNeoFoamSolver("multiRun", lambda argv: mod.run(), ["neofoam"])
 
 
