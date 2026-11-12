@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import gc
 import os
+import sys
 from time import perf_counter
 from typing import Any, Optional
 
@@ -99,3 +101,31 @@ class InSitu:
     def finalize(self) -> None:
         with _no_fp_traps():
             self._catalyst.finalize(self._conduit.Node())
+            _release_session(self.script)
+
+
+def _release_session(script: str) -> None:
+    """Drop Python's references to the ParaView session, so it is freed now, while MPI is up.
+
+    ``catalyst_finalize`` leaves the session (and with it each render view's IceT
+    context) alive as long as Python holds it: the pipeline script's module,
+    ``paraview.simple``'s proxy constructors, ``servermanager``'s proxy namespaces,
+    wrappers and connection. Left to interpreter teardown, it is freed after
+    mpi4py's atexit ``MPI_Finalize``, and IceT's ``MPI_Comm_free`` aborts the run.
+    """
+    from paraview import servermanager, simple  # noqa: PLC0415 - on sys.path only once Catalyst is loaded
+    from paraview.simple.session import _remove_functions  # noqa: PLC0415
+
+    path = os.path.abspath(script)
+    for name, module in list(sys.modules.items()):
+        file = getattr(module, "__file__", None)
+        if file and os.path.abspath(file) == path:
+            del sys.modules[name]
+            vars(module).clear()
+    _remove_functions(vars(simple))
+    for name in [k for k, v in vars(servermanager).items() if isinstance(v, servermanager.ProxyNamespace)]:
+        delattr(servermanager, name)
+    servermanager._pyproxies.clear()
+    servermanager.Connections.clear()
+    servermanager.ActiveConnection = None
+    gc.collect()
