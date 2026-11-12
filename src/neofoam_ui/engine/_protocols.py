@@ -169,8 +169,9 @@ class Peers(Protocol):
     Lockstep: rank 0 calls :meth:`go` before it resumes its own program, :meth:`free` with
     the same parameters it passes itself, :meth:`render` before its own (collective) render."""
 
-    def go(self, track: bool) -> None:
-        """Resume past the current event (tracking writes or not), as rank 0 is about to."""
+    def go(self, track: bool, view: Optional[tuple[Optional[str], str]]) -> None:
+        """Resume past the current event (tracking writes or not), as rank 0 is about to;
+        ``view``: rank 0's field view then (``None`` = closed), for the solver's frames."""
 
     def free(self, params: Optional[dict[str, Any]]) -> None:
         """The free-run parameters of rank 0 (``Session.set_free``)."""

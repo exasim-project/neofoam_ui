@@ -48,6 +48,7 @@ def _follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
             session.watch = False
             catalyst.set_frame_driver(session.solver_frame)
         if op == "go":
+            session.share_view(msg.get("view"))
             session.advance("into", track=bool(msg.get("track", True)))
         elif op == "stats":
             try:

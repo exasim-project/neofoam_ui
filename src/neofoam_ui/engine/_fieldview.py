@@ -108,6 +108,8 @@ class _FieldView:
         self._describe_failed = False  # reported once, then no more diagrams
         #: The solver renders in situ itself (:meth:`solver_frame`): no live frames of our own.
         self._solver_renders = False
+        #: Under MPI, rank 0's :attr:`view` at its last ``go`` (:meth:`share`): the same on every rank.
+        self.shared: Optional[tuple[Optional[str], str]] = None
         self._described: Optional[tuple[Any, float]] = None  # (params, when) of the last read-back
         self.describe_every = _DESCRIBE_EVERY
         self._rendered: Optional[str] = None  # the image of the last render
@@ -119,6 +121,11 @@ class _FieldView:
         if not on:
             self._epoch += 1  # before the swap: whoever sees the new view sees the new epoch
         self.view = (field, component) if on else None
+
+    def share(self) -> Optional[tuple[Optional[str], str]]:
+        """Rank 0, before the ranks resume: the view its solver frames draw until the next ``go``."""
+        self.shared = self.view
+        return self.shared
 
     def time_step(self) -> None:
         """A time step while running: a frame if ``frame_every`` steps and ``frame_seconds`` passed."""
@@ -210,11 +217,10 @@ class _FieldView:
     def solver_frame(self, requested: dict[str, str]) -> None:
         """A frame the solver's in-situ operation asks for, on the solver thread of every rank.
 
-        The UI's open view wins over ``requested`` (field, component) once it names a field,
-        in a serial run (under MPI the ranks keep to ``requested``); the frame answers the
-        UI's request either way. Every rank is in the
-        operation already, so no rank tells the others; the pause after it renders again only
-        if the values changed."""
+        The UI's open view wins over ``requested`` (field, component) once it names a field.
+        Under MPI that is the view rank 0 had at its last ``go`` (:attr:`shared`), so every
+        rank draws the same field without a message here: every rank is in the operation
+        already. The pause after it renders again only if the values changed."""
         s = self._s
         self._solver_renders = True
         if s.ctx is None or self._error or self._backend.unavailable() is not None:
@@ -224,10 +230,10 @@ class _FieldView:
             return
         region, _, fields = cells
         asked = (requested.get("field"), requested.get("component", "mag"))
-        view = self.view or asked  # read once: the command reader may replace it meanwhile
-        # Under MPI only rank 0 knows the UI's choice and the ranks must render the same field.
         alone = s.peers is None and not s.follower
-        params = _shown(view if alone and view[0] else asked, fields)
+        # read once: the command reader may replace the view meanwhile
+        view = (self.view if alone else self.shared) or asked
+        params = _shown(view if view[0] else asked, fields)
         if params is None:
             return
         self._sent = (self._epoch, region, params["field"], params["component"],

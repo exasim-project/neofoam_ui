@@ -204,12 +204,33 @@ def test_a_solver_frame_ends_the_ui_live_frames(fake_catalyst):
     assert session.finished and len(renders(fake_catalyst)) == n + 1  # the final pause only
 
 
-def test_solver_frame_under_mpi_keeps_to_the_requested_field(fake_catalyst):
+def test_solver_frame_under_mpi_draws_the_view_rank_0_shared_at_its_last_go(fake_catalyst):
     session, _ = session_after_init()
-    session.set_peers(SimpleNamespace(go=lambda track: None, render=lambda params: None))
+    sent = []
+    session.set_peers(SimpleNamespace(go=lambda track, view: sent.append(view), render=lambda params: None,
+                                      free=lambda params: None, stats=list))
+    session.request_view("T")
+    session.advance("into")
+    session.request_view("kappa")  # picked after the go: from the next go on
+    session.solver_frame({"field": "U", "component": "mag"})
+    assert sent[-1] == ("T", "mag")
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag"}
+
+
+def test_solver_frame_under_mpi_keeps_to_the_requested_field_while_no_view_was_shared(fake_catalyst):
+    session, _ = session_after_init()
+    session.set_peers(SimpleNamespace(go=lambda track, view: None, render=lambda params: None))
     session.request_view("T")
     session.solver_frame({"field": "kappa", "component": "mag"})
     assert renders(fake_catalyst)[-1]["params"] == {"field": "kappa", "component": "mag"}
+
+
+def test_a_follower_draws_the_view_rank_0_shared(fake_catalyst):
+    session, _ = session_after_init()
+    session.follower = True
+    session.share_view(["T", "mag"])
+    session.solver_frame({"field": "kappa", "component": "mag"})
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag"}
 
 
 class NoMesh(Heat1D):
@@ -249,7 +270,7 @@ def test_other_ranks_render_the_same_frame(fake_catalyst):
     told = []
 
     class Peers:
-        def go(self, track):
+        def go(self, track, view):
             pass
 
         def free(self, params):

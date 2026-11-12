@@ -77,7 +77,7 @@ class Session:
         self._running_at = 0.0
         #: Under MPI, rank 0's view of the other ranks (:meth:`set_peers`); ``None`` = alone.
         self.peers: Optional[Peers] = None
-        self._go: Optional[Callable[[bool], None]] = None
+        self._go: Optional[Callable[[bool, Optional[tuple[Optional[str], str]]], None]] = None
         #: Another rank than 0: rank 0 drives it (``go``, ``free``); it reports nothing itself.
         self.follower = follower
         self._free: Optional[dict[str, Any]] = None
@@ -319,7 +319,7 @@ class Session:
         while True:
             try:
                 if self._go is not None:  # the followers resume past the same event
-                    self._go(self.stepping)
+                    self._go(self.stepping, self._view.share())
                 self.event = next(self._gen)
             except Exception:  # the solver raised inside an op
                 self.failed = self.finished = True
@@ -487,6 +487,10 @@ class Session:
     def solver_frame(self, requested: dict[str, str]) -> None:
         """A frame the solver's in-situ operation asks for (its thread, every rank; collective)."""
         self._view.solver_frame(requested)
+
+    def share_view(self, view: Optional[list[str]]) -> None:
+        """A follower: rank 0's field view at its last ``go``, for the solver's frames."""
+        self._view.shared = (view[0], view[1]) if view else None
 
     def render(self, params: dict[str, str], describe: bool = False) -> Optional[str]:
         """Hand this rank's cells and fields to the renderer (collective); the image file name."""
