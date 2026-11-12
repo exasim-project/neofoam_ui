@@ -164,6 +164,54 @@ def test_vector_components(fake_catalyst):
     assert renders(fake_catalyst)[-1]["geom"]["kind"] == "points"
 
 
+# -- frames the solver's in-situ operation asks for -----------------------------------------
+
+
+def test_solver_frame_draws_the_requested_field_while_the_view_is_closed(fake_catalyst):
+    session, messages = session_after_init()
+    session.solver_frame({"field": "kappa", "component": "mag"})
+    assert of(messages, "frame")[-1]["field"] == "kappa"
+
+
+def test_solver_frame_draws_the_field_picked_in_the_ui(fake_catalyst):
+    session, _ = session_after_init()
+    session.request_view("T")
+    session.solver_frame({"field": "kappa", "component": "mag"})
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag"}
+
+
+def test_solver_frame_without_a_field_draws_a_default(fake_catalyst):
+    session, messages = session_after_init()
+    session.solver_frame({"field": "", "component": "mag"})
+    assert of(messages, "frame")[-1]["field"] == "T"
+
+
+def test_a_pause_after_a_solver_frame_of_the_same_values_renders_nothing(fake_catalyst):
+    session, _ = session_after_init()
+    session.request_view("T")
+    session.solver_frame({"field": "T", "component": "mag"})
+    session.send_view()
+    assert len(renders(fake_catalyst)) == 1
+
+
+def test_a_solver_frame_ends_the_ui_live_frames(fake_catalyst):
+    session, _ = session_after_init()
+    session.set_view("T")
+    session.frame_seconds = 0
+    session.solver_frame({"field": "T", "component": "mag"})
+    n = len(renders(fake_catalyst))
+    session.advance("run")
+    assert session.finished and len(renders(fake_catalyst)) == n + 1  # the final pause only
+
+
+def test_solver_frame_under_mpi_keeps_to_the_requested_field(fake_catalyst):
+    session, _ = session_after_init()
+    session.set_peers(SimpleNamespace(go=lambda track: None, render=lambda params: None))
+    session.request_view("T")
+    session.solver_frame({"field": "kappa", "component": "mag"})
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "kappa", "component": "mag"}
+
+
 class NoMesh(Heat1D):
     mesh = None
 

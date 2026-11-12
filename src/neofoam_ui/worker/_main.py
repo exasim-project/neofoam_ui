@@ -11,6 +11,7 @@ import threading
 from typing import Any
 
 import neofoam_ui.worker
+from neofoam_ui import catalyst
 from neofoam_ui.engine import Session
 from neofoam_ui.parallel import rank_info
 from neofoam_ui.parallel._follower import _follow
@@ -52,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         out(message)
 
     session = Session(load_solver(argv[0]), emit)
+    catalyst.set_frame_driver(session.solver_frame)
     acks = _Acks(out, session)
     session.barrier = acks.barrier
     hub = None

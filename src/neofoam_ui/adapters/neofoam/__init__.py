@@ -8,11 +8,14 @@ A NeoFOAM solver is one factory away: ``--solver mypkg:my_solver`` with
 ``def my_solver(): return neofoam_solver("neofoam.solver.mySolver.mySolver", "mySolver")``
 (:func:`incompressible_fluid` is exactly that; :func:`multi_run` runs a multi-region case).
 
+A case's ``catalyst`` in-situ entry (``system/postProcess.yaml``) renders from inside the
+solver: :func:`register_insitu`.
+
 Needs neofoam importable (pybFoam + a sourced OpenFOAM) and the case directory
 as the working directory, exactly like ``neofoam solver <name>``.
 """
 
-from neofoam_ui.adapters.neofoam._factory import incompressible_fluid, multi_run, neofoam_solver
+from neofoam_ui.adapters.neofoam._factory import incompressible_fluid, multi_run, neofoam_solver, register_insitu
 from neofoam_ui.adapters.neofoam._observed import ObservedNeoFoamSolver
 
-__all__ = ["ObservedNeoFoamSolver", "incompressible_fluid", "multi_run", "neofoam_solver"]
+__all__ = ["ObservedNeoFoamSolver", "incompressible_fluid", "multi_run", "neofoam_solver", "register_insitu"]

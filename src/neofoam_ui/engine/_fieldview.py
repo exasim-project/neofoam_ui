@@ -3,6 +3,10 @@
 The data stays in the solver: each rank hands its cells and fields to a :class:`Renderer`
 (by default Catalyst 2, :mod:`neofoam_ui.catalyst`), which writes one image; only its file
 name goes to the UI in a ``frame`` message, with the pipeline diagram when it changed.
+
+Frames come from the UI (a pause, a picked field, the live interval) or from the solver: a
+case's in-situ operation calls :meth:`_FieldView.solver_frame` on every rank at its own
+cadence, and from then on the UI's live interval leaves the running frames to it.
 """
 
 from __future__ import annotations
@@ -46,6 +50,21 @@ def _merged_fields(parts: list[tuple[int, dict[str, np.ndarray]]]) -> dict[str, 
     return out
 
 
+def _shown(view: tuple[Optional[str], str], fields: dict[str, np.ndarray]) -> Optional[dict[str, str]]:
+    """The field and component to draw for ``view``: a default field for an unknown one, ``mag``
+    for an unknown component; ``None`` without fields."""
+    name, comp = view
+    if name not in fields:
+        name = next((k for k in ("U", "p", "T") if k in fields), next(iter(fields), None))
+    if name is None:
+        return None
+    arr = fields[name]
+    ncomp = int(arr.shape[1]) if arr.ndim == 2 else 1
+    if ncomp == 1 or comp not in ["mag"] + [str(i) for i in range(ncomp)]:
+        comp = "mag"
+    return {"field": name, "component": comp}
+
+
 class _CatalystBackend:
     """The default :class:`RenderBackend`: Catalyst 2 + ParaView, configured by the environment.
 
@@ -87,8 +106,11 @@ class _FieldView:
         self.pipeline: Optional[dict[str, Any]] = None
         self._pipeline_sent: Optional[str] = None
         self._describe_failed = False  # reported once, then no more diagrams
+        #: The solver renders in situ itself (:meth:`solver_frame`): no live frames of our own.
+        self._solver_renders = False
         self._described: Optional[tuple[Any, float]] = None  # (params, when) of the last read-back
         self.describe_every = _DESCRIBE_EVERY
+        self._rendered: Optional[str] = None  # the image of the last render
 
     # -- requests -------------------------------------------------------------------------
 
@@ -102,7 +124,7 @@ class _FieldView:
         """A time step while running: a frame if ``frame_every`` steps and ``frame_seconds`` passed."""
         s = self._s
         self._steps_since_frame += 1
-        if self.view is None or self._steps_since_frame < max(1, s.frame_every):
+        if self._solver_renders or self.view is None or self._steps_since_frame < max(1, s.frame_every):
             return
         if time.monotonic() - self._frame_at < s.frame_seconds:
             return
@@ -173,28 +195,56 @@ class _FieldView:
         if cells is None:
             return self._fail(f"{s.solver.name} provides no mesh geometry")
         region, _, fields = cells
-        name, comp = view
-        if name not in fields:
-            name = next((k for k in ("U", "p", "T") if k in fields), next(iter(fields), None))
-        if name is None:
+        params = _shown(view, fields)
+        if params is None:
             return
-        arr = fields[name]
-        ncomp = int(arr.shape[1]) if arr.ndim == 2 else 1
-        if ncomp == 1 or comp not in ["mag"] + [str(i) for i in range(ncomp)]:
-            comp = "mag"
-        key = (self._epoch, region, name, comp, _fingerprint(arr))
+        key = (self._epoch, region, params["field"], params["component"], _fingerprint(fields[params["field"]]))
         if key == self._sent:
             return
         self._sent = key
         self._frame_at = time.monotonic()
-        params = {"field": name, "component": comp}
         if s.peers is not None:
             s.peers.render(params)
-        file = self.render(params, describe=True)
+        self._emit_frame(self.render(params, describe=True), params, view, fields)
+
+    def solver_frame(self, requested: dict[str, str]) -> None:
+        """A frame the solver's in-situ operation asks for, on the solver thread of every rank.
+
+        The UI's open view wins over ``requested`` (field, component) once it names a field,
+        in a serial run (under MPI the ranks keep to ``requested``); the frame answers the
+        UI's request either way. Every rank is in the
+        operation already, so no rank tells the others; the pause after it renders again only
+        if the values changed."""
+        s = self._s
+        self._solver_renders = True
+        if s.ctx is None or self._error or self._backend.unavailable() is not None:
+            return
+        cells = self._cells()
+        if cells is None:
+            return
+        region, _, fields = cells
+        asked = (requested.get("field"), requested.get("component", "mag"))
+        view = self.view or asked  # read once: the command reader may replace it meanwhile
+        # Under MPI only rank 0 knows the UI's choice and the ranks must render the same field.
+        alone = s.peers is None and not s.follower
+        params = _shown(view if alone and view[0] else asked, fields)
+        if params is None:
+            return
+        self._sent = (self._epoch, region, params["field"], params["component"],
+                      _fingerprint(fields[params["field"]]))
+        self._frame_at = time.monotonic()
+        self._render_guarded(params, describe=not s.follower)
+        if not s.follower:
+            self._emit_frame(self._rendered, params, view, fields)
+
+    def _emit_frame(self, file: Optional[str], params: dict[str, str], view: tuple[Optional[str], str],
+                    fields: dict[str, np.ndarray]) -> None:
+        """Send the ``frame`` message of the image ``file`` (``None``: the render failed)."""
+        s = self._s
         if file is None:
             return self._fail(self._error or "in-situ view failed")
         frame = {
-            "type": "frame", "file": file, "field": name, "component": comp,
+            "type": "frame", "file": file, "field": params["field"], "component": params["component"],
             "view": list(view),  # the request this frame answers (field/component may be a fallback)
             "time": s.solver.scalars(s.ctx).get("time"),
             "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
@@ -220,34 +270,36 @@ class _FieldView:
 
         ``describe``: afterwards also read back the pipeline (:attr:`pipeline`); one rank does.
         """
-        s = self._s
-        out: list[Optional[str]] = [None]
-
-        def run() -> None:
-            cells = self._cells() if s.ctx is not None else None
-            if cells is None:
-                return
-            if self.renderer is None:
-                self.renderer = self._backend.create()
-            time_value = s.solver.scalars(s.ctx).get("time") or 0.0
-            out[0] = self.renderer.execute(cells[1], self._published(cells[2], params), time_value, params)
-            if describe and not self._describe_failed and hasattr(self.renderer, "describe"):
-                try:
-                    self._describe(params)
-                except Exception:  # noqa: BLE001 - a frame without its diagram is still a frame
-                    self.pipeline, self._describe_failed = None, True
-                    s.emit({"type": "stdout", "text": "pipeline diagram: " + traceback.format_exc()})
-
-        def guarded() -> None:
-            try:
-                run()
-            except Exception as exc:  # noqa: BLE001 - the stepper outlives a broken view
-                self._error = f"in-situ view failed: {exc!r}"
-                s.emit({"type": "stdout", "text": "Catalyst: " + traceback.format_exc()})
-
+        self._rendered = None
         if self._error is None:
-            s.in_solver_thread(guarded)
-        return out[0]
+            self._s.in_solver_thread(lambda: self._render_guarded(params, describe))
+        return self._rendered
+
+    def _render_guarded(self, params: dict[str, str], describe: bool) -> None:
+        """:meth:`_render_here`, a failure disabling the view (not the session)."""
+        self._rendered = None
+        try:
+            self._render_here(params, describe)
+        except Exception as exc:  # noqa: BLE001 - the stepper outlives a broken view
+            self._error = f"in-situ view failed: {exc!r}"
+            self._s.emit({"type": "stdout", "text": "Catalyst: " + traceback.format_exc()})
+
+    def _render_here(self, params: dict[str, str], describe: bool) -> None:
+        """Render on the calling (solver) thread; the image name in :attr:`_rendered`."""
+        s = self._s
+        cells = self._cells() if s.ctx is not None else None
+        if cells is None:
+            return
+        if self.renderer is None:
+            self.renderer = self._backend.create()
+        time_value = s.solver.scalars(s.ctx).get("time") or 0.0
+        self._rendered = self.renderer.execute(cells[1], self._published(cells[2], params), time_value, params)
+        if describe and not self._describe_failed and hasattr(self.renderer, "describe"):
+            try:
+                self._describe(params)
+            except Exception:  # noqa: BLE001 - a frame without its diagram is still a frame
+                self.pipeline, self._describe_failed = None, True
+                s.emit({"type": "stdout", "text": "pipeline diagram: " + traceback.format_exc()})
 
     def _describe(self, params: dict[str, str]) -> None:
         """Read the pipeline back when it may have changed: the first frame, another field or

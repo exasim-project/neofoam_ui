@@ -10,6 +10,7 @@ import time
 import traceback
 from typing import Any, Optional
 
+from neofoam_ui import catalyst
 from neofoam_ui.engine import Session
 from neofoam_ui.parallel._mpi import _finish
 from neofoam_ui.parallel._ranks import _address
@@ -45,6 +46,7 @@ def _follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
         if session is None:  # created on the first message: rank 0 is ready by then
             session = Session(solver, emit, follower=True)
             session.watch = False
+            catalyst.set_frame_driver(session.solver_frame)
         if op == "go":
             session.advance("into", track=bool(msg.get("track", True)))
         elif op == "stats":

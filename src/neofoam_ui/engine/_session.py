@@ -484,6 +484,10 @@ class Session:
         """Render the viewed field in situ if the view is open and the values changed."""
         self._view.send()
 
+    def solver_frame(self, requested: dict[str, str]) -> None:
+        """A frame the solver's in-situ operation asks for (its thread, every rank; collective)."""
+        self._view.solver_frame(requested)
+
     def render(self, params: dict[str, str], describe: bool = False) -> Optional[str]:
         """Hand this rank's cells and fields to the renderer (collective); the image file name."""
         return self._view.render(params, describe)

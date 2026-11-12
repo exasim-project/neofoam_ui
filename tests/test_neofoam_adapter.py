@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from neofoam_case import pitzdaily
 
 PYTHON = os.environ.get("NEOFOAM_PYTHON")
 pytestmark = pytest.mark.skipif(
@@ -27,19 +28,7 @@ SCRIPT = Path(__file__).with_name("neofoam") / "compare_runs.py"
 
 
 def _pitzdaily(tmp: Path) -> Path:
-    # <NeoFOAM>/.venv/bin/python — not resolved: the venv python is a symlink.
-    tutorial = Path(os.path.abspath(PYTHON)).parents[2] / "tutorials" / "pitzDaily"
-    case = tmp / "pitzDaily"
-    shutil.copytree(tutorial, case, ignore=shutil.ignore_patterns("__pycache__", "0"))
-    shutil.copytree(case / "0.orig", case / "0")
-    control = case / "system" / "controlDict"
-    text = control.read_text()
-    text = "\n".join(
-        "endTime         0.0005;" if line.startswith("endTime") else line for line in text.splitlines()
-    )
-    control.write_text(text + "\n")
-    subprocess.run(["blockMesh"], cwd=case, check=True, capture_output=True)
-    return case
+    return pitzdaily(tmp, PYTHON)
 
 
 def _env(**extra: str) -> dict:

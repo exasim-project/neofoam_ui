@@ -1,0 +1,5 @@
+# The solver renders p in situ at every time step (the catalyst type of neofoam_ui).
+insitu:
+  - name: view
+    type: catalyst
+    field: p

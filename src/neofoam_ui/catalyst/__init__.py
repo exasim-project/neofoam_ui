@@ -23,10 +23,17 @@ Configuration (environment of the worker):
 
 Collective: under MPI every rank must call :meth:`InSitu.execute` for the same
 pause, on the thread that initialised MPI.
+
+A NeoFOAM case can also render from inside the solver: an ``insitu`` entry of type
+``catalyst`` in ``system/postProcess.yaml`` (:func:`neofoam_ui.adapters.neofoam.register_insitu`).
+Under the stepper its frames go through the field view (:func:`set_frame_driver`), so a
+process never starts two Catalyst sessions.
 """
 
 from neofoam_ui.catalyst._config import ENV, OUT_ENV, SCRIPT_ENV, configured, custom_script
+from neofoam_ui.catalyst._driver import FrameDriver, frame_driver, set_frame_driver
 from neofoam_ui.catalyst._insitu import InSitu
 from neofoam_ui.protocol import CATALYST_LIVE_ENV as LIVE_ENV
 
-__all__ = ["ENV", "LIVE_ENV", "OUT_ENV", "SCRIPT_ENV", "InSitu", "configured", "custom_script"]
+__all__ = ["ENV", "LIVE_ENV", "OUT_ENV", "SCRIPT_ENV", "FrameDriver", "InSitu", "configured", "custom_script",
+           "frame_driver", "set_frame_driver"]
