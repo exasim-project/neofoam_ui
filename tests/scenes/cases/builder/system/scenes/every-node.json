@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "calc", "type": "Calculator", "props": {"expression": "2*T", "result": "T2"}},
+    {"id": "thr", "type": "Threshold", "props": {"field": "T2", "lower": 0}},
+    {"id": "surf", "type": "Surface"},
+    {"id": "clip", "type": "Clip", "props": {"axis": "y", "position": 0.5}},
+    {"id": "iso", "type": "Contour", "props": {"field": "U", "component": "0", "values": [2.5]}},
+    {"id": "arrows", "type": "Glyph", "props": {"vectors": "U", "max_glyphs": 50}},
+    {"id": "lines", "type": "StreamTracer", "props": {"vectors": "U", "seeds": 10}},
+    {"id": "d1", "type": "Display", "props": {"field": "T2"}},
+    {"id": "d2", "type": "Display", "props": {"field": null}},
+    {"id": "d3", "type": "Display", "props": {"field": "U", "component": "mag"}},
+    {"id": "d4", "type": "Display", "props": {"field": "T"}},
+    {"id": "view", "type": "View"}
+  ],
+  "edges": [["grid", "calc"], ["calc", "thr"], ["thr", "surf"], ["surf", "d1"], ["d1", "view"],
+            ["grid", "clip"], ["clip", "iso"], ["iso", "d2"], ["d2", "view"],
+            ["grid", "arrows"], ["arrows", "d3"], ["d3", "view"],
+            ["grid", "lines"], ["lines", "d4"], ["d4", "view"]]
+}

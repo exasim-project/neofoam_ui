@@ -70,7 +70,7 @@ class InSitu:
         with _no_fp_traps():
             self._catalyst.execute(node)
             if self.capture and params.get("mode") != "data":
-                image = _capture()
+                image = _capture(self._script_module())
             _release_context()
         self.report = dict(getattr(self._script_module(), "report", None) or {})
         self.ms["total"] = (perf_counter() - start) * 1e3
@@ -119,16 +119,20 @@ class InSitu:
             _release_session(self.script)
 
 
-def _capture() -> Optional[bytes]:
-    """The first render view as PNG, composited over the ranks (collective); ``None`` off rank 0."""
+def _capture(module: Any) -> Optional[bytes]:
+    """The pipeline's shown view (``shown_view``; another script: its first render view) as PNG,
+    composited over the ranks (collective); ``None`` off rank 0 or with no view to show."""
     from paraview import simple  # noqa: PLC0415 - on sys.path only once Catalyst is loaded
     from vtkmodules.vtkIOImage import vtkPNGWriter  # noqa: PLC0415
     from vtkmodules.vtkParallelCore import vtkMultiProcessController  # noqa: PLC0415
 
-    views = simple.GetRenderViews()
-    if not views:
+    if module is not None and hasattr(module, "shown_view"):
+        view = module.shown_view
+    else:
+        view = next(iter(simple.GetRenderViews()), None)
+    if view is None:
         return None
-    image = views[0].CaptureWindow(1)
+    image = view.CaptureWindow(1)
     controller = vtkMultiProcessController.GetGlobalController()
     if controller is not None and controller.GetLocalProcessId() > 0:
         return None

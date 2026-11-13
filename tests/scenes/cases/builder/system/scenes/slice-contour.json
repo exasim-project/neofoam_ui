@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "s1", "type": "Slice", "props": {"axis": "x", "position": 0.1}},
+    {"id": "d1", "type": "Display"},
+    {"id": "c1", "type": "Contour", "props": {"field": "T", "values": [0.5]}},
+    {"id": "d2", "type": "Display", "props": {"field": null, "color": [1, 0, 0], "line_width": 2}},
+    {"id": "view", "type": "View", "props": {"camera": "+x"}}
+  ],
+  "edges": [["grid", "s1"], ["s1", "d1"], ["d1", "view"], ["grid", "c1"], ["c1", "d2"], ["d2", "view"]]
+}

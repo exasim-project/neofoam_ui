@@ -1,21 +1,33 @@
-"""The field pane (``_ui/panes/_field.py``): image frames as data URLs, the mode and display options
-the worker is asked for, and why data mode is greyed out. The pane runs in the test's interpreter, which
-has no ParaView: data mode itself is covered by ``test_live_data.py`` under ``pvpython``."""
+"""The field pane (``_ui/panes/_field.py``): image frames as data URLs, the scene and image size the
+worker is asked for, the camera overlay writing the scene's View node, and why data mode is greyed
+out. The pane runs in the test's interpreter, which has no ParaView: data mode itself is covered by
+``test_live_data.py`` under ``pvpython``; a stand-in Live view covers what the pane does with it."""
 
 import base64
+import json
+import shutil
+from pathlib import Path
 
 import pytest
-
 from trame.app import get_server
 
+from neofoam_ui._ui.panes import _field
 from neofoam_ui.app import StepperApp
 from neofoam_ui.protocol import CATALYST_LIVE_ENV
 
 PNG = b"\x89PNG\r\n\x1a\n"
+CASES = Path(__file__).parent / "scenes" / "cases"
 
 
-def _app(name):
-    app = StepperApp(get_server(name, client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D")
+@pytest.fixture
+def case(tmp_path):
+    """A case with the scenes ``slice`` and ``threshold`` (and bad files)."""
+    shutil.copytree(CASES / "listing", tmp_path / "case")
+    return tmp_path / "case"
+
+
+def _app(name, case):
+    app = StepperApp(get_server(name, client_type="vue3"), "neofoam_ui.toy.heat1d:Heat1D", case=str(case))
     sent = []
     app.link.send = sent.append
     app.state.fv_on = True
@@ -26,98 +38,167 @@ def _app(name):
 
 def _frame(**extra):
     return {"type": "frame", "mode": "image", "image": base64.b64encode(PNG).decode(), "field": "T",
-            "component": "mag", "view": ["T", "mag", "image"], "time": 0.5,
+            "component": "mag", "view": ["T", "mag", "image"], "scene": "Field", "time": 0.5,
             "fields": [{"name": "T", "ncomp": 1}], **extra}
-
-
-def test_an_image_frame_shows_as_a_data_url():
-    app, _ = _app("field_pane_image")
-    with app.state:
-        app.dispatch(_frame())
-    assert app.state.fv_src == "data:image/png;base64," + base64.b64encode(PNG).decode()
 
 
 def _last_view(sent):
     return [c for c in sent if c["cmd"] == "view"][-1]
 
 
-def test_the_view_command_names_the_mode_and_the_camera():
-    _, sent = _app("field_pane_mode")
+def _graph(sent):
+    return json.loads(_last_view(sent)["options"]["graph"])
+
+
+def _view_node(graph):
+    return next(n for n in graph["nodes"] if n["type"] == "View")["props"]
+
+
+def test_an_image_frame_shows_as_a_data_url(case):
+    app, _ = _app("field_pane_image", case)
+    with app.state:
+        app.dispatch(_frame())
+    assert app.state.fv_src == "data:image/png;base64," + base64.b64encode(PNG).decode()
+
+
+def test_the_view_command_names_the_mode_and_the_built_in_scene(case):
+    _, sent = _app("field_pane_mode", case)
     assert _last_view(sent) == {"cmd": "view", "on": True, "field": "T", "component": "mag", "mode": "image",
-                                "options": {"camera": "reset", "zoom": "1"}}
+                                "options": {"scene": "Field"}}
 
 
-def test_the_image_is_rendered_at_the_size_the_browser_reports():
-    app, sent = _app("field_pane_size")
+def test_the_image_is_rendered_at_the_size_the_browser_reports(case):
+    app, sent = _app("field_pane_size", case)
     app.pane("field")._on_size(800, 450, 2)
-    assert _last_view(sent)["options"] == {"camera": "reset", "zoom": "1", "width": "800", "height": "450",
-                                           "scale": "2"}
+    assert _last_view(sent)["options"] == {"scene": "Field", "width": "800", "height": "450", "scale": "2"}
 
 
-def test_a_camera_preset_is_at_zoom_1_and_zoom_multiplies():
-    app, sent = _app("field_pane_camera")
+def test_a_scene_of_the_case_goes_with_its_graph(case):
+    app, sent = _app("field_pane_scene", case)
+    app.pane("field").scenes.switch("slice")
+    assert _last_view(sent)["options"]["scene"] == "slice"
+    slice_node = next(n for n in _graph(sent)["nodes"] if n["id"] == "s1")
+    assert slice_node == {"id": "s1", "type": "Slice", "props": {"axis": "x", "position": 0.9, "triangulate": True}}
+    assert "layout" not in _graph(sent)
+
+
+def test_a_camera_preset_on_field_edits_an_unsaved_copy(case):
+    app, sent = _app("field_pane_camera_field", case)
+    app.pane("field").look("+x")
+    assert app.state.sc_current == "field-copy"
+    assert _view_node(_graph(sent)) == {"camera": "+x", "zoom": 1.0}
+    assert not (case / "system" / "scenes" / "field-copy.json").exists()
+
+
+def test_a_camera_preset_is_at_zoom_1_and_zoom_multiplies(case):
+    app, sent = _app("field_pane_camera", case)
     pane = app.pane("field")
+    pane.scenes.switch("slice")
     pane.zoom(1.25)
-    pane.look("+x")
-    assert _last_view(sent)["options"] == {"camera": "+x", "zoom": "1"}
-    pane.zoom(1.25)
+    assert _view_node(_graph(sent)) == {"camera": "+x", "zoom": 1.25}
+    pane.look("-y")
     pane.zoom(1e9)  # bounded
-    assert _last_view(sent)["options"]["zoom"] == "50"
+    assert _view_node(_graph(sent)) == {"camera": "-y", "zoom": 50.0}
 
 
-@pytest.mark.parametrize("settings, options", [
-    ({"fv_range": "fixed", "fv_lo": 1, "fv_hi": 2}, {"range": "1:2"}),
-    ({"fv_range": "fixed", "fv_lo": 2, "fv_hi": 1}, {}),  # not a range: auto
-    ({"fv_cmap": "jet", "fv_log": True}, {"cmap": "jet", "log": "1"}),
-    ({"fv_show": "slice", "fv_axis": "x", "fv_pos": 25}, {"show": "slice", "pos": "0.25", "axis": "x"}),
-    ({"fv_show": "clip", "fv_axis": "y", "fv_flip": True}, {"show": "clip", "pos": "0.5", "axis": "y", "flip": "1"}),
-    ({"fv_show": "volume"}, {}),  # an image draws the volume's surface
-])
-def test_display_settings_become_options(settings, options):
-    app, sent = _app("field_pane_options_" + "_".join(map(str, settings.values())))
-    for key, value in settings.items():
-        app.state[key] = value
-    app.pane("field").send_view()
-    assert _last_view(sent)["options"] == {"camera": "reset", "zoom": "1", **options}
+def test_each_scene_keeps_its_own_camera(case):
+    app, sent = _app("field_pane_camera_per_scene", case)
+    pane = app.pane("field")
+    pane.scenes.switch("slice")
+    pane.look("-z")
+    pane.scenes.switch("threshold")
+    pane.look("+y")
+    pane.scenes.switch("slice")
+    assert _view_node(_graph(sent)) == {"camera": "-z", "zoom": 1.0}
 
 
-def test_data_mode_sends_only_the_cut():
-    app, sent = _app("field_pane_data_options")
-    app.state.update({"fv_mode": "data", "fv_show": "volume", "fv_cmap": "jet", "fv_zoom": 3})
-    app.pane("field").send_view()
-    assert _last_view(sent)["options"] == {"show": "volume"}
-
-
-def test_another_field_puts_the_colour_range_back_to_auto():
-    app, _ = _app("field_pane_range_auto")
-    app.state.update({"fv_range": "fixed", "fv_lo": 1, "fv_hi": 2})
-    app.pane("field")._on_field()
-    assert app.state.fv_range == "auto"
-
-
-def test_display_settings_survive_a_restart():
-    app, _ = _app("field_pane_restart")
-    app.state.update({"fv_camera": "-y", "fv_zoom": 2.0, "fv_cmap": "inferno", "fv_show": "clip", "fv_pos": 30})
+def test_the_scene_and_its_unsaved_camera_survive_a_restart(case):
+    app, sent = _app("field_pane_restart", case)
+    pane = app.pane("field")
+    pane.scenes.switch("slice")
+    pane.look("-z")
     app._reset_state()
-    assert (app.state.fv_camera, app.state.fv_zoom, app.state.fv_cmap, app.state.fv_show, app.state.fv_pos) == \
-        ("-y", 2.0, "inferno", "clip", 30)
+    pane.send_view()
+    assert app.state.sc_current == "slice" and _view_node(_graph(sent)) == {"camera": "-z", "zoom": 1.0}
 
 
-def test_a_frame_reports_the_bounds_the_default_axis_and_its_notes():
-    app, _ = _app("field_pane_report")
+def test_a_frame_of_another_scene_is_not_shown(case):
+    app, _ = _app("field_pane_other_scene", case)
+    with app.state:
+        app.dispatch(_frame(scene="slice"))
+    assert app.state.fv_src is None
+
+
+def test_a_scene_error_shows_instead_of_the_picture(case):
+    app, _ = _app("field_pane_scene_error", case)
+    app.dispatch(_frame())
+    app.dispatch({"type": "frame", "image": None, "fields": [], "scene": "Field",
+                  "error": "scene 'Field': node 'surface' (Surface): broken"})
+    assert app.state.fv_src is None and "node 'surface'" in app.state.fv_msg
+
+
+def test_a_frame_reports_its_scene_and_notes(case):
+    app, _ = _app("field_pane_report", case)
     with app.state:
         app.dispatch(_frame(report={"bounds": [0, 4, 0, 1, 0, 1], "axis": "x", "notes": ["log scale off"]}))
-    assert app.state.fv_bounds == [0, 4, 0, 1, 0, 1] and app.state.fv_axis == "x"
-    assert app.state.fv_msg.endswith("⚠ log scale off")
+    assert "scene Field" in app.state.fv_msg and app.state.fv_msg.endswith("⚠ log scale off")
 
 
-def test_data_mode_is_greyed_out_without_paraview():
-    app, _ = _app("field_pane_no_paraview")
+def test_data_mode_is_greyed_out_without_paraview(case):
+    app, _ = _app("field_pane_no_paraview", case)
     assert not app.state.fv_data_ok and "pvpython" in app.state.fv_data_why
     assert app.link.data_url is None
 
 
-def test_data_mode_is_greyed_out_while_a_desktop_paraview_has_live(monkeypatch):
+def test_data_mode_is_greyed_out_while_a_desktop_paraview_has_live(monkeypatch, case):
     monkeypatch.setenv(CATALYST_LIVE_ENV, "localhost:22222")
-    app, _ = _app("field_pane_desktop_live")
+    app, _ = _app("field_pane_desktop_live", case)
     assert not app.state.fv_data_ok and "localhost:22222" in app.state.fv_data_why
+
+
+class _FakeLive:
+    """Stands in for ``_live._LiveData`` (needs pvpython): records what the pane asks of it."""
+
+    def __init__(self, port, on_status):
+        self.url = f"localhost:{port}"
+        self.calls = []
+        self.note = ""
+
+    def __getattr__(self, name):
+        return lambda *args: self.calls.append((name, *args)) or True
+
+
+@pytest.fixture
+def live(monkeypatch):
+    monkeypatch.setattr(_field, "_LIVE", type("Live", (), {"_LiveData": _FakeLive}))
+
+
+def test_data_mode_is_offered_for_the_field_scene_only(live, case):
+    app, _ = _app("field_pane_data_field_only", case)
+    assert app.state.fv_data_ok
+    app.pane("field").scenes.switch("threshold")
+    assert not app.state.fv_data_ok and "Field scene only" in app.state.fv_data_why
+
+
+def test_another_scene_leaves_data_mode(live, case):
+    app, sent = _app("field_pane_data_leaves", case)
+    app.state.fv_mode = "data"
+    app.pane("field").scenes.switch("threshold")
+    assert app.state.fv_mode == "image" and _last_view(sent)["mode"] == "image"
+
+
+def test_data_mode_extracts_the_source_the_frame_names(live, case):
+    app, _ = _app("field_pane_data_extract", case)
+    pane = app.pane("field")
+    app.state.fv_mode = "data"
+    pane.send_view()
+    app.dispatch(_frame(mode="data", image=None, view=["T", "mag", "data"], report={"extract": "Field:surface"}))
+    assert ("extract", "Field:surface") in pane.data.calls
+
+
+def test_the_camera_in_data_mode_moves_the_data_view_not_the_scene(live, case):
+    app, sent = _app("field_pane_data_camera", case)
+    pane = app.pane("field")
+    app.state.fv_mode = "data"
+    pane.look("+z")
+    assert ("look", "+z", 1.0) in pane.data.calls and app.state.sc_current == "Field"

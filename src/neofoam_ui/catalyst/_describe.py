@@ -71,9 +71,28 @@ def _colouring(rep: Any) -> list[list[str]]:
 
 
 def _ncomp(rep: Any, array: list[Any]) -> int:
-    data = rep.Input.PointData if str(array[0]) == "POINTS" else rep.Input.CellData
-    arr = data.GetArray(array[1])
-    return arr.GetNumberOfComponents() if arr is not None else 1
+    """Components of the coloured array in this rank's output of the display's input.
+
+    Not from the proxy's data information: getting it updates the pipeline, which is
+    collective under MPI, and only rank 0 describes."""
+    from vtkmodules.vtkCommonDataModel import vtkDataObjectTreeIterator  # noqa: PLC0415 - on sys.path only once Catalyst is loaded
+
+    data = _port_proxy(rep.Input).GetClientSideObject().GetOutputDataObject(0)
+    leaves = [data]
+    if data is not None and data.IsA("vtkDataObjectTree"):
+        it = vtkDataObjectTreeIterator()
+        it.SetDataSet(data)
+        it.InitTraversal()
+        leaves = []
+        while not it.IsDoneWithTraversal():
+            leaves.append(it.GetCurrentDataObject())
+            it.GoToNextItem()
+    for leaf in leaves:
+        arrays = leaf.GetPointData() if str(array[0]) == "POINTS" else leaf.GetCellData() if leaf else None
+        arr = arrays.GetArray(array[1]) if arrays is not None else None
+        if arr is not None:
+            return int(arr.GetNumberOfComponents())
+    return 1
 
 
 def _describe_pipeline(observe: Any = None) -> dict[str, Any]:

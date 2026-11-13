@@ -1,32 +1,43 @@
-"""Catalyst 2 pipeline of the stepper's field view (runs inside the solver, all ranks).
+"""Catalyst 2 pipeline of the stepper's field view: it builds scenes (runs inside the solver, all ranks).
 
 Channel ``grid``: the solver's cells with every cell field. Parameters per execute
-(``catalyst/state/parameters``, all optional but ``field``):
+(``catalyst/state/parameters``, all optional):
 
-* ``field=<name>``, ``component=mag|0|1|2``, ``mode=image|data``;
-* ``show=surface|slice|clip|volume``, ``axis=x|y|z`` (default: the longest in-plane axis of a
-  one-cell-thick case, else z), ``pos=<0..1 along the axis>``, ``flip=1`` (clip keeps the
-  upper side);
-* image size ``width``/``height`` and ``scale`` (device pixels per CSS pixel: fonts grow);
-  ``camera=reset|+x|-x|+y|-y|+z|-z`` (look from there, fitted) and ``zoom``; a new size
-  refits only the ``reset`` camera at zoom 1;
-* ``range=lo:hi`` (else the global data range), ``cmap=<name>`` (``_CMAPS``), ``log=1``.
+* ``field=<name>``, ``component=mag|0|1|2`` (what ``@field`` / ``@component`` bind to), ``mode=image|data``;
+* ``scene=<name>`` (default ``Field``, the built-in scene) and, for any other scene, ``graph=<JSON>``
+  (a scene graph, :mod:`neofoam_ui.scenes`; checked with :mod:`neofoam_ui.scenes.models`);
+* image size ``width``/``height`` and ``scale`` (device pixels per CSS pixel: fonts grow).
+
+Every scene shown once stays built: a ParaView proxy per node and a render view of its own.
+A new graph for a scene is applied as a diff (unchanged nodes keep their proxies, properties
+are set on them, inputs relinked); only the shown scene executes. Camera and zoom come from
+the scene's View node; the camera is fitted again for a new size. A scene that
+cannot be built is dropped with its error (``report["error"]`` names the node), until another
+graph comes for it; the other scenes are not touched.
 
 With a directory as the script's first argument it writes ``view_<timestep>.png`` of the
-whole domain there; the caller may capture the view as well. ``report`` tells the caller
-of the last execute: the domain ``bounds``, the default ``axis`` and ``notes``.
+whole domain there; the caller may capture :data:`shown_view` as well. ``report`` tells the
+caller of the last execute: the domain ``bounds``, the default ``axis``, ``notes``, the shown
+``scene``, its ``error`` and (data mode) the ``extract``: the source Catalyst Live sends.
 ``NEOFOAM_UI_CATALYST_LIVE=host:port`` lets a ParaView attach (Catalyst ▸ Connect) at every
 execute; ``NEOFOAM_UI_CATALYST_DATA=host:port`` (the stepper UI's data mode) publishes to
-Live only in ``mode=data``, where the shown source is updated but nothing is drawn.
+Live only in ``mode=data``, where the input of the scene's first Display is updated but
+nothing is drawn.
 """
 
 import os
+from typing import Any
 
-from paraview import catalyst
-from paraview.simple import (Clip, ColorBy, CreateExtractor, CreateView, ExtractSurface,
-                             GetColorTransferFunction, GetScalarBar, Hide, Show, Slice, TrivialProducer)
+from paraview import catalyst, servermanager
+from paraview.simple import (Calculator, CellDatatoPointData, Clip, ColorBy, Contour, CreateExtractor, CreateView,
+                             Delete, ExtractSurface, GetScalarBar, Glyph, Slice,
+                             StreamTracer, Threshold, TrivialProducer)
 from vtkmodules.vtkCommonCore import vtkDoubleArray
+from vtkmodules.vtkCommonDataModel import vtkDataObjectTreeIterator
 from vtkmodules.vtkParallelCore import vtkCommunicator, vtkMultiProcessController
+from vtkmodules.vtkRenderingFreeType import vtkMathTextUtilities
+
+from neofoam_ui.scenes import FIELD, field_graph, inputs, ordered
 
 _args = catalyst.get_args()
 
@@ -39,39 +50,34 @@ if _live or _data:
     options.EnableCatalystLive = int(bool(_live))
 
 grid = TrivialProducer(registrationName="grid")
-surface = ExtractSurface(registrationName="surface", Input=grid)
-cut = Slice(registrationName="slice", Input=grid)
-cut.SliceType = "Plane"
-clip = Clip(registrationName="clip", Input=grid)
-clip.ClipType = "Plane"
-#: What ``show`` draws (and what data mode updates for Live to extract).
-_SOURCES = {"surface": surface, "slice": cut, "clip": clip, "volume": grid}
-view = CreateView("RenderView")
-view.ViewSize = [1280, 640]
-view.OrientationAxesVisibility = 0
-_displays = {"surface": Show(surface, view)}
 png = None
 if _args:
     options.ExtractsOutputDirectory = _args[0]
-    png = CreateExtractor("PNG", view, registrationName="png")
-    png.Writer.FileName = "view_{timestep:06d}.png"
-    png.Writer.ImageResolution = [1280, 640]
 
 _COMPONENT = {"mag": "Magnitude", "0": "X", "1": "Y", "2": "Z"}
 _CMAPS = {"viridis": "Viridis (matplotlib)", "coolwarm": "Cool to Warm", "inferno": "Inferno (matplotlib)",
           "jet": "Jet", "grayscale": "Grayscale"}
 _AXES = "xyz"
+_BIG = 1e300
 #: What the caller reads after an execute (see the module docstring).
-report = {}
-_state = {"bounds": None, "camera": None, "shown": None, "bar": None}
+report: dict[str, Any] = {}
+#: The render view of the shown scene: what the caller captures.
+shown_view = None
+_state = {"bounds": None}
+#: The scenes built so far, by name, and those that failed (name: (graph text, error)).
+_scenes: dict[str, Any] = {}
+_failed: dict[str, tuple[str, str]] = {}
 
 
-def _local():
-    """This rank's part of the grid (the TrivialProducer's output on this process)."""
-    data = grid.GetClientSideObject().GetOutputDataObject(0)
-    if data.IsA("vtkPartitionedDataSet"):  # a conduit mesh arrives as one partition per rank
-        data = data.GetPartition(0) if data.GetNumberOfPartitions() else None
-    return data
+def _local(proxy=grid):
+    """This rank's output of ``proxy`` (a partitioned or multiblock output: its first leaf)."""
+    data = proxy.GetClientSideObject().GetOutputDataObject(0)
+    if data is None or not data.IsA("vtkDataObjectTree"):
+        return data
+    leaves = vtkDataObjectTreeIterator()
+    leaves.SetDataSet(data)
+    leaves.InitTraversal()
+    return None if leaves.IsDoneWithTraversal() else leaves.GetCurrentDataObject()
 
 
 def _global(lows, highs):
@@ -97,21 +103,29 @@ def _bounds():
     local = _local()
     b = local.GetBounds() if local is not None else (1, 0, 1, 0, 1, 0)
     empty = b[0] > b[1]
-    big = 1e300
-    lo, hi = _global([big if empty else b[i] for i in (0, 2, 4)],
-                     [-big if empty else b[i] for i in (1, 3, 5)])
+    lo, hi = _global([_BIG if empty else b[i] for i in (0, 2, 4)],
+                     [-_BIG if empty else b[i] for i in (1, 3, 5)])
     return [lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]]
 
 
-def _range(field, index):
-    local = _local()
-    data = local.GetCellData().GetArray(field) if local is not None else None
-    big = 1e300
-    lo, hi = big, -big
+def _arrays(proxy, association):
+    local = _local(proxy)
+    if local is None:
+        return None
+    return local.GetCellData() if association == "CELLS" else local.GetPointData()
+
+
+def _range(proxy, association, field, index):
+    """The global range of ``field`` (component ``index``, -1: magnitude) in ``proxy``'s output."""
+    arrays = _arrays(proxy, association)
+    data = arrays.GetArray(field) if arrays is not None else None
+    lo, hi = _BIG, -_BIG
     if data is not None and data.GetNumberOfTuples():
         lo, hi = data.GetRange(index)
     (lo,), (hi,) = _global([lo], [hi])
     return lo, hi
+
+
 def _params(info):
     """``catalyst/state/parameters`` as a dict (ParaView 6 hands over the whole execute node)."""
     node = info.catalyst_params
@@ -144,85 +158,301 @@ def _default_axis(b):
     return _AXES[max((a for a in range(3) if a != thin), key=lambda a: extent[a])]
 
 
-def _place_cut(params, b):
-    """Put the slice and clip planes where ``axis`` and ``pos`` say; the name of the shown source."""
-    show = params.get("show", "surface")
-    if show not in _SOURCES:
-        show = "surface"
-    axis = _AXES.index(params.get("axis") if params.get("axis") in ("x", "y", "z") else _default_axis(b))
-    pos = min(max(float(params.get("pos", 0.5)), 0.0), 1.0)
-    origin = [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2]
-    origin[axis] = b[2 * axis] + pos * (b[2 * axis + 1] - b[2 * axis])
+def _at(b, fractions):
+    """The point at ``fractions`` (0–1) of the domain's extent along each axis."""
+    return [b[2 * a] + f * (b[2 * a + 1] - b[2 * a]) for a, f in enumerate(fractions)]
+
+
+def _plane(props, b):
+    """Origin and normal of a cut: normal to ``axis`` at ``position`` of the domain."""
+    axis = _AXES.index(_default_axis(b) if props["axis"] == "auto" else props["axis"])
+    fractions = [0.5, 0.5, 0.5]
+    fractions[axis] = props["position"]
     normal = [0.0, 0.0, 0.0]
     normal[axis] = 1.0
-    cut.SliceType.Origin, cut.SliceType.Normal = origin, normal
-    clip.ClipType.Origin, clip.ClipType.Normal = origin, normal
-    clip.Invert = 0 if params.get("flip") == "1" else 1  # inverted: the lower side stays
-    return show
+    return _at(b, fractions), normal
 
 
-def _display(show):
-    """Show only the source of ``show`` (volume in an image: its surface)."""
-    name = "surface" if show == "volume" else show
-    for other in _displays:
-        if other != name:
-            Hide(_SOURCES[other], view)
-    _displays[name] = Show(_SOURCES[name], view)
-    return _displays[name]
+# -- binding to the pane's pick ---------------------------------------------------------------
 
 
-def _field_of(params, local):
-    names = [local.GetArrayName(i) for i in range(local.GetNumberOfArrays())] if local is not None else []
-    field = params.get("field")
-    if field not in names:
-        field = next((n for n in ("U", "p", "T") if n in names), names[0] if names else None)
-    return field
+class _Context:
+    """What one execute's properties depend on: the pane's field and component, the domain."""
+
+    def __init__(self, params, bounds, time):
+        self.time = time
+        self.field = params.get("field") or None
+        self.component = params.get("component", "mag")
+        self.bounds = bounds
+        self.scale = float(params.get("scale", 1))
+        self.size = _image_size(params, bounds)
+        self.height = self.size[1]
+        #: Where the fields are in the input of the node being set (``CELLS`` or ``POINTS``).
+        self.association = "CELLS"
+
+    def field_of(self, value):
+        return self.field if value == "@field" else value
+
+    def component_of(self, value):
+        return self.component if value == "@component" else value
 
 
-def _colour_range(params, field, index):
-    """``range=lo:hi``, else the global data range."""
-    lo, _, hi = params.get("range", "").partition(":")
-    try:
-        return float(lo), float(hi)
-    except ValueError:
-        return _range(field, index)
+def _ncomp(field):
+    arrays = _arrays(grid, "CELLS")
+    data = arrays.GetArray(field) if arrays is not None and field else None
+    return data.GetNumberOfComponents() if data is not None else 1
 
 
-def _colour(display, params, field, ncomp):
-    """Colour ``display`` by ``field``: component, map, range, log scale, one colour bar."""
-    comp = params.get("component", "mag") if ncomp > 1 else None
-    if comp is None:
-        ColorBy(display, ("CELLS", field))
+def _expression(field, component):
+    """A calculator expression of ``field``'s value: itself, its magnitude or one component."""
+    if _ncomp(field) == 1:
+        return f'"{field}"'
+    if component == "mag":
+        return f'mag("{field}")'
+    return f'"{field}_{"XYZ"[int(component)]}"'
+
+
+# -- nodes: create, set properties, relink, delete --------------------------------------------
+
+
+def _name(scene, node):
+    return f"{scene.name}:{node['id']}"
+
+
+def _create_filter(scene, node, source):
+    """The node's proxy and the helpers in front of it (each fed by the one before)."""
+    kind, name = node["type"], _name(scene, node)
+    if kind == "Surface":
+        return ExtractSurface(registrationName=name, Input=source), []
+    if kind == "Slice":
+        return Slice(registrationName=name, Input=source, SliceType="Plane"), []
+    if kind == "Clip":
+        return Clip(registrationName=name, Input=source, ClipType="Plane"), []
+    if kind == "Threshold":
+        return Threshold(registrationName=name, Input=source), []
+    if kind == "Calculator":
+        return Calculator(registrationName=name, Input=source, AttributeType="Cell Data"), []
+    if kind == "Glyph":
+        return Glyph(registrationName=name, Input=source, GlyphType="Arrow"), []
+    return _create_with_points(name, kind, source)
+
+
+def _create_with_points(name, kind, source):
+    """Contour and StreamTracer work on point data: a cell-to-point helper in front."""
+    points = CellDatatoPointData(registrationName=f"{name}/points", Input=source, PassCellData=1)
+    if kind == "StreamTracer":
+        return StreamTracer(registrationName=name, Input=points, SeedType="Line"), [points]
+    value = Calculator(registrationName=f"{name}/value", Input=points, AttributeType="Point Data",
+                       ResultArrayName="_value")
+    return Contour(registrationName=name, Input=value), [points, value]
+
+
+def _create(scene, node, sources):
+    kind = scene.kinds[node["id"]] = node["type"]
+    if kind == "grid":
+        scene.proxies[node["id"]] = grid
+    elif kind == "View":
+        scene.proxies[node["id"]] = scene.view
+    elif kind == "Display":
+        rep = servermanager.CreateRepresentation(sources[0], scene.view)
+        scene.proxies[node["id"]] = rep
     else:
-        ColorBy(display, ("CELLS", field, _COMPONENT.get(comp, "Magnitude")))
-    lut = GetColorTransferFunction(field)
-    if _state["shown"] is not None and _state["shown"] != field:  # one colour bar: the previous field's goes
-        GetScalarBar(GetColorTransferFunction(_state["shown"]), view).Visibility = 0
-    _state["shown"] = field
-    lut.ApplyPreset(_CMAPS.get(params.get("cmap"), _CMAPS["viridis"]), True)
+        scene.proxies[node["id"]], scene.helpers[node["id"]] = _create_filter(scene, node, sources[0])
+
+
+def _relink(scene, node, sources):
+    if node["type"] in ("grid", "View"):
+        return
+    head = (scene.helpers.get(node["id"]) or [scene.proxies[node["id"]]])[0]
+    if head.Input != sources[0]:
+        head.Input = sources[0]
+
+
+def _delete(scene, node, proxy, helpers):
+    if node["type"] in ("grid", "View"):
+        return
+    if node["type"] == "Display":
+        scene.view.Representations.remove(proxy)
+    Delete(proxy)
+    for helper in reversed(helpers):
+        Delete(helper)
+
+
+def _set_slice(proxy, props, ctx):
+    proxy.SliceType.Origin, proxy.SliceType.Normal = _plane(props, ctx.bounds)
+    proxy.Triangulatetheslice = int(props["triangulate"])
+
+
+def _set_clip(proxy, props, ctx):
+    proxy.ClipType.Origin, proxy.ClipType.Normal = _plane(props, ctx.bounds)
+    proxy.Invert = 0 if props["flip"] else 1  # inverted: the lower side stays
+
+
+def _set_threshold(proxy, props, ctx):
+    field = ctx.field_of(props["field"])
+    component, ncomp = ctx.component_of(props["component"]), _ncomp(field)
+    proxy.Scalars = [ctx.association, field]
+    proxy.ComponentMode = "Selected"
+    proxy.SelectedComponent = ncomp if component == "mag" or ncomp == 1 else int(component)  # ncomp: magnitude
+    lower, upper = props["lower"], props["upper"]
+    proxy.LowerThreshold = -_BIG if lower is None else lower
+    proxy.UpperThreshold = _BIG if upper is None else upper
+    proxy.ThresholdMethod = "Between"
+
+
+def _set_calculator(proxy, props, ctx):
+    proxy.Function = props["expression"]
+    proxy.ResultArrayName = props["result"]
+
+
+def _set_glyph(proxy, props, ctx):
+    proxy.OrientationArray = [ctx.association, ctx.field_of(props["vectors"])]
+    proxy.ScaleArray = ["POINTS", "No scale array"]
+    proxy.MaximumNumberOfSamplePoints = props["max_glyphs"]
+    if props["scale"] is not None:
+        proxy.ScaleFactor = props["scale"]
+
+
+def _set_contour(proxy, helpers, props, ctx):
+    field = ctx.field_of(props["field"])
+    helpers[1].Function = _expression(field, ctx.component_of(props["component"]))
+    proxy.ContourBy = ["POINTS", "_value"]
+    proxy.Isosurfaces = props["values"]
+
+
+def _set_stream_tracer(proxy, helpers, props, ctx):
+    b = ctx.bounds
+    proxy.Vectors = ["POINTS", ctx.field_of(props["vectors"])]
+    proxy.SeedType.Point1, proxy.SeedType.Point2 = _at(b, props["start"]), _at(b, props["end"])
+    proxy.SeedType.Resolution = props["seeds"]
+    proxy.MaximumStreamlineLength = max(_extents(b))
+
+
+_SETTERS = {"Slice": _set_slice, "Clip": _set_clip, "Threshold": _set_threshold, "Calculator": _set_calculator,
+            "Glyph": _set_glyph}
+_HELPED_SETTERS = {"Contour": _set_contour, "StreamTracer": _set_stream_tracer}
+
+
+# -- displays: colours, colour bars -----------------------------------------------------------
+
+
+def _colour_range(display, props, field, index):
+    """A fixed ``range``, else the field's global range in the grid (or in the display's input)."""
+    if props["range"] != "auto":
+        return tuple(props["range"])
+    in_grid = display.association == "CELLS" and _arrays(grid, "CELLS") is not None \
+        and _arrays(grid, "CELLS").GetArray(field) is not None
+    if in_grid:
+        return _range(grid, "CELLS", field, index)
+    display.rep.Input.UpdatePipeline(display.time)  # before the render: its output is still the last one
+    return _range(display.rep.Input, display.association, field, index)
+
+
+def _lut_of(display, props, ctx):
+    """Colour ``display`` by its field (or solid); the colour map and its bar's title, or ``None``."""
+    rep = display.rep
+    rep.Opacity = props["opacity"]
+    rep.LineWidth = props["line_width"]
+    rep.AmbientColor = rep.DiffuseColor = props["color"]
+    field = ctx.field_of(props["field"])
+    if field is None:
+        rep.ColorArrayName = ["POINTS", ""]
+        return None
+    component, ncomp = ctx.component_of(props["component"]), _ncomp(field)
+    comp = None if ncomp == 1 else component
+    ColorBy(rep, (display.association, field) if comp is None else
+            (display.association, field, _COMPONENT.get(comp, "Magnitude")), separate=True)
+    lut = rep.LookupTable  # the display's own (separate) colour map
+    lut.ApplyPreset(_CMAPS[props["colormap"]], True)
     lut.NanColor = [0.75, 0.75, 0.75]  # cells of a region without this field (merged regions)
-    lo, hi = _colour_range(params, field, -1 if comp in (None, "mag") else int(comp))
+    lo, hi = _colour_range(display, props, field, -1 if comp in (None, "mag") else int(comp))
     hi = hi if hi > lo else lo + 1e-30
-    log = params.get("log") == "1" and lo > 0
-    if params.get("log") == "1" and not log:
+    log = props["log"] and lo > 0
+    if props["log"] and not log:
         report["notes"].append("log scale off: the colour range reaches 0 or below")
     lut.UseLogScale = 0  # a log scale would clamp a range reaching 0 or below
     lut.RescaleTransferFunction(lo, hi)
     lut.UseLogScale = int(log)
-    _colour_bar(lut, field, comp, float(params.get("scale", 1)))
+    return lut, _title(field, comp)
 
 
-def _colour_bar(lut, field, comp, scale):
+def _title(field, comp):
+    """A colour bar's title: ``p``, ``|U|`` or ``U.x``."""
+    if comp is None:
+        return field
+    if comp != "mag":
+        return f"{field}.{'xyz'[int(comp)]}"
+    # VTK's matplotlib text takes "|" for a table cell separator: draw it as math there
+    math = vtkMathTextUtilities.GetInstance()
+    return f"$\\vert${field}$\\vert$" if math is not None and math.IsAvailable() else f"|{field}|"
+
+
+#: A colour bar's height (title, bar, labels) in pixels at scale 1: the camera keeps room for each.
+_BAR_PX = 110
+
+
+def _colour_bar(lut, title, ctx, view, row):
+    """The colour bar of ``lut``, in ``row`` (0: the lowest) of the bars stacked at the bottom."""
+    scale = ctx.scale
     bar = GetScalarBar(lut, view)
-    bar.Title = field if comp is None else (f"|{field}|" if comp == "mag" else f"{field}.{'xyz'[int(comp)]}")
+    bar.Title = title
     bar.ComponentTitle = ""
     bar.Orientation = "Horizontal"
-    bar.WindowLocation = "Lower Center"
+    bar.WindowLocation = "Any Location"
+    bar.Position = [0.25, 0.02 + row * _BAR_PX * scale / ctx.height]
     bar.ScalarBarLength = 0.5
     bar.TitleFontSize = round(22 * scale)
     bar.LabelFontSize = round(20 * scale)
     bar.ScalarBarThickness = round(16 * scale)
     bar.Visibility = 1
+
+
+class _Display:
+    """A Display node's representation, the association of the arrays it colours by, the time."""
+
+    def __init__(self, rep, association, time):
+        self.rep = rep
+        self.association = association
+        self.time = time
+
+
+def _show_displays(scene, ctx):
+    """Colour the displays; those linked to the View show, each coloured one with its bar (``bar``)."""
+    graph, sources = scene.graph, inputs(scene.graph)
+    linked = {s for node in graph["nodes"] if node["type"] == "View" for s in sources[node["id"]]}
+    bars = []
+    for node in ordered(graph):
+        if node["type"] != "Display":
+            continue
+        scene.failing = node
+        rep = scene.proxies[node["id"]]
+        rep.Visibility = int(node["id"] in linked)
+        display = _Display(rep, _association(scene, sources[node["id"]][0]), ctx.time)
+        coloured = _lut_of(display, node["props"], ctx)
+        if coloured is not None and rep.Visibility and node["props"]["bar"]:
+            bars.append(coloured)
+    shown = {lut for lut, _ in bars}
+    for lut in scene.bars - shown:
+        GetScalarBar(lut, scene.view).Visibility = 0
+    for row, (lut, title) in enumerate(bars):
+        _colour_bar(lut, title, ctx, scene.view, row)
+    scene.bars |= shown
+    return len(bars)
+
+
+def _association(scene, node_id):
+    """Where a node's output holds the fields: cells, or points after a Glyph or a StreamTracer."""
+    sources = inputs(scene.graph)
+    while True:
+        kind = next(n["type"] for n in scene.graph["nodes"] if n["id"] == node_id)
+        if kind in ("Glyph", "StreamTracer"):
+            return "POINTS"
+        if not sources[node_id]:
+            return "CELLS"
+        node_id = sources[node_id][0]
+
+
+# -- image size and camera ---------------------------------------------------------------------
 
 
 def _image_size(params, b):
@@ -245,18 +475,18 @@ def _look(camera, b):
     return extent.index(min(extent)), 1.0
 
 
-def _fit_camera(params, b, size, scale):
-    """Look from the preset's side, the domain filling the image above the colour bar, zoomed."""
-    thin, sign = _look(params.get("camera", "reset"), b)
+def _fit_camera(view, pick, b, size, bar_px):
+    """Look from the preset's side, the domain filling the image above the colour bars, zoomed."""
+    camera, zoom = pick
+    thin, sign = _look(camera, b)
     extent = _extents(b)
     centre = [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2]
     up_axis = 1 if thin != 1 else 2
     side = next(a for a in range(3) if a not in (thin, up_axis))
     width, height = size
-    bar_px = 110 * scale
     fit = 1.04 * max(extent[up_axis] / 2 * height / max(height - bar_px, 1), extent[side] / 2 * height / width)
-    zoom = max(float(params.get("zoom", 1)), 1e-3)
-    shift = bar_px / 2 * 2 * fit / height / zoom  # centre the mesh above the colour bar
+    zoom = max(zoom, 1e-3)
+    shift = bar_px / 2 * 2 * fit / height / zoom  # centre the mesh above the colour bars
     focal = list(centre)
     focal[up_axis] -= shift
     position = list(focal)
@@ -270,21 +500,175 @@ def _fit_camera(params, b, size, scale):
     view.CameraParallelScale = fit / zoom
 
 
-def _place_camera(params, b):
-    """Image size and camera; a new size alone keeps a picked or zoomed camera (only resized)."""
-    size = _image_size(params, b)
-    scale = float(params.get("scale", 1))
-    pick = (params.get("camera", "reset"), params.get("zoom", "1"))
-    previous = _state["camera"]
-    _state["camera"] = (pick, size)
-    view.ViewSize = size
+def _place_camera(scene, ctx, bars):
+    """Image size and the View node's camera, fitted again when either or the bars change.
+
+    The View node defines the camera entirely: a camera fitted for another size (the pane
+    resized, the scene shown again) would crop the domain."""
+    props = next(n["props"] for n in scene.graph["nodes"] if n["type"] == "View")
+    pick = (props["camera"], float(props["zoom"]))
+    camera = (pick, ctx.size, bars)
+    scene.view.ViewSize = ctx.size
     if png is not None:
-        png.Writer.ImageResolution = size
-    if previous is None or previous[0] != pick or (previous[1] != size and pick == ("reset", "1")):
-        _fit_camera(params, b, size, scale)
+        png.Writer.ImageResolution = ctx.size
+    if scene.camera != camera:
+        scene.camera = camera
+        _fit_camera(scene.view, pick, ctx.bounds, ctx.size, _BAR_PX * ctx.scale * max(bars, 1))
+
+
+# -- scenes ------------------------------------------------------------------------------------
+
+
+class _Scene:
+    """One scene as ParaView proxies: its graph, a proxy per node (and helpers), its render view."""
+
+    def __init__(self, name):
+        self.name = name
+        self.graph = {"nodes": [], "edges": []}
+        #: Node id → its proxy: grid → the producer, a filter → its filter, Display → its
+        #: representation, View → the scene's render view.
+        self.proxies = {}
+        self.helpers = {}
+        self.kinds = {}
+        #: The graph text it was built from (``""``: the built-in Field).
+        self.text = None
+        self.view = CreateView("RenderView", registrationName=f"{name}:view")
+        self.view.OrientationAxesVisibility = 0
+        self.camera = None
+        self.bars = set()
+        #: The node being worked on (named by an error).
+        self.failing = None
+
+    def apply(self, graph, ctx):
+        """Build ``graph`` from what is built: new nodes, relinked inputs, removed nodes (last).
+
+        A filter's properties are set as it is made: a display updates its input when created."""
+        new = {n["id"]: n["type"] for n in graph["nodes"]}
+        gone = [(n, self.proxies.pop(n["id"]), self.helpers.pop(n["id"], []), self.kinds.pop(n["id"]))
+                for n in reversed(ordered(self.graph)) if new.get(n["id"]) != n["type"]]
+        self.graph = graph
+        sources = inputs(graph)
+        for node in ordered(graph):
+            self.failing = node
+            upstream = [self.proxies[s] for s in sources[node["id"]]]
+            if node["id"] in self.proxies:
+                _relink(self, node, upstream)
+            else:
+                _create(self, node, upstream)
+            self._set(node, sources, ctx)
+        for node, proxy, helpers, _ in gone:
+            self.failing = node
+            _delete(self, node, proxy, helpers)
+        self.failing = None
+
+    def set_properties(self, ctx):
+        """Every filter's properties (those of the pane's field may change at any execute)."""
+        sources = inputs(self.graph)
+        for node in ordered(self.graph):
+            self.failing = node
+            self._set(node, sources, ctx)
+        self.failing = None
+
+    def _set(self, node, sources, ctx):
+        kind, proxy = node["type"], self.proxies[node["id"]]
+        if sources[node["id"]]:
+            ctx.association = _association(self, sources[node["id"]][0])
+        if kind in _SETTERS:
+            _SETTERS[kind](proxy, node["props"], ctx)
+        elif kind in _HELPED_SETTERS:
+            _HELPED_SETTERS[kind](proxy, self.helpers[node["id"]], node["props"], ctx)
+
+    def extract(self):
+        """The input of the first Display: the source data mode sends (``None``: no Display)."""
+        sources = inputs(self.graph)
+        first = next((n for n in ordered(self.graph) if n["type"] == "Display"), None)
+        return None if first is None else sources[first["id"]][0]
+
+    def close(self):
+        """Delete every proxy built (consumers first) and the view."""
+        for node_id, proxy in reversed(list(self.proxies.items())):
+            _delete(self, {"type": self.kinds[node_id]}, proxy, self.helpers.get(node_id, []))
+        Delete(self.view)
+
+
+def _graph_of(params):
+    """The shown scene's name and graph: the built-in ``Field``, or the one in ``graph``."""
+    name = params.get("scene") or FIELD
+    if not params.get("graph"):
+        return name, field_graph()
+    # pydantic only for a scene of the case: the built-in Field scene runs without it
+    from neofoam_ui.scenes.models import parse  # noqa: PLC0415
+
+    return name, parse(params["graph"]).graph()
+
+
+def _failure(scene_name, node, exc):
+    where = f"node {node['id']!r} ({node['type']}): " if node else ""
+    return f"scene {scene_name!r}: {where}{exc}"
+
+
+def _scene(params, ctx):
+    """The shown scene, built or brought to its graph; ``None`` and ``report["error"]`` if it cannot be.
+
+    A graph that is not a scene is refused and the scene stays as it was built; one that
+    fails to build drops the scene."""
+    name, text = params.get("scene") or FIELD, params.get("graph", "")
+    if name in _failed and _failed[name][0] == text:
+        report["error"] = _failed[name][1]
+        return None
+    scene = _scenes.get(name)
+    if scene is not None and scene.text == text:
+        _failed.pop(name, None)
+        return scene
+    try:
+        graph = _graph_of(params)[1]
+    except (ValueError, ImportError) as exc:  # not a scene (the message names the node), or no pydantic
+        _failed[name] = (text, report.setdefault("error", f"scene {name!r}: {exc}"))
+        return None
+    try:
+        if scene is None:
+            scene = _scenes[name] = _Scene(name)
+        scene.apply(graph, ctx)
+        scene.text = text
+        _failed.pop(name, None)
+        return scene
+    except Exception as exc:  # noqa: BLE001 - a broken scene leaves the others working
+        _drop(name, scene, text, exc)
+        return None
+
+
+def _drop(name, scene, text, exc):
+    """Forget a scene that failed (its proxies go); remember why, for as long as its graph stays."""
+    error = _failure(name, scene.failing if scene is not None else None, exc)
+    _failed[name] = (text, error)
+    report["error"] = error
+    if _scenes.pop(name, None) is not None:
+        scene.close()
+
+
+def _show(scene, params, ctx):
+    """Draw the scene in its view (image mode); a failure drops it."""
+    try:
+        scene.set_properties(ctx)
+        _place_camera(scene, ctx, _show_displays(scene, ctx))
+        return True
+    except Exception as exc:  # noqa: BLE001 - a broken scene leaves the others working
+        _drop(scene.name, scene, params.get("graph", ""), exc)
+        return False
+
+
+def _point_png(view):
+    global png
+    if not _args:
+        return
+    if png is None:
+        png = CreateExtractor("PNG", view, registrationName="png")
+        png.Writer.FileName = "view_{timestep:06d}.png"
+    png.Producer = view
 
 
 def catalyst_execute(info):
+    global shown_view
     params = _params(info)
     # Bring the producer to this execute's data first: until then its output still holds the
     # previous step's arrays, whose memory the solver may have freed (nut is reallocated).
@@ -294,15 +678,28 @@ def catalyst_execute(info):
         options.EnableCatalystLive = int(data)
     b = _domain()
     report.clear()
-    report.update(bounds=list(b), axis=_default_axis(b), notes=[])
-    show = _place_cut(params, b)
+    report.update(bounds=list(b), axis=_default_axis(b), notes=[], scene=params.get("scene") or FIELD)
+    shown_view = None
+    ctx = _Context(params, b, info.time)
+    scene = _scene(params, ctx)
+    if scene is None:
+        return
     if data:  # Live sends the extracted source as it is (no update of its own); the UI draws it
-        _SOURCES[show].UpdatePipeline(info.time)
+        _extract(scene, params, ctx, info.time)
         return
-    local = _local()
-    local = local.GetCellData() if local is not None else None
-    field = _field_of(params, local)
-    if field is None:
+    if _show(scene, params, ctx):
+        shown_view = scene.view
+        _point_png(scene.view)
+
+
+def _extract(scene, params, ctx, time):
+    """Data mode: bring the source Live sends up to date; name it in the report."""
+    try:
+        scene.set_properties(ctx)
+    except Exception as exc:  # noqa: BLE001 - a broken scene leaves the others working
+        _drop(scene.name, scene, params.get("graph", ""), exc)
         return
-    _colour(_display(show), params, field, local.GetArray(field).GetNumberOfComponents())
-    _place_camera(params, b)
+    node_id = scene.extract()
+    if node_id is not None:
+        report["extract"] = "grid" if scene.proxies[node_id] is grid else f"{scene.name}:{node_id}"
+        scene.proxies[node_id].UpdatePipeline(time)

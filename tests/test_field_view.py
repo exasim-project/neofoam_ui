@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -22,6 +23,7 @@ from neofoam_ui.geometry import cell_centres_geometry, cell_count, merged, polyh
 from neofoam_ui.toy.heat1d import Heat1D
 
 HELPERS = os.path.join(os.path.dirname(__file__), "helpers")
+SCENES = Path(__file__).parent / "scenes" / "cases" / "builder" / "system" / "scenes"
 
 # -- engine: the view protocol ------------------------------------------------------------
 
@@ -266,25 +268,54 @@ def test_switching_the_mode_renders_the_same_values_again(fake_catalyst):
     assert [r["params"]["mode"] for r in renders(fake_catalyst)] == ["image", "data"]
 
 
-def test_new_display_options_render_unchanged_values_again(fake_catalyst):
+SLICE = {"scene": "slice", "graph": (SCENES / "slice.json").read_text()}
+
+
+def test_another_scene_renders_unchanged_values_again(fake_catalyst):
     session, _ = session_after_init()
-    session.set_view("T", mode="data")
-    session.set_view_options({"show": "slice", "axis": "x"})  # the UI extracts another source
-    session.request_view("T", mode="data")
-    session.send_view()
-    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag", "mode": "data",
-                                                    "show": "slice", "axis": "x"}
+    session.set_view_options({"scene": "Field"})
+    session.set_view("T")
+    session.set_view_options(SLICE)
+    session.set_view("T")
+    assert [r["params"]["scene"] for r in renders(fake_catalyst)] == ["Field", "slice"]
 
 
-def test_display_options_reach_the_followers_with_the_shared_view(fake_catalyst):
+def test_the_scene_reaches_the_followers_with_the_shared_view(fake_catalyst):
     session, _ = session_after_init()
     sent = []
     session.set_peers(SimpleNamespace(go=lambda track, view: sent.append(view), render=lambda params: None,
                                       free=lambda params: None, stats=list))
-    session.set_view_options({"width": "640", "height": "360"})
+    session.set_view_options({**SLICE, "width": "640", "height": "360"})
     session.request_view("T")
     session.advance("into")
-    assert sent[-1] == ("T", "mag", "image", {"width": "640", "height": "360"})
+    assert sent[-1] == ("T", "mag", "image", {**SLICE, "width": "640", "height": "360"})
+
+
+def test_the_built_in_scene_gets_the_viewed_field_only(fake_catalyst):
+    session, _ = session_after_init()
+    session.set_view_options({"scene": "Field"})
+    session.set_view("T")
+    assert list(renders(fake_catalyst)[-1]["fields"]) == ["T"]
+
+
+def test_a_scene_of_the_case_gets_every_field(fake_catalyst):
+    session, _ = session_after_init()
+    session.set_view_options(SLICE)
+    session.set_view("T")
+    assert sorted(renders(fake_catalyst)[-1]["fields"]) == ["T", "T_old", "kappa", "source_mask"]
+
+
+def test_a_failing_scene_sends_its_error_and_the_view_goes_on(fake_catalyst, monkeypatch):
+    error = "scene 'slice': node 's1' (Slice): broken"
+    monkeypatch.setattr(FakeInSitu, "report", {"error": error}, raising=False)
+    session, messages = session_after_init()
+    session.set_view_options(SLICE)
+    session.set_view("T")
+    assert (of(messages, "frame")[-1]["error"], of(messages, "frame")[-1]["scene"]) == (error, "slice")
+    monkeypatch.setattr(FakeInSitu, "report", {}, raising=False)
+    session.set_view_options({"scene": "Field"})
+    session.set_view("T")
+    assert of(messages, "frame")[-1]["image"] is not None
 
 
 def test_the_renderers_report_goes_with_the_frame(fake_catalyst, monkeypatch):
@@ -749,31 +780,35 @@ insitu.finalize()
     assert p != q  # an ignored parameter colours both by the default field
 
 
-#: Display options of the stepper's pipeline and what the image of four hexahedra along x
-#: (T = -1 … 2, Viridis: purple … yellow) shows then; the camera looks along y by default.
+#: Scenes (files of ``tests/scenes/cases/options``; ``None``: the built-in ``Field``), image
+#: parameters and what the image of four hexahedra along x (T = -1 … 2, Viridis: purple …
+#: yellow) shows then; the camera looks along y by default. Today's field-view options, each
+#: through a scene: zoom (View node), cut (Slice / Clip node), colours (Display node).
 OPTIONS = [
-    ({"width": "640", "height": "360"}, {"size": [640, 360], "purple": True, "yellow": True, "red": False,
-                                         "corner_is_mesh": False}),
-    ({"width": "640", "height": "360", "zoom": "6"}, {"corner_is_mesh": True}),
-    ({"show": "clip", "axis": "x", "pos": "0.5"}, {"purple": True, "yellow": False}),
-    ({"show": "clip", "axis": "x", "pos": "0.5", "flip": "1"}, {"purple": False, "yellow": True}),
-    ({"show": "slice", "axis": "x", "pos": "0.9", "camera": "+x"}, {"purple": False, "yellow": True}),
-    ({"cmap": "jet"}, {"red": True}),
-    ({"range": "5:6"}, {"yellow": False}),  # every value below the range: the low end only
-    ({"log": "1"}, {"notes": ["log scale off: the colour range reaches 0 or below"]}),
-    ({"log": "1", "range": "0.5:3"}, {"notes": []}),
-    ({}, {"bounds": [0.0, 4.0, 0.0, 1.0, 0.0, 1.0], "axis": "z"}),
+    (None, {"width": "640", "height": "360"}, {"size": [640, 360], "purple": True, "yellow": True, "red": False,
+                                               "corner_is_mesh": False}),
+    ("zoom-6", {"width": "640", "height": "360"}, {"corner_is_mesh": True}),
+    ("clip-x", {}, {"purple": True, "yellow": False}),
+    ("clip-x-flip", {}, {"purple": False, "yellow": True}),
+    ("slice-x-from-x", {}, {"purple": False, "yellow": True}),
+    ("jet", {}, {"red": True}),
+    ("range-5-6", {}, {"yellow": False}),  # every value below the range: the low end only
+    ("log", {}, {"notes": ["log scale off: the colour range reaches 0 or below"]}),
+    ("log-range", {}, {"notes": []}),
+    (None, {}, {"bounds": [0.0, 4.0, 0.0, 1.0, 0.0, 1.0], "axis": "z"}),
 ]
+OPTION_SCENES = Path(__file__).parent / "scenes" / "cases" / "options" / "system" / "scenes"
 
 
 @needs_catalyst
-@pytest.mark.parametrize("options, shows", OPTIONS)
-def test_paraview_follows_the_display_options(options, shows):
-    res = subprocess.run([PYTHON, os.path.join(HELPERS, "catalyst_options.py"), PREFIX, json.dumps(options)],
+@pytest.mark.parametrize("scene, params, shows", OPTIONS)
+def test_paraview_draws_the_scene(scene, params, shows):
+    files = [str(OPTION_SCENES / f"{scene}.json")] if scene else []
+    res = subprocess.run([PYTHON, os.path.join(HELPERS, "catalyst_options.py"), PREFIX, json.dumps(params), *files],
                          capture_output=True, text=True, timeout=300, env=_catalyst_env())
     assert res.returncode == 0, res.stderr[-3000:]
     seen = json.loads(next(line for line in res.stdout.splitlines() if line.startswith("{")))
-    assert {k: seen[k] for k in shows} == shows, options
+    assert {k: seen[k] for k in shows} == shows, scene
 
 
 @needs_catalyst
@@ -852,9 +887,10 @@ insitu.finalize()
     display = next(n for n in second["nodes"] if n["kind"] == "display")
     if script == "default":
         assert second["script"] == "view.py"
-        assert [nodes[n]["kind"] for n in ("grid", "surface", "png")] == ["source", "filter", "extractor"]
-        assert {("grid", "surface"), ("grid", "slice"), ("grid", "clip"), ("surface", display["name"]),
-                (display["name"], view), (view, "png")} == edges
+        assert [nodes[n]["kind"] for n in ("grid", "Field:surface", "png")] == ["source", "filter", "extractor"]
+        assert view == "Field:view"
+        assert {("grid", "Field:surface"), ("Field:surface", display["name"]), (display["name"], view),
+                (view, "png")} == edges
         first_display = next(n for n in first["nodes"] if n["kind"] == "display")
         assert dict(first_display["settings"])["colour"] == "|U| (cells)"
         assert dict(display["settings"])["colour"] == "U[1] (cells)"

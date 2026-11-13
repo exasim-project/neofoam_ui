@@ -1,4 +1,4 @@
-"""The field pane's widgets: its bar (mode, what to show, cut, field, colours, live frames) and stage."""
+"""The field pane's widgets: its bar (mode, scene, field, component, live frames) and stage."""
 
 from __future__ import annotations
 
@@ -16,9 +16,6 @@ _FIELD_CSS = r"""
   border-bottom: 1px solid rgba(128,128,128,.2); }
 .nf-field-bar .v-select { flex: 0 1 150px; min-width: 110px; }
 .nf-field-bar .nf-num { flex: 0 0 112px; }
-.nf-field-cut { display: flex; align-items: center; gap: 6px; flex: 1 1 420px; min-width: 340px; }
-.nf-field-cut .v-slider { flex: 1 1 140px; min-width: 120px; }
-.nf-field-coord { font-size: 12px; opacity: .8; min-width: 72px; }
 .nf-field-msg { font-size: 12px; opacity: .7; flex: 1 1 160px; min-width: 0; }
 .nf-field-stage { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .nf-field-img { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
@@ -45,21 +42,6 @@ _SIZE_PROBE = (
     " if (k !== seen) { seen = k; since = Date.now(); return; }"
     " if (k !== sent && Date.now() - since >= 300) { sent = k; trigger('nf_fv_size', [w, h, d]); } }, 150); }"
 )
-_AXIS = "'xyz'.indexOf(fv_axis)"
-#: The cut's position as a coordinate, from the domain bounds of the last frame.
-_COORD = (f"fv_bounds && fv_axis ? fv_axis + ' = ' + (fv_bounds[2 * {_AXIS}] + fv_pos / 100"
-          f" * (fv_bounds[2 * {_AXIS} + 1] - fv_bounds[2 * {_AXIS}])).toPrecision(4) : fv_pos + ' %'")
-_CMAP_ITEMS = [{"title": "Viridis", "value": "viridis"}, {"title": "Cool to Warm", "value": "coolwarm"},
-               {"title": "Inferno", "value": "inferno"}, {"title": "Jet", "value": "jet"},
-               {"title": "Grayscale", "value": "grayscale"}]
-
-
-def _toggle(model: str, items: list[tuple[str, str, str]], **kwargs: Any) -> None:
-    """A compact button group for ``model``: ``(label, value, tooltip)`` per button."""
-    with v3.VBtnToggle(v_model=(model,), mandatory=True, density="compact", variant="outlined", divided=True,
-                       style="flex: none;", **kwargs):
-        for label, value, title in items:
-            v3.VBtn(label, value=value, size="small", title=title)
 
 
 def _mode_toggle() -> None:
@@ -71,55 +53,19 @@ def _mode_toggle() -> None:
             v3.VBtn("data", value="data", size="small", disabled=("!fv_data_ok",))
 
 
-def _show_toggle() -> None:
-    """What is drawn: the surface, a slice, a clip, or (data mode) the whole volume."""
-    with v3.VBtnToggle(v_model=("fv_show",), mandatory=True, density="compact", variant="outlined",
-                       divided=True, style="flex: none;"):
-        v3.VBtn("surface", value="surface", size="small", title="the boundary surface")
-        v3.VBtn("slice", value="slice", size="small", title="a plane through the domain")
-        v3.VBtn("clip", value="clip", size="small", title="the domain cut by a plane, one side kept")
-        v3.VBtn("volume", value="volume", size="small", v_if="fv_mode === 'data'",
-                title="the whole grid travels")
-
-
-def _cut_controls() -> None:
-    """Axis, position and (clip) side of the cut; shown for a slice or a clip."""
-    with html.Div(classes="nf-field-cut", v_show="fv_show === 'slice' || fv_show === 'clip'"):
-        _toggle("fv_axis", [(a, a, f"cut normal to {a}") for a in "xyz"])
-        v3.VSlider(v_model_number=("fv_pos",), min=0, max=100, step=0.5, density="compact", hide_details=True,
-                   title="where along the axis (% of the domain)")
-        html.Span(f"{{{{ {_COORD} }}}}", classes="nf-field-coord")
-        v3.VCheckbox(v_model=("fv_flip",), label="flip", hide_details=True, density="compact",
-                     style="flex: none;", v_show="fv_show === 'clip'", title="keep the upper side")
-
-
-def _colour_menu() -> None:
-    """Colour range (auto or fixed), colour map and log scale, behind the palette button."""
-    with v3.VMenu(close_on_content_click=False, location="bottom"):
-        with v3.Template(v_slot_activator="{ props }"):
-            v3.VBtn(v_bind="props", icon="mdi-palette", size="small", variant="text", title="colours")
-        with v3.VCard(classes="pa-3", min_width=260):
-            _toggle("fv_range", [("auto", "auto", "the data's range"), ("fixed", "fixed", "a range of your own")])
-            with html.Div(classes="d-flex ga-2 mt-2", v_show="fv_range === 'fixed'"):
-                v3.VTextField(v_model_number=("fv_lo",), type="number", label="min", density="compact",
-                              hide_details=True, variant="outlined")
-                v3.VTextField(v_model_number=("fv_hi",), type="number", label="max", density="compact",
-                              hide_details=True, variant="outlined")
-            v3.VSelect(v_model=("fv_cmap",), items=("fv_cmaps", _CMAP_ITEMS), label="colour map",
-                       density="compact", hide_details=True, variant="outlined", classes="mt-3")
-            v3.VCheckbox(v_model=("fv_log",), label="log scale", hide_details=True, density="compact")
+#: The scene picker's items: the scenes that can show, ● for unsaved edits.
+_SCENE_ITEMS = "sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))"
 
 
 def _bar() -> None:
     with html.Div(classes="nf-field-bar"):
         _mode_toggle()
-        _show_toggle()
-        _cut_controls()
+        v3.VSelect(v_model=("sc_current",), items=(_SCENE_ITEMS,), label="scene", density="compact",
+                   hide_details=True, variant="outlined", title="the scene drawn (Scenes panel: new, save, …)")
         v3.VSelect(v_model=("fv_field",), items=("fv_fields",), label="field", density="compact",
                    hide_details=True, variant="outlined", disabled=("!fv_fields.length",))
         v3.VSelect(v_model=("fv_comp",), items=("fv_comps",), label="component", density="compact",
                    hide_details=True, variant="outlined", v_show="fv_comps.length")
-        _colour_menu()
         v3.VCheckbox(v_model=("fv_live",), label="live", hide_details=True, density="compact",
                      style="flex: none;", title="update while running (off: only at pauses)")
         # Live frames: every N time steps, at least s seconds apart (each costs a render).

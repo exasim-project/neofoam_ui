@@ -26,6 +26,7 @@ from neofoam_ui.engine._protocols import RenderBackend, Renderer
 from neofoam_ui.engine._regions import _regions_of
 from neofoam_ui.engine._tracking import _fingerprint
 from neofoam_ui.geometry import cell_count, merged
+from neofoam_ui.scenes import FIELD
 
 if TYPE_CHECKING:
     from neofoam_ui.engine._session import Session
@@ -196,15 +197,16 @@ class _FieldView:
         return name, geom, _merged_fields([(cell_count(g), f) for _, (g, f) in parts])
 
     def _published(self, fields: dict[str, np.ndarray], params: dict[str, str]) -> dict[str, np.ndarray]:
-        """What the renderer gets: the viewed field, or all for a renderer that uses them all."""
-        if self._backend.publishes_all() or params.get("field") not in fields:
+        """What the renderer gets: the viewed field, or all for a renderer or a scene that may use any."""
+        if self._backend.publishes_all() or params.get("graph") or params.get("field") not in fields:
             return fields
         return {params["field"]: fields[params["field"]]}
 
     def _fail(self, text: str) -> None:
         if self._sent != ("error", self._epoch, text):
             self._sent = ("error", self._epoch, text)
-            self._s.emit({"type": "frame", "image": None, "fields": [], "error": text})
+            scene = (self.view or (None, None, None, {}))[3].get("scene", FIELD)
+            self._s.emit({"type": "frame", "image": None, "fields": [], "error": text, "scene": scene})
 
     def send(self) -> None:
         """Render the viewed field if the view is open and the values changed; send the frame."""
@@ -265,12 +267,16 @@ class _FieldView:
                     fields: dict[str, np.ndarray]) -> None:
         """Send the ``frame`` message of ``image`` (``None`` in image mode: the render failed)."""
         s = self._s
+        report = getattr(self.renderer, "report", None) or {}
+        if report.get("error"):  # the shown scene failed; the view and the other scenes go on
+            return self._fail(report["error"])
         if image is None and params["mode"] != "data":
             return self._fail(self._error or "in-situ view failed")
         frame = {
             "type": "frame", "image": base64.b64encode(image).decode("ascii") if image is not None else None,
             "mode": params["mode"], "field": params["field"], "component": params["component"],
             "view": list(view[:3]),  # the request this frame answers (field/component may be a fallback)
+            "scene": params.get("scene", FIELD),
             "time": s.solver.scalars(s.ctx).get("time"),
             "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
                        for k, v in fields.items()],
@@ -283,7 +289,6 @@ class _FieldView:
                 self._pipeline_sent = key_
                 frame["pipeline"] = graph
             frame["pipeline_ms"] = self.pipeline.get("ms", {})
-        report = getattr(self.renderer, "report", None)
         if report:  # what the renderer tells of the frame (domain bounds, notes)
             frame["report"] = report
         s.emit(frame)

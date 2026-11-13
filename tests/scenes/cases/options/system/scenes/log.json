@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "surface", "type": "Surface"},
+    {"id": "display", "type": "Display", "props": {"log": true}},
+    {"id": "view", "type": "View"}
+  ],
+  "edges": [["grid", "surface"], ["surface", "display"], ["display", "view"]]
+}

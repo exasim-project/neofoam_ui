@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "d1", "type": "Display"},
+    {"id": "v1", "type": "View"},
+    {"id": "v2", "type": "View"}
+  ],
+  "edges": [["grid", "d1"], ["d1", "v1"], ["d1", "v2"]]
+}

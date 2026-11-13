@@ -46,8 +46,9 @@ class _LiveData:
         self._link: Any = None
         self._connected = False
         self._reconnect = False
-        #: The source of the solver's pipeline to extract (``surface`` or ``grid``).
-        self.name = "surface"
+        #: The source of the solver's pipeline to extract (the ``Field`` scene's surface, until a
+        #: frame names another: ``report["extract"]``).
+        self.name = "Field:surface"
         self._source: Any = None
         self._colour: tuple[Optional[str], str] = (None, "mag")
         self._fitted = False
@@ -84,11 +85,6 @@ class _LiveData:
     def show(self, field: Optional[str], component: str) -> bool:
         """Colour by ``field`` (``component``: ``mag`` or an index); whether there is data to show."""
         self._colour = (field, component)
-        return self._draw()
-
-    def style(self, cmap: str, value_range: Optional[tuple[float, float]], log: bool) -> bool:
-        """Colour map, fixed range (``None``: the data's) and log scale; whether there is data."""
-        self._style = (cmap, value_range, log)
         return self._draw()
 
     def look(self, camera: str, zoom: float) -> None:

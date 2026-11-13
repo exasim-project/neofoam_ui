@@ -17,7 +17,7 @@ from neofoam_ui._ui import _dock
 from neofoam_ui.app import StepperApp
 
 VIEWS = ["step", "plots", "cfd", "console", "fields"]
-SIDE = ["tree", "breakpoints", "inspector", "callstack", "vars", "options", "legend"]
+SIDE = ["tree", "breakpoints", "scenes", "inspector", "callstack", "vars", "options", "legend"]
 
 
 @pytest.fixture(scope="module")
@@ -180,7 +180,7 @@ def test_the_controller_in_a_browser(built, tmp_path):
     assert out["closed"]["dag_on"] is False and "step" not in out["closed"]["open"]
     side = out["side"]
     assert side["side"]["vars"]["open"] and side["side"]["vars"]["side"] == "left"
-    assert side["side"]["vars"]["ord"] == 2  # moved: below the left sidebar's others
+    assert side["side"]["vars"]["ord"] == 3  # moved: below the left sidebar's others (tree, breakpoints, scenes)
     assert side["col"].get("tree") and not side["side"]["inspector"]["open"]
     # remembered: the dock's layout and the sidebars
     assert out["restored"]["calls"] == [["restoreLayout", {"grid": {"root": {}}, "panels": {"plots": {}, "console": {}}}]]

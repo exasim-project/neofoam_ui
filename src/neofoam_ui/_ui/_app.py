@@ -92,6 +92,11 @@ class StepperApp:
         return next(p for p in self.panes if p.name == name)
 
     @property
+    def case(self) -> str:
+        """The case directory (the worker's working directory)."""
+        return os.path.abspath(self.link.case or ".")
+
+    @property
     def proc(self) -> Any:
         """The worker process (``None`` while there is none)."""
         return self.link.proc

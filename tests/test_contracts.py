@@ -76,6 +76,19 @@ def test_the_worker_side_imports_without_trame():
     subprocess.run([sys.executable, "-c", code], check=True, env=env)
 
 
+def test_the_worker_side_and_the_field_scene_need_no_pydantic():
+    """pydantic is needed only for a scene of the case; the built-in Field scene runs without it."""
+    code = (
+        "import sys\n"
+        "sys.modules['pydantic'] = None\n"
+        "import neofoam_ui.worker, neofoam_ui.engine, neofoam_ui.parallel, neofoam_ui.catalyst\n"
+        "from neofoam_ui import scenes\n"
+        "assert [n['type'] for n in scenes.ordered(scenes.field_graph())] == ['grid', 'Surface', 'Display', 'View']\n"
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")]))}
+    subprocess.run([sys.executable, "-c", code], check=True, env=env)
+
+
 def test_python_m_worker_prints_its_usage():
     proc = subprocess.run([sys.executable, "-m", "neofoam_ui.worker"], capture_output=True, text=True,
                           env={**os.environ, "PYTHONPATH": str(SRC)})
@@ -173,6 +186,10 @@ PUBLIC = {
     "neofoam_ui.adapters": [],
     "neofoam_ui.adapters.neofoam": ["ObservedNeoFoamSolver", "incompressible_fluid", "multi_run",
                                     "neofoam_solver", "register_insitu"],
+    "neofoam_ui.scenes": ["FIELD", "SCENES_DIR", "field_graph", "inputs", "ordered"],
+    "neofoam_ui.scenes.models": ["CalculatorNode", "ClipNode", "ContourNode", "DisplayNode", "GlyphNode", "GridNode",
+                                 "Scene", "SceneError", "SceneFile", "SliceNode", "StreamTracerNode", "SurfaceNode",
+                                 "ThresholdNode", "ViewNode", "parse", "read_scenes", "write_scene"],
     "neofoam_ui.toy": [],
     "neofoam_ui.toy.heat1d": ["Heat1D", "Heat1DContext", "run_plain"],
 }

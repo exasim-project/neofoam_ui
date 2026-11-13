@@ -1,10 +1,12 @@
 """One frame of four unit hexahedra along x (``T`` = -1, 0, 1, 2) through the stepper's
-pipeline with the display options given as JSON (first argument after the prefix); prints
-what the image shows (JSON): its size, which colour ends above the colour bar, whether the mesh reaches the
-top-left corner, and the pipeline's report."""
+pipeline with the parameters given as JSON (first argument after the prefix) and, optionally,
+a scene file (second; else the built-in ``Field`` scene); prints what the image shows (JSON):
+its size, which colour ends above the colour bar, whether the mesh reaches the top-left
+corner, and the pipeline's report."""
 
 import json
 import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -42,6 +44,8 @@ def _seen(png):
 
 insitu = catalyst.InSitu(sys.argv[1])
 options = json.loads(sys.argv[2])
+if len(sys.argv) > 3:
+    options.update(scene=Path(sys.argv[3]).stem, graph=Path(sys.argv[3]).read_text())
 image = insitu.execute(GEOM, {"T": np.arange(N, dtype=float) - 1}, 0.0,
                        {"field": "T", "component": "mag", "mode": "image", **options})
 print(json.dumps({**_seen(image), "notes": insitu.report["notes"], "bounds": insitu.report["bounds"],

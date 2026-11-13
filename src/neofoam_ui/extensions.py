@@ -55,6 +55,10 @@ class PaneContext(Protocol):
     #: MPI ranks of the run (1: serial).
     np: int
 
+    @property
+    def case(self) -> str:
+        """The case directory (the worker runs there)."""
+
     def send(self, cmd: dict[str, Any]) -> None:
         """A command to the worker (see :mod:`neofoam_ui.worker`); dropped without a worker."""
 

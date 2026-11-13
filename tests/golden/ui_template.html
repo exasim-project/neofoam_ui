@@ -151,6 +151,11 @@ mdi-record-circle-outline
 {{ bps.length }}
 </span>
 </button>
+<button :class="['ab', nf_lay.side.scenes.open ? 'on' : '']" title="Scenes: the in-situ scenes of the case: switch, new, duplicate, rename, delete, save" v-if="nf_lay.side.scenes.side === 'left'" @click="window.nfL.toggle('scenes')">
+<VIcon size="20">
+mdi-layers-outline
+</VIcon>
+</button>
 <button :class="['ab', nf_lay.side.inspector.open ? 'on' : '']" title="Inspector: the selected node" v-if="nf_lay.side.inspector.side === 'left'" @click="window.nfL.toggle('inspector')">
 <VIcon size="20">
 mdi-information-outline
@@ -220,6 +225,28 @@ Breakpoints
 </div>
 <div class="nf-pb" v-if="!nf_lay.col.breakpoints">
 <trame-template templateName="nf_p_breakpoints" />
+</div>
+</section>
+<section data-id="scenes" :class="['nf-panel', { collapsed: nf_lay.col.scenes }]" :style="{ order: nf_lay.side.scenes.ord }" v-if="nf_lay.side.scenes.open && nf_lay.side.scenes.side === 'left'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-layers-outline
+</VIcon>
+<span class="t" title="the in-situ scenes of the case: switch, new, duplicate, rename, delete, save">
+Scenes
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('scenes')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('scenes')">
+{{ nf_lay.col.scenes ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('scenes')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.scenes">
+<trame-template templateName="nf_p_scenes" />
 </div>
 </section>
 <section data-id="inspector" :class="['nf-panel', { collapsed: nf_lay.col.inspector }]" :style="{ order: nf_lay.side.inspector.ord }" v-if="nf_lay.side.inspector.open && nf_lay.side.inspector.side === 'left'">
@@ -381,6 +408,28 @@ Breakpoints
 <trame-template templateName="nf_p_breakpoints" />
 </div>
 </section>
+<section data-id="scenes" :class="['nf-panel', { collapsed: nf_lay.col.scenes }]" :style="{ order: nf_lay.side.scenes.ord }" v-if="nf_lay.side.scenes.open && nf_lay.side.scenes.side === 'right'">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-layers-outline
+</VIcon>
+<span class="t" title="the in-situ scenes of the case: switch, new, duplicate, rename, delete, save">
+Scenes
+</span>
+<button class="hb" title="move to the other sidebar" @click="window.nfL.move('scenes')">
+⇄
+</button>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('scenes')">
+{{ nf_lay.col.scenes ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('scenes')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.scenes">
+<trame-template templateName="nf_p_scenes" />
+</div>
+</section>
 <section data-id="inspector" :class="['nf-panel', { collapsed: nf_lay.col.inspector }]" :style="{ order: nf_lay.side.inspector.ord }" v-if="nf_lay.side.inspector.open && nf_lay.side.inspector.side === 'right'">
 <div class="nf-ph">
 <VIcon size="15">
@@ -509,6 +558,11 @@ mdi-record-circle-outline
 {{ bps.length }}
 </span>
 </button>
+<button :class="['ab', nf_lay.side.scenes.open ? 'on' : '']" title="Scenes: the in-situ scenes of the case: switch, new, duplicate, rename, delete, save" v-if="nf_lay.side.scenes.side === 'right'" @click="window.nfL.toggle('scenes')">
+<VIcon size="20">
+mdi-layers-outline
+</VIcon>
+</button>
 <button :class="['ab', nf_lay.side.inspector.open ? 'on' : '']" title="Inspector: the selected node" v-if="nf_lay.side.inspector.side === 'right'" @click="window.nfL.toggle('inspector')">
 <VIcon size="20">
 mdi-information-outline
@@ -604,6 +658,14 @@ Breaks
 </span>
 <span class="nf-badge" v-if="bps.length">
 {{ bps.length }}
+</span>
+</button>
+<button :class="['pb2', nf_lay.phone.includes('scenes') ? 'on' : '']" title="Scenes: the in-situ scenes of the case: switch, new, duplicate, rename, delete, save" @click="window.nfL.toggle('scenes')">
+<VIcon size="20">
+mdi-layers-outline
+</VIcon>
+<span >
+Scenes
 </span>
 </button>
 <button :class="['pb2', nf_lay.phone.includes('inspector') ? 'on' : '']" title="Inspector: the selected node" @click="window.nfL.toggle('inspector')">
@@ -780,6 +842,25 @@ Breakpoints
 </div>
 <div class="nf-pb" v-if="!nf_lay.col.breakpoints">
 <trame-template templateName="nf_p_breakpoints" />
+</div>
+</section>
+<section data-id="scenes" :class="['nf-panel', { collapsed: nf_lay.col.scenes }]" :style="{ order: nf_lay.phone.indexOf('scenes') }" v-if="nf_lay.phone.includes('scenes')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-layers-outline
+</VIcon>
+<span class="t" title="the in-situ scenes of the case: switch, new, duplicate, rename, delete, save">
+Scenes
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('scenes')">
+{{ nf_lay.col.scenes ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('scenes')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.scenes">
+<trame-template templateName="nf_p_scenes" />
 </div>
 </section>
 <section data-id="inspector" :class="['nf-panel', { collapsed: nf_lay.col.inspector }]" :style="{ order: nf_lay.phone.indexOf('inspector') }" v-if="nf_lay.phone.includes('inspector')">
@@ -974,6 +1055,15 @@ Breakpoints
 </span>
 <i class="nf-sw" />
 </div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('scenes') }]" @click="window.nfL.toggle('scenes')">
+<VIcon size="18">
+mdi-layers-outline
+</VIcon>
+<span >
+Scenes
+</span>
+<i class="nf-sw" />
+</div>
 <div :class="['nf-drow', { on: nf_lay.phone.includes('inspector') }]" @click="window.nfL.toggle('inspector')">
 <VIcon size="18">
 mdi-information-outline
@@ -1077,61 +1167,9 @@ data
 </VBtn>
 </span>
 </VBtnToggle>
-<VBtnToggle style="flex: none;" v-model="fv_show" density="compact" variant="outlined" mandatory divided>
-<VBtn title="the boundary surface" size="small" value="surface">
-surface
-</VBtn>
-<VBtn title="a plane through the domain" size="small" value="slice">
-slice
-</VBtn>
-<VBtn title="the domain cut by a plane, one side kept" size="small" value="clip">
-clip
-</VBtn>
-<VBtn title="the whole grid travels" v-if="fv_mode === 'data'" size="small" value="volume">
-volume
-</VBtn>
-</VBtnToggle>
-<div class="nf-field-cut" v-show="fv_show === 'slice' || fv_show === 'clip'">
-<VBtnToggle style="flex: none;" v-model="fv_axis" density="compact" variant="outlined" mandatory divided>
-<VBtn title="cut normal to x" size="small" value="x">
-x
-</VBtn>
-<VBtn title="cut normal to y" size="small" value="y">
-y
-</VBtn>
-<VBtn title="cut normal to z" size="small" value="z">
-z
-</VBtn>
-</VBtnToggle>
-<VSlider v-model.number="fv_pos" title="where along the axis (% of the domain)" max="100" min="0" step="0.5" density="compact" hideDetails />
-<span class="nf-field-coord">
-{{ fv_bounds && fv_axis ? fv_axis + ' = ' + (fv_bounds[2 * 'xyz'.indexOf(fv_axis)] + fv_pos / 100 * (fv_bounds[2 * 'xyz'.indexOf(fv_axis) + 1] - fv_bounds[2 * 'xyz'.indexOf(fv_axis)])).toPrecision(4) : fv_pos + ' %' }}
-</span>
-<VCheckbox style="flex: none;" title="keep the upper side" v-show="fv_show === 'clip'" v-model="fv_flip" label="flip" density="compact" hideDetails />
-</div>
-<VSelect :key="`w832-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w833-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
-<VMenu location="bottom" :closeOnContentClick="false">
-<template v-slot:activator="{ props }">
-<VBtn title="colours" v-bind="props" size="small" icon="mdi-palette" variant="text" />
-</template>
-<VCard class="pa-3" minWidth="260">
-<VBtnToggle style="flex: none;" v-model="fv_range" density="compact" variant="outlined" mandatory divided>
-<VBtn title="the data's range" size="small" value="auto">
-auto
-</VBtn>
-<VBtn title="a range of your own" size="small" value="fixed">
-fixed
-</VBtn>
-</VBtnToggle>
-<div class="d-flex ga-2 mt-2" v-show="fv_range === 'fixed'">
-<VTextField v-model.number="fv_lo" type="number" label="min" density="compact" variant="outlined" hideDetails />
-<VTextField v-model.number="fv_hi" type="number" label="max" density="compact" variant="outlined" hideDetails />
-</div>
-<VSelect :key="`w844-${tts}`" class="mt-3" v-model="fv_cmap" density="compact" variant="outlined" :items="fv_cmaps" label="colour map" hideDetails />
-<VCheckbox v-model="fv_log" label="log scale" density="compact" hideDetails />
-</VCard>
-</VMenu>
+<VSelect :key="`w864-${tts}`" title="the scene drawn (Scenes panel: new, save, …)" v-model="sc_current" density="compact" variant="outlined" :items="sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))" label="scene" hideDetails />
+<VSelect :key="`w865-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w866-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -1382,7 +1420,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w805-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w850-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -1399,6 +1437,81 @@ Post-processing tables
 {{ pt_names.length && !pt_sel.length ? 'pick tables to plot' : pt_msg }}
 </div>
 </div>
+</div>
+<!-- template nf_p_scenes -->
+<div class="nf-pc nf-pc-side nf-pc-scenes">
+<div class="nf-scenes">
+<div :class="['nf-scene', { cur: s.name === sc_current, bad: s.error }]" :title="s.error ? s.sub : s.path" :key="s.name" v-for="s in sc_list" @click="!s.error && (sc_current = s.name)">
+<VIcon :icon="s.error ? 'mdi-alert-circle-outline' : s.builtin ? 'mdi-cube-outline' : 'mdi-graph-outline'" :color="s.error ? 'error' : undefined" size="18" />
+<div style="min-width: 0;">
+<div class="n">
+{{ s.title }}
+</div>
+<div :class="['s', { err: s.error }]">
+{{ s.sub }}
+</div>
+</div>
+<span class="dot" title="not saved" v-if="s.unsaved">
+●
+</span>
+</div>
+<div class="nf-scene-acts">
+<VBtn title="write the scene to its file" :disabled="!(sc_list.find(s => s.name === sc_current) || {}).unsaved" size="small" variant="tonal" @click="trigger('nf_sc_save')">
+Save
+</VBtn>
+<VBtn title="an unsaved copy of this scene" size="small" variant="tonal" @click="trigger('nf_sc_duplicate')">
+Duplicate
+</VBtn>
+<VBtn :disabled="(sc_list.find(s => s.name === sc_current) || {}).builtin" size="small" variant="tonal" @click="trigger('nf_sc_ask_rename')">
+Rename
+</VBtn>
+<VBtn :disabled="(sc_list.find(s => s.name === sc_current) || {}).builtin" size="small" variant="tonal" @click="sc_confirm = true">
+Delete
+</VBtn>
+<VBtn title="a new scene (the Field scene's graph, unsaved)" size="small" variant="tonal" prependIcon="mdi-plus" @click="trigger('nf_sc_new')">
+New
+</VBtn>
+<VBtn title="read system/scenes/ again (unsaved edits stay)" size="small" icon="mdi-refresh" variant="text" @click="trigger('nf_sc_load')" />
+</div>
+<div class="nf-scene-path">
+{{ (sc_list.find(s => s.name === sc_current) || {}).path }}
+</div>
+<div class="nf-scene-hint">
+Switching: the solver keeps every scene's ParaView objects; only the shown one executes.
+</div>
+</div>
+<VDialog v-model="sc_rename" maxWidth="360">
+<VCard title="Rename scene">
+<VCardText >
+<VTextField @keyup.enter="trigger('nf_sc_rename', [sc_new_name])" autofocus v-model="sc_new_name" label="title" density="compact" :errorMessages="sc_msg" hideDetails="auto" />
+</VCardText>
+<VCardActions >
+<VSpacer  />
+<VBtn @click="sc_rename = false">
+Cancel
+</VBtn>
+<VBtn color="primary" @click="trigger('nf_sc_rename', [sc_new_name])">
+Rename
+</VBtn>
+</VCardActions>
+</VCard>
+</VDialog>
+<VDialog v-model="sc_confirm" maxWidth="360">
+<VCard title="Delete scene">
+<VCardText >
+Delete the scene and system/scenes/{{ sc_current }}.json? This cannot be undone.
+</VCardText>
+<VCardActions >
+<VSpacer  />
+<VBtn @click="sc_confirm = false">
+Cancel
+</VBtn>
+<VBtn color="error" @click="trigger('nf_sc_delete')">
+Delete
+</VBtn>
+</VCardActions>
+</VCard>
+</VDialog>
 </div>
 <!-- template nf_p_step -->
 <div class="nf-pc nf-pc-main nf-pc-step">
