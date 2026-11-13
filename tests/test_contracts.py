@@ -158,7 +158,7 @@ PUBLIC = {
                           "MeshProvider", "Mode", "Op", "PassControl", "Peers", "PointMapping", "ProgramContext", "Region", "RegionProvider", "RenderBackend",
                           "Renderer", "ResultObserver", "SelfDrivingSolver", "Session", "Solver",
                           "ThreadedProgram", "UNTRACKED", "ViewFieldProvider", "assign_ids", "topological_order"],
-    "neofoam_ui.protocol": ["CATALYST_ENV", "CATALYST_LIVE_ENV", "CATALYST_OUT_ENV", "CATALYST_SCRIPT_ENV",
+    "neofoam_ui.protocol": ["CATALYST_DATA_ENV", "CATALYST_ENV", "CATALYST_LIVE_ENV", "CATALYST_OUT_ENV", "CATALYST_SCRIPT_ENV",
                             "COMMANDS", "DELAY_ENV", "LOSSY", "MESSAGES", "RANK_OPS", "SYNC_ENV",
                             "UI_URGENT", "WAIT_ENV", "WORKER_URGENT"],
     "neofoam_ui.app": ["StepperApp", "main", "parse_args"],

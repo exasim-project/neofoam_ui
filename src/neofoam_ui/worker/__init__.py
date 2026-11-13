@@ -12,15 +12,17 @@ UI → worker (stdin)::
     {"cmd": "watch", "on": true}          # the DAG pane is open: report the events of a run
     {"cmd": "wait", "on": true}           # "wait for UI": block until the UI acknowledged
     {"cmd": "ack", "seq": 7}              # ... the ``sync`` message 7 (and all before it)
-    {"cmd": "view", "field": "U", "component": "mag|0|1|2", "on": true}   # field view
+    {"cmd": "view", "field": "U", "component": "mag|0|1|2", "on": true,  # field view
+     "mode": "image|data",                    # data: Catalyst Live
+     "options": {"width": "800", ...}}        # display options (pipelines/view.py)
     {"cmd": "live", "on": true}           # field view frames while running ...
     {"cmd": "frames", "every": 1, "seconds": 0.5}   # ... every N time steps, >= s apart
     {"cmd": "stop"}
 
 worker → UI (stdout): the engine messages (``graph``, ``log``, ``paused``,
 ``running``, ``breakpoint``, ``error``, and for an open field view a ``frame`` —
-the name of the image Catalyst rendered in situ — at each pause where the values
-changed; with ``pipeline_ms`` and, when it changed, the ``pipeline`` diagram; for NeoFOAM's
+in image mode the PNG Catalyst rendered in situ (base64, ``image``), in data mode none
+(Catalyst Live carries the data) — at each pause where the values changed; with ``pipeline_ms`` and, when it changed, the ``pipeline`` diagram; for NeoFOAM's
 post-processing tables ``pptables`` once and a ``pptable`` row set per table and step, see
 :mod:`neofoam_ui.pptables`) plus ``stdout`` for anything the solver
 prints. File descriptor 1 is redirected into a pipe, so neither Python ``print``

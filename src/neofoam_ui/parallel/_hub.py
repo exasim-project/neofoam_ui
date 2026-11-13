@@ -48,7 +48,7 @@ class _Hub:
 
     # -- engine.Peers ----------------------------------------------------------------
 
-    def go(self, track: bool = True, view: Optional[tuple[Optional[str], str]] = None) -> None:
+    def go(self, track: bool = True, view: Optional[tuple[Any, ...]] = None) -> None:
         self._send({"op": "go", "track": track, "view": list(view) if view else None})
 
     def stats(self) -> list[dict[str, dict[str, Any]]]:

@@ -142,11 +142,12 @@ class RegionProvider(Protocol):
 class Renderer(Protocol):
     """Draws one rank's part of a frame (collective under MPI, on the solver thread).
 
-    Optional: ``describe() -> dict`` (the pipeline, for the diagram), ``prune(keep)`` (delete
-    older images) and ``ms`` (timings of the last execute)."""
+    ``params``: ``field``, ``component`` and ``mode`` (``image``: return the PNG of the whole
+    domain on rank 0, else ``None``; ``data``: publish, no image needed). Optional:
+    ``describe() -> dict`` (the pipeline, for the diagram) and ``ms`` (timings of the last execute)."""
 
     def execute(self, geom: dict[str, Any], fields: dict[str, np.ndarray], time: float,
-                params: dict[str, str]) -> str: ...
+                params: dict[str, str]) -> Optional[bytes]: ...
 
     def finalize(self) -> None: ...
 
@@ -169,7 +170,7 @@ class Peers(Protocol):
     Lockstep: rank 0 calls :meth:`go` before it resumes its own program, :meth:`free` with
     the same parameters it passes itself, :meth:`render` before its own (collective) render."""
 
-    def go(self, track: bool, view: Optional[tuple[Optional[str], str]]) -> None:
+    def go(self, track: bool, view: Optional[tuple[Any, ...]]) -> None:
         """Resume past the current event (tracking writes or not), as rank 0 is about to;
         ``view``: rank 0's field view then (``None`` = closed), for the solver's frames."""
 

@@ -130,6 +130,15 @@ async def _run_ui(case: Path, python: str, np_: int, mode: str, catalyst: str | 
         s.wait_ui = mode.endswith("-wait")
     elif mode.endswith("-wait"):
         raise SystemExit("this neofoam_ui has no 'wait for UI' option")
+    frames = 0
+    receive = app.link._on_message  # count the frames the UI got
+
+    def count(msg: dict) -> None:
+        nonlocal frames
+        frames += msg["type"] == "frame"
+        receive(msg)
+
+    app.link._on_message = count
     t0 = time.time()
     await app.spawn()
     while not str(s.status).startswith("paused"):
@@ -139,18 +148,14 @@ async def _run_ui(case: Path, python: str, np_: int, mode: str, catalyst: str | 
     while not (s.finished or s.failed or not s.connected):
         await asyncio.sleep(0.01)
     t_end = time.time()
-    run_dir = getattr(app, "run_dir", None) or getattr(app, "_run_dir", "")  # an older UI: _run_dir
-    out_dir = os.path.join(app.insitu_dir, run_dir)
-    frames = len(os.listdir(out_dir)) if run_dir and os.path.isdir(out_dir) else 0
     app.stop()
     try:
         await asyncio.wait_for(app.proc.wait(), 60)
     except asyncio.TimeoutError:
         app.proc.kill()
-    shutil.rmtree(app.insitu_dir, ignore_errors=True)
     if s.failed or not s.finished:
         raise RuntimeError(f"{mode}: the run did not finish: {s.status}")
-    return {"total": t_end - t0, "run": t_end - t_init, "pngs_kept": frames}
+    return {"total": t_end - t0, "run": t_end - t_init, "frames": frames}
 
 
 def main() -> None:

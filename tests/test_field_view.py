@@ -1,9 +1,11 @@
 """In-situ field view: the view protocol (Catalyst faked), geometry, and — where a
 Catalyst + ParaView install is configured — a real frame rendered through Catalyst 2."""
 
+import base64
 import gzip
 import json
 import os
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -26,15 +28,17 @@ HELPERS = os.path.join(os.path.dirname(__file__), "helpers")
 
 class FakeInSitu:
     calls: list = []
+    out_dirs: list = []
     ms: dict = {}
 
-    def __init__(self):
+    def __init__(self, out_dir=None):
         self.step = 0
+        FakeInSitu.out_dirs.append(out_dir)
 
     def execute(self, geom, fields, time, params):
         FakeInSitu.calls.append({"geom": geom, "fields": fields, "time": time, "params": params})
         self.step += 1
-        return f"view_{self.step - 1:06d}.png"
+        return None if params["mode"] == "data" else f"png{self.step - 1}".encode()
 
     def describe(self):
         FakeInSitu.calls.append("describe")
@@ -54,12 +58,12 @@ PIPELINE = {
 
 
 @pytest.fixture(autouse=True)
-def fake_catalyst(monkeypatch, tmp_path):
+def fake_catalyst(monkeypatch):
     FakeInSitu.calls = []
+    FakeInSitu.out_dirs = []
     FakeInSitu.ms = {}
     FakeInSitu.pipeline = json.loads(json.dumps(PIPELINE))
     monkeypatch.setenv(catalyst.ENV, "/nowhere")
-    monkeypatch.setenv(catalyst.OUT_ENV, str(tmp_path))
     monkeypatch.setattr(catalyst, "InSitu", FakeInSitu)
     return FakeInSitu.calls
 
@@ -100,9 +104,9 @@ def test_frames_only_when_values_change(fake_catalyst):
     session, messages = session_after_init()
     session.set_view("T")
     (frame,) = of(messages, "frame")
-    assert frame["field"] == "T" and frame["file"] == "view_000000.png"
+    assert frame["field"] == "T" and base64.b64decode(frame["image"]) == b"png0"
     call = renders(fake_catalyst)[0]
-    assert call["params"] == {"field": "T", "component": "mag"}
+    assert call["params"] == {"field": "T", "component": "mag", "mode": "image"}
     assert call["geom"]["kind"] == "line"
     # the default pipeline gets the viewed field only; the view offers every cell-sized one
     # (flux lives on the 41 faces)
@@ -113,7 +117,7 @@ def test_frames_only_when_values_change(fake_catalyst):
     assert len(of(messages, "frame")) == 1
     session.advance("time_step")  # T changed
     frames = of(messages, "frame")
-    assert len(frames) == 2 and frames[-1]["file"] == "view_000001.png"
+    assert len(frames) == 2 and base64.b64decode(frames[-1]["image"]) == b"png1"
     # each frame precedes the pause it belongs to
     assert messages[-1]["type"] == "paused" and messages[-2] is frames[-1]
 
@@ -123,6 +127,16 @@ def test_another_pipeline_script_gets_every_field(fake_catalyst, monkeypatch):
     session, _ = session_after_init()
     session.set_view("T")
     assert set(renders(fake_catalyst)[0]["fields"]) == {"T", "T_old", "kappa", "source_mask"}
+
+
+@pytest.mark.parametrize("script, out_dir", [(None, None), ("/my/pipeline.py", "postProcessing/catalyst")])
+def test_only_another_pipeline_script_gets_an_output_directory(fake_catalyst, monkeypatch, script, out_dir):
+    """The stepper's own pipeline writes nothing; another script's extracts go into the case."""
+    if script:
+        monkeypatch.setenv(catalyst.SCRIPT_ENV, script)
+    session, _ = session_after_init()
+    session.set_view("T")
+    assert FakeInSitu.out_dirs == [out_dir]
 
 
 def test_switching_field_and_closing():
@@ -157,7 +171,7 @@ def test_vector_components(fake_catalyst):
     session, messages = session_after_init(Vec())
     session.set_view("U", "1")
     assert of(messages, "frame")[-1]["component"] == "1"
-    assert renders(fake_catalyst)[-1]["params"] == {"field": "U", "component": "1"}
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "U", "component": "1", "mode": "image"}
     session.set_view("U", "7")  # no such component
     assert of(messages, "frame")[-1]["component"] == "mag"
     assert {"name": "U", "ncomp": 3} in of(messages, "frame")[-1]["fields"]
@@ -177,7 +191,7 @@ def test_solver_frame_draws_the_field_picked_in_the_ui(fake_catalyst):
     session, _ = session_after_init()
     session.request_view("T")
     session.solver_frame({"field": "kappa", "component": "mag"})
-    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag"}
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag", "mode": "image"}
 
 
 def test_solver_frame_without_a_field_draws_a_default(fake_catalyst):
@@ -213,8 +227,8 @@ def test_solver_frame_under_mpi_draws_the_view_rank_0_shared_at_its_last_go(fake
     session.advance("into")
     session.request_view("kappa")  # picked after the go: from the next go on
     session.solver_frame({"field": "U", "component": "mag"})
-    assert sent[-1] == ("T", "mag")
-    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag"}
+    assert sent[-1] == ("T", "mag", "image", {})
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag", "mode": "image"}
 
 
 def test_solver_frame_under_mpi_keeps_to_the_requested_field_while_no_view_was_shared(fake_catalyst):
@@ -222,15 +236,62 @@ def test_solver_frame_under_mpi_keeps_to_the_requested_field_while_no_view_was_s
     session.set_peers(SimpleNamespace(go=lambda track, view: None, render=lambda params: None))
     session.request_view("T")
     session.solver_frame({"field": "kappa", "component": "mag"})
-    assert renders(fake_catalyst)[-1]["params"] == {"field": "kappa", "component": "mag"}
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "kappa", "component": "mag", "mode": "image"}
 
 
-def test_a_follower_draws_the_view_rank_0_shared(fake_catalyst):
+@pytest.mark.parametrize("mode", ["image", "data"])
+def test_a_follower_draws_the_view_rank_0_shared(fake_catalyst, mode):
     session, _ = session_after_init()
     session.follower = True
-    session.share_view(["T", "mag"])
+    session.share_view(["T", "mag", mode, {}])
     session.solver_frame({"field": "kappa", "component": "mag"})
-    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag"}
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag", "mode": mode}
+
+
+# -- data mode: Catalyst Live carries the data, the frame no image -----------------------------
+
+
+def test_data_mode_frames_carry_no_image(fake_catalyst):
+    session, messages = session_after_init()
+    session.set_view("T", mode="data")
+    frame = of(messages, "frame")[-1]
+    assert (frame["mode"], frame["image"], frame["view"]) == ("data", None, ["T", "mag", "data"])
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag", "mode": "data"}
+
+
+def test_switching_the_mode_renders_the_same_values_again(fake_catalyst):
+    session, _ = session_after_init()
+    session.set_view("T")
+    session.set_view("T", mode="data")
+    assert [r["params"]["mode"] for r in renders(fake_catalyst)] == ["image", "data"]
+
+
+def test_new_display_options_render_unchanged_values_again(fake_catalyst):
+    session, _ = session_after_init()
+    session.set_view("T", mode="data")
+    session.set_view_options({"show": "slice", "axis": "x"})  # the UI extracts another source
+    session.request_view("T", mode="data")
+    session.send_view()
+    assert renders(fake_catalyst)[-1]["params"] == {"field": "T", "component": "mag", "mode": "data",
+                                                    "show": "slice", "axis": "x"}
+
+
+def test_display_options_reach_the_followers_with_the_shared_view(fake_catalyst):
+    session, _ = session_after_init()
+    sent = []
+    session.set_peers(SimpleNamespace(go=lambda track, view: sent.append(view), render=lambda params: None,
+                                      free=lambda params: None, stats=list))
+    session.set_view_options({"width": "640", "height": "360"})
+    session.request_view("T")
+    session.advance("into")
+    assert sent[-1] == ("T", "mag", "image", {"width": "640", "height": "360"})
+
+
+def test_the_renderers_report_goes_with_the_frame(fake_catalyst, monkeypatch):
+    monkeypatch.setattr(FakeInSitu, "report", {"bounds": [0, 1, 0, 1, 0, 1], "axis": "z", "notes": []}, raising=False)
+    session, messages = session_after_init()
+    session.set_view("T")
+    assert of(messages, "frame")[-1]["report"] == {"bounds": [0, 1, 0, 1, 0, 1], "axis": "z", "notes": []}
 
 
 class NoMesh(Heat1D):
@@ -242,7 +303,7 @@ def test_solver_without_geometry_reports_it_once():
     session.set_view("T")
     session.advance("time_step")
     frames = of(messages, "frame")
-    assert len(frames) == 1 and frames[0]["file"] is None and "no mesh" in frames[0]["error"]
+    assert len(frames) == 1 and frames[0]["image"] is None and "no mesh" in frames[0]["error"]
 
 
 def test_unconfigured_catalyst_says_so(monkeypatch):
@@ -250,7 +311,7 @@ def test_unconfigured_catalyst_says_so(monkeypatch):
     session, messages = session_after_init()
     session.set_view("T")
     (frame,) = of(messages, "frame")
-    assert frame["file"] is None and catalyst.ENV in frame["error"]
+    assert frame["image"] is None and catalyst.ENV in frame["error"]
 
 
 def test_a_failing_catalyst_disables_the_view_not_the_session(monkeypatch):
@@ -287,7 +348,7 @@ def test_other_ranks_render_the_same_frame(fake_catalyst):
 
     session.set_peers(Peers())
     session.set_view("kappa")
-    assert told == [{"field": "kappa", "component": "mag"}]
+    assert told == [{"field": "kappa", "component": "mag", "mode": "image"}]
     session.finalize_view()
     assert fake_catalyst[-1] == "finalize"
 
@@ -306,7 +367,7 @@ def test_view_request_from_another_thread_takes_effect_at_the_next_live_frame():
     session.advance("run")
     frames = of(messages, "frame")
     assert [f["field"] for f in frames[:3]] == ["T", "T", "kappa"]
-    assert all(f["field"] == "kappa" and f["view"] == ["kappa", "mag"] for f in frames[2:])
+    assert all(f["field"] == "kappa" and f["view"] == ["kappa", "mag", "image"] for f in frames[2:])
     assert messages.index(frames[2]) < messages.index(of(messages, "paused")[-1])
 
 
@@ -324,7 +385,7 @@ def test_frame_names_the_request_it_answers():
     session, messages = session_after_init()
     session.set_view("flux", "2")
     frame = of(messages, "frame")[-1]
-    assert (frame["field"], frame["component"], frame["view"]) == ("T", "mag", ["flux", "2"])
+    assert (frame["field"], frame["component"], frame["view"]) == ("T", "mag", ["flux", "2", "image"])
 
 
 # -- post-processing diagram: the pipeline read back after each execute ------------------------
@@ -352,7 +413,7 @@ def test_pipeline_goes_with_the_frame_only_when_it_changes(fake_catalyst):
 
 def test_only_the_deciding_rank_reads_the_pipeline_back(fake_catalyst):
     session, _ = session_after_init()
-    session.render({"field": "T", "component": "mag"})  # how a follower renders
+    session.render({"field": "T", "component": "mag", "mode": "image"})  # how a follower renders
     assert "describe" not in fake_catalyst and session.pipeline is None
 
 
@@ -365,7 +426,7 @@ def test_a_failing_description_keeps_the_frames(monkeypatch):
     session.set_view("T")
     session.advance("time_step")
     frames = of(messages, "frame")
-    assert len(frames) == 2 and all(f["file"] and "pipeline" not in f for f in frames)
+    assert len(frames) == 2 and all(f["image"] and "pipeline" not in f for f in frames)
     reports = [m for m in of(messages, "stdout") if "no proxy manager" in m["text"]]
     assert len(reports) == 1  # once, then no more diagrams
 
@@ -473,7 +534,7 @@ def test_worker_reports_unconfigured_view():
         send({"cmd": "step", "mode": "skip_init"})
         seen = until("paused")
         (frame,) = [m for m in seen if m["type"] == "frame"]
-        assert frame["file"] is None and catalyst.ENV in frame["error"]
+        assert frame["image"] is None and catalyst.ENV in frame["error"]
         send({"cmd": "stop"})
         until("stopped")
     finally:
@@ -586,6 +647,22 @@ def test_cell_centres_geometry():
 
 PREFIX = os.environ.get(catalyst.ENV)
 needs_catalyst = pytest.mark.skipif(not PREFIX, reason=f"set {catalyst.ENV} to a Catalyst + ParaView install")
+#: The interpreter ParaView was built for.
+PYTHON = os.environ.get("NEOFOAM_PYTHON", sys.executable)
+#: The signature every PNG starts with.
+PNG = b"\x89PNG\r\n\x1a\n"
+
+
+def _catalyst_env():
+    env = {k: v for k, v in os.environ.items() if k != "DISPLAY"}  # headless (EGL)
+    return {**env, "PYTHONPATH": os.path.join(os.path.dirname(__file__), "..", "src"), "HWLOC_COMPONENTS": "-gl"}
+
+
+def _run_catalyst(code):
+    """Runs in a fresh interpreter: Catalyst stays initialised for the life of a process."""
+    res = subprocess.run([PYTHON, "-c", code], capture_output=True, text=True, timeout=300, env=_catalyst_env())
+    assert res.returncode == 0, res.stderr[-3000:]
+    return res.stdout
 
 
 @needs_catalyst
@@ -615,18 +692,42 @@ if {kind!r} == "line":
     geom, fields = {{"kind": "line", "x": np.linspace(0, 1, 10)}}, {{"T": np.arange(10.0)}}
 else:
     geom, fields = polyhedral(read_polymesh({str(tmp_path)!r}), 2), {{"p": np.array([1.0, 2.0])}}
-insitu = catalyst.InSitu({PREFIX!r}, {str(tmp_path / "out")!r})
-print("FILE", insitu.execute(geom, fields, 0.5, {{"field": next(iter(fields)), "component": "mag"}}))
+insitu = catalyst.InSitu({PREFIX!r})
+image = insitu.execute(geom, fields, 0.5, {{"field": next(iter(fields)), "component": "mag", "mode": "image"}})
+print("IMAGE", image[:8].hex())
 insitu.finalize()
 """
-    python = os.environ.get("NEOFOAM_PYTHON", sys.executable)
-    src = os.path.join(os.path.dirname(__file__), "..", "src")
-    res = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=300,
-                         env={**os.environ, "PYTHONPATH": src})
-    assert res.returncode == 0, res.stderr[-3000:]
-    name = res.stdout.split("FILE ")[1].split()[0]
-    png = tmp_path / "out" / name
-    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    res = _run_catalyst(code)
+    assert res.split("IMAGE ")[1].split()[0] == PNG.hex()
+
+
+@needs_catalyst
+def test_paraview_data_mode_captures_no_image(tmp_path):
+    """Data mode: Catalyst Live carries the data, the solver renders no picture."""
+    code = f"""
+import numpy as np
+from neofoam_ui import catalyst
+insitu = catalyst.InSitu({PREFIX!r})
+geom, fields = {{"kind": "line", "x": np.linspace(0, 1, 10)}}, {{"T": np.arange(10.0)}}
+print("IMAGE", insitu.execute(geom, fields, 0.5, {{"field": "T", "component": "mag", "mode": "data"}}))
+insitu.finalize()
+"""
+    assert _run_catalyst(code).split("IMAGE ")[1].split()[0] == "None"
+
+
+@needs_catalyst
+def test_paraview_writes_the_images_of_an_output_directory(tmp_path):
+    """A solver's own in-situ entry (no stepper) writes files and captures nothing."""
+    code = f"""
+import numpy as np
+from neofoam_ui import catalyst
+insitu = catalyst.InSitu({PREFIX!r}, {str(tmp_path / "out")!r}, capture=False)
+geom, fields = {{"kind": "line", "x": np.linspace(0, 1, 10)}}, {{"T": np.arange(10.0)}}
+print("IMAGE", insitu.execute(geom, fields, 0.5, {{"field": "T", "component": "mag"}}))
+insitu.finalize()
+"""
+    assert _run_catalyst(code).split("IMAGE ")[1].split()[0] == "None"
+    assert (tmp_path / "out" / "view_000000.png").read_bytes()[:8] == PNG
 
 
 @needs_catalyst
@@ -639,18 +740,65 @@ from neofoam_ui import catalyst
 from neofoam_ui.geometry import polyhedral, read_polymesh
 geom = polyhedral(read_polymesh({str(tmp_path)!r}), 2)
 fields = {{"p": np.array([1.0, 2.0]), "q": np.array([2.0, 1.0])}}
-insitu = catalyst.InSitu({PREFIX!r}, {str(tmp_path / "out")!r})
+insitu = catalyst.InSitu({PREFIX!r})
 for name in ("p", "q"):
-    print("FILE", insitu.execute(geom, fields, 0.5, {{"field": name, "component": "mag"}}))
+    print("IMAGE", insitu.execute(geom, fields, 0.5, {{"field": name, "component": "mag", "mode": "image"}}).hex())
 insitu.finalize()
 """
-    python = os.environ.get("NEOFOAM_PYTHON", sys.executable)
-    src = os.path.join(os.path.dirname(__file__), "..", "src")
-    res = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=300,
-                         env={**os.environ, "PYTHONPATH": src})
-    assert res.returncode == 0, res.stderr[-3000:]
-    p, q = [(tmp_path / "out" / part.split()[0]).read_bytes() for part in res.stdout.split("FILE ")[1:]]
+    p, q = [part.split()[0] for part in _run_catalyst(code).split("IMAGE ")[1:]]
     assert p != q  # an ignored parameter colours both by the default field
+
+
+#: Display options of the stepper's pipeline and what the image of four hexahedra along x
+#: (T = -1 … 2, Viridis: purple … yellow) shows then; the camera looks along y by default.
+OPTIONS = [
+    ({"width": "640", "height": "360"}, {"size": [640, 360], "purple": True, "yellow": True, "red": False,
+                                         "corner_is_mesh": False}),
+    ({"width": "640", "height": "360", "zoom": "6"}, {"corner_is_mesh": True}),
+    ({"show": "clip", "axis": "x", "pos": "0.5"}, {"purple": True, "yellow": False}),
+    ({"show": "clip", "axis": "x", "pos": "0.5", "flip": "1"}, {"purple": False, "yellow": True}),
+    ({"show": "slice", "axis": "x", "pos": "0.9", "camera": "+x"}, {"purple": False, "yellow": True}),
+    ({"cmap": "jet"}, {"red": True}),
+    ({"range": "5:6"}, {"yellow": False}),  # every value below the range: the low end only
+    ({"log": "1"}, {"notes": ["log scale off: the colour range reaches 0 or below"]}),
+    ({"log": "1", "range": "0.5:3"}, {"notes": []}),
+    ({}, {"bounds": [0.0, 4.0, 0.0, 1.0, 0.0, 1.0], "axis": "z"}),
+]
+
+
+@needs_catalyst
+@pytest.mark.parametrize("options, shows", OPTIONS)
+def test_paraview_follows_the_display_options(options, shows):
+    res = subprocess.run([PYTHON, os.path.join(HELPERS, "catalyst_options.py"), PREFIX, json.dumps(options)],
+                         capture_output=True, text=True, timeout=300, env=_catalyst_env())
+    assert res.returncode == 0, res.stderr[-3000:]
+    seen = json.loads(next(line for line in res.stdout.splitlines() if line.startswith("{")))
+    assert {k: seen[k] for k in shows} == shows, options
+
+
+@needs_catalyst
+def test_paraview_frames_on_alternating_threads_are_drawn():
+    """A multi-region solver renders on whichever region thread is held: each frame must make
+    ParaView's one EGL context current on its own thread (a frame came out black before)."""
+    res = subprocess.run([PYTHON, os.path.join(HELPERS, "catalyst_two_threads.py"), PREFIX],
+                         capture_output=True, text=True, timeout=300, env=_catalyst_env())
+    assert res.returncode == 0, res.stderr[-3000:]
+    frames = [json.loads(line) for line in res.stdout.splitlines() if line.startswith("{")]
+    assert frames == [{"frame": i, "thread": f"region{i % 2}", "purple": True, "yellow": True} for i in range(4)]
+
+
+@needs_catalyst
+@pytest.mark.skipif(not shutil.which("mpirun"), reason="needs mpirun")
+def test_paraview_image_under_mpi_is_the_whole_domain_on_rank_0():
+    """mpirun -np 2: each rank publishes four hexahedra of its own value (0 or 1); rank 0's
+    image shows both colour ends (purple and yellow, IceT composited), rank 1 gets none."""
+    res = subprocess.run(["mpirun", "-np", "2", PYTHON, os.path.join(HELPERS, "catalyst_two_ranks.py"), PREFIX],
+                         capture_output=True, text=True, timeout=300, env=_catalyst_env())
+    assert res.returncode == 0, res.stderr[-3000:]
+    ranks = sorted((json.loads(line) for line in res.stdout.splitlines() if line.startswith("{")),
+                   key=lambda r: r["rank"])
+    assert ranks == [{"rank": 0, "png": True, "purple": True, "yellow": True},
+                     {"rank": 1, "png": False, "purple": False, "yellow": False}]
 
 
 def test_live_frames_at_every_time_step_while_running():
@@ -705,9 +853,10 @@ insitu.finalize()
     if script == "default":
         assert second["script"] == "view.py"
         assert [nodes[n]["kind"] for n in ("grid", "surface", "png")] == ["source", "filter", "extractor"]
-        assert {("grid", "surface"), ("surface", display["name"]), (display["name"], view),
-                (view, "png")} == edges
-        assert dict(first["nodes"][2]["settings"])["colour"] == "|U| (cells)"
+        assert {("grid", "surface"), ("grid", "slice"), ("grid", "clip"), ("surface", display["name"]),
+                (display["name"], view), (view, "png")} == edges
+        first_display = next(n for n in first["nodes"] if n["kind"] == "display")
+        assert dict(first_display["settings"])["colour"] == "|U| (cells)"
         assert dict(display["settings"])["colour"] == "U[1] (cells)"
         assert dict(display["settings"])["range"] == "1 … 1"
         assert dict(nodes["png"]["settings"])["file"] == "view_{timestep:06d}.png"
@@ -776,7 +925,7 @@ def test_a_render_backend_can_replace_catalyst():
             class Renderer:
                 def execute(self, geom, fields, time, params):
                     backend.rendered.append(sorted(fields))
-                    return "frame.png"
+                    return b"frame"
 
                 def finalize(self):
                     backend.rendered.append("finalized")
@@ -790,7 +939,7 @@ def test_a_render_backend_can_replace_catalyst():
     session.advance("skip_init")
     session.set_view("T")
     session.finalize_view()
-    assert of(messages, "frame")[-1]["file"] == "frame.png"
+    assert base64.b64decode(of(messages, "frame")[-1]["image"]) == b"frame"
     assert backend.rendered == [["T", "T_old", "kappa", "source_mask"], "finalized"]
 
 

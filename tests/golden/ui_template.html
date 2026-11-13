@@ -1067,8 +1067,71 @@ Click the gutter left of a node to add one.
 <div class="nf-pc nf-pc-main nf-pc-cfd">
 <div class="nf-field" v-show="fv_on">
 <div class="nf-field-bar">
-<VSelect :key="`w774-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w775-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VBtnToggle style="flex: none;" v-model="fv_mode" density="compact" variant="outlined" mandatory divided>
+<VBtn title="a picture rendered in the solver" size="small" value="image">
+image
+</VBtn>
+<span :title="fv_data_ok ? 'Catalyst Live: the data, drawn here (rotate, zoom)' : fv_data_why">
+<VBtn :disabled="!fv_data_ok" size="small" value="data">
+data
+</VBtn>
+</span>
+</VBtnToggle>
+<VBtnToggle style="flex: none;" v-model="fv_show" density="compact" variant="outlined" mandatory divided>
+<VBtn title="the boundary surface" size="small" value="surface">
+surface
+</VBtn>
+<VBtn title="a plane through the domain" size="small" value="slice">
+slice
+</VBtn>
+<VBtn title="the domain cut by a plane, one side kept" size="small" value="clip">
+clip
+</VBtn>
+<VBtn title="the whole grid travels" v-if="fv_mode === 'data'" size="small" value="volume">
+volume
+</VBtn>
+</VBtnToggle>
+<div class="nf-field-cut" v-show="fv_show === 'slice' || fv_show === 'clip'">
+<VBtnToggle style="flex: none;" v-model="fv_axis" density="compact" variant="outlined" mandatory divided>
+<VBtn title="cut normal to x" size="small" value="x">
+x
+</VBtn>
+<VBtn title="cut normal to y" size="small" value="y">
+y
+</VBtn>
+<VBtn title="cut normal to z" size="small" value="z">
+z
+</VBtn>
+</VBtnToggle>
+<VSlider v-model.number="fv_pos" title="where along the axis (% of the domain)" max="100" min="0" step="0.5" density="compact" hideDetails />
+<span class="nf-field-coord">
+{{ fv_bounds && fv_axis ? fv_axis + ' = ' + (fv_bounds[2 * 'xyz'.indexOf(fv_axis)] + fv_pos / 100 * (fv_bounds[2 * 'xyz'.indexOf(fv_axis) + 1] - fv_bounds[2 * 'xyz'.indexOf(fv_axis)])).toPrecision(4) : fv_pos + ' %' }}
+</span>
+<VCheckbox style="flex: none;" title="keep the upper side" v-show="fv_show === 'clip'" v-model="fv_flip" label="flip" density="compact" hideDetails />
+</div>
+<VSelect :key="`w832-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w833-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VMenu location="bottom" :closeOnContentClick="false">
+<template v-slot:activator="{ props }">
+<VBtn title="colours" v-bind="props" size="small" icon="mdi-palette" variant="text" />
+</template>
+<VCard class="pa-3" minWidth="260">
+<VBtnToggle style="flex: none;" v-model="fv_range" density="compact" variant="outlined" mandatory divided>
+<VBtn title="the data's range" size="small" value="auto">
+auto
+</VBtn>
+<VBtn title="a range of your own" size="small" value="fixed">
+fixed
+</VBtn>
+</VBtnToggle>
+<div class="d-flex ga-2 mt-2" v-show="fv_range === 'fixed'">
+<VTextField v-model.number="fv_lo" type="number" label="min" density="compact" variant="outlined" hideDetails />
+<VTextField v-model.number="fv_hi" type="number" label="max" density="compact" variant="outlined" hideDetails />
+</div>
+<VSelect :key="`w844-${tts}`" class="mt-3" v-model="fv_cmap" density="compact" variant="outlined" :items="fv_cmaps" label="colour map" hideDetails />
+<VCheckbox v-model="fv_log" label="log scale" density="compact" hideDetails />
+</VCard>
+</VMenu>
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -1076,8 +1139,33 @@ Click the gutter left of a node to add one.
 {{ fv_msg }}
 </span>
 </div>
-<img class="nf-field-img" v-show="fv_src" alt="in-situ view" :src="fv_src" />
-<div class="nf-field-regions" v-if="!fv_src && fields_rows.some(f => f.region)">
+<div class="nf-field-stage">
+<trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="if (!window.nfFvSize) { window.nfFvSize = true; let seen = '', since = 0, sent = ''; window.setInterval(() => { const el = window.document.querySelector('.nf-field-stage'); if (!el) return; const r = el.getBoundingClientRect(); if (r.width < 32 || r.height < 32) return; const d = Math.min(window.devicePixelRatio || 1, 2); const w = Math.round(r.width * d), h = Math.round(r.height * d), k = w + 'x' + h; if (k !== seen) { seen = k; since = Date.now(); return; } if (k !== sent && Date.now() - since >= 300) { sent = k; trigger('nf_fv_size', [w, h, d]); } }, 150); }" />
+<div class="nf-field-cam" v-show="fv_mode === 'image' ? fv_src : fv_data_shown">
+<VBtn title="reset the camera" size="x-small" icon="mdi-fit-to-screen-outline" variant="text" @click="trigger('nf_fv_camera', ['reset'])" />
+<VBtn title="look from +x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+x'])">
++x
+</VBtn>
+<VBtn title="look from -x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-x'])">
+-x
+</VBtn>
+<VBtn title="look from +y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+y'])">
++y
+</VBtn>
+<VBtn title="look from -y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-y'])">
+-y
+</VBtn>
+<VBtn title="look from +z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+z'])">
++z
+</VBtn>
+<VBtn title="look from -z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-z'])">
+-z
+</VBtn>
+<VBtn title="zoom in" size="x-small" icon="mdi-magnify-plus-outline" variant="text" @click="trigger('nf_fv_zoom', [1.25])" />
+<VBtn title="zoom out" size="x-small" icon="mdi-magnify-minus-outline" variant="text" @click="trigger('nf_fv_zoom', [0.8])" />
+</div>
+<img @wheel.prevent="trigger('nf_fv_zoom', [$event.deltaY < 0 ? 1.25 : 0.8])" class="nf-field-img" v-show="fv_mode === 'image' && fv_src" alt="in-situ view" :src="fv_src" />
+<div class="nf-field-regions" v-if="!fv_src && !fv_data_shown && fields_rows.some(f => f.region)">
 <div class="nf-field-region" :style="`border-left-color:${f.color}`" :key="f.name" v-for="f in fields_rows.filter(f => f.region)">
 <span class="nf-mono" :style="`color:${f.color}`">
 {{ f.name }}
@@ -1087,8 +1175,9 @@ Click the gutter left of a node to add one.
 </span>
 </div>
 </div>
-<div class="nf-field-empty" v-show="!fv_src">
+<div class="nf-field-empty" v-show="fv_mode === 'image' ? !fv_src : !fv_data_shown">
 {{ fv_msg }}
+</div>
 </div>
 </div>
 </div>
@@ -1293,7 +1382,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w764-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w805-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>

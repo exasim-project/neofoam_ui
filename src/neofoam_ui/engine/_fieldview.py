@@ -1,8 +1,10 @@
 """The field view of a session: render the viewed field in situ, at pauses and while running.
 
 The data stays in the solver: each rank hands its cells and fields to a :class:`Renderer`
-(by default Catalyst 2, :mod:`neofoam_ui.catalyst`), which writes one image; only its file
-name goes to the UI in a ``frame`` message, with the pipeline diagram when it changed.
+(by default Catalyst 2, :mod:`neofoam_ui.catalyst`). In ``image`` mode it returns one image of
+the whole domain on rank 0, which goes to the UI in a ``frame`` message (base64 PNG), with the
+pipeline diagram when it changed; in ``data`` mode Catalyst Live carries the viewed data to the
+UI, and the frame only names what was published.
 
 Frames come from the UI (a pause, a picked field, the live interval) or from the solver: a
 case's in-situ operation calls :meth:`_FieldView.solver_frame` on every rank at its own
@@ -11,10 +13,11 @@ cadence, and from then on the UI's live interval leaves the running frames to it
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import traceback
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
@@ -29,6 +32,10 @@ if TYPE_CHECKING:
 
 __all__ = ()
 
+#: Where a custom pipeline script's own extracts go under the stepper (the worker runs in the case).
+_SCRIPT_OUT = "postProcessing/catalyst"
+#: A view request: field, component, mode (``image`` | ``data``), display options.
+_View = tuple[Optional[str], str, str, dict[str, str]]
 #: Seconds after which a live frame reads the renderer's pipeline back again (colour range etc.).
 _DESCRIBE_EVERY = 5.0
 
@@ -50,10 +57,10 @@ def _merged_fields(parts: list[tuple[int, dict[str, np.ndarray]]]) -> dict[str, 
     return out
 
 
-def _shown(view: tuple[Optional[str], str], fields: dict[str, np.ndarray]) -> Optional[dict[str, str]]:
-    """The field and component to draw for ``view``: a default field for an unknown one, ``mag``
-    for an unknown component; ``None`` without fields."""
-    name, comp = view
+def _shown(view: Sequence[Optional[str]], fields: dict[str, np.ndarray]) -> Optional[dict[str, str]]:
+    """The field and component to draw for ``view`` (field, component, ...): a default field for
+    an unknown one, ``mag`` for an unknown component; ``None`` without fields."""
+    name, comp = view[0], view[1]
     if name not in fields:
         name = next((k for k in ("U", "p", "T") if k in fields), next(iter(fields), None))
     if name is None:
@@ -63,6 +70,13 @@ def _shown(view: tuple[Optional[str], str], fields: dict[str, np.ndarray]) -> Op
     if ncomp == 1 or comp not in ["mag"] + [str(i) for i in range(ncomp)]:
         comp = "mag"
     return {"field": name, "component": comp}
+
+
+def _params(view: _View, shown: Sequence[Optional[str]], fields: dict[str, np.ndarray]) -> Optional[dict[str, str]]:
+    """The renderer's parameters of a frame: field and component of ``shown`` (:func:`_shown`),
+    mode and options of ``view``."""
+    params = _shown(shown, fields)
+    return None if params is None else {**params, "mode": view[2], **view[3]}
 
 
 class _CatalystBackend:
@@ -80,7 +94,7 @@ class _CatalystBackend:
         return catalyst.custom_script()
 
     def create(self) -> Renderer:
-        return catalyst.InSitu()
+        return catalyst.InSitu(out_dir=_SCRIPT_OUT if catalyst.custom_script() else None)
 
 
 class _FieldView:
@@ -90,9 +104,13 @@ class _FieldView:
         self._s = session
         self._backend = backend or _CatalystBackend()
         self._regions = _regions_of(session.solver)
-        #: ``(field, component)`` to render at every pause, ``None`` = view closed.
+        #: ``(field, component, mode, options)`` to render at every pause, ``None`` = view closed;
+        #: mode ``image`` (a picture) or ``data`` (Catalyst Live, drawn by the UI); options go to
+        #: the renderer with every frame (image size, camera, colours, slice: see ``pipelines/view.py``).
         #: Replaced as a whole (:meth:`request`), so another thread may set it while running.
-        self.view: Optional[tuple[Optional[str], str]] = None
+        self.view: Optional[_View] = None
+        #: The display options the next :meth:`request` takes (replaced as a whole).
+        self.options: dict[str, str] = {}
         #: Counts closings of the view: a reopened view renders again even if nothing changed.
         self._epoch = 0
         self._steps_since_frame = 0
@@ -109,20 +127,21 @@ class _FieldView:
         #: The solver renders in situ itself (:meth:`solver_frame`): no live frames of our own.
         self._solver_renders = False
         #: Under MPI, rank 0's :attr:`view` at its last ``go`` (:meth:`share`): the same on every rank.
-        self.shared: Optional[tuple[Optional[str], str]] = None
+        self.shared: Optional[_View] = None
         self._described: Optional[tuple[Any, float]] = None  # (params, when) of the last read-back
         self.describe_every = _DESCRIBE_EVERY
-        self._rendered: Optional[str] = None  # the image of the last render
+        self._rendered: Optional[bytes] = None  # the image of the last render
 
     # -- requests -------------------------------------------------------------------------
 
-    def request(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
-        """Open or close the view from any thread; the next frame (live or pause) shows it."""
+    def request(self, field: Optional[str], component: str = "mag", on: bool = True, mode: str = "image") -> None:
+        """Open or close the view from any thread; the next frame (live or pause) shows it, with
+        the current :attr:`options`."""
         if not on:
             self._epoch += 1  # before the swap: whoever sees the new view sees the new epoch
-        self.view = (field, component) if on else None
+        self.view = (field, component, mode, dict(self.options)) if on else None
 
-    def share(self) -> Optional[tuple[Optional[str], str]]:
+    def share(self) -> Optional[_View]:
         """Rank 0, before the ranks resume: the view its solver frames draw until the next ``go``."""
         self.shared = self.view
         return self.shared
@@ -185,7 +204,7 @@ class _FieldView:
     def _fail(self, text: str) -> None:
         if self._sent != ("error", self._epoch, text):
             self._sent = ("error", self._epoch, text)
-            self._s.emit({"type": "frame", "file": None, "fields": [], "error": text})
+            self._s.emit({"type": "frame", "image": None, "fields": [], "error": text})
 
     def send(self) -> None:
         """Render the viewed field if the view is open and the values changed; send the frame."""
@@ -202,10 +221,10 @@ class _FieldView:
         if cells is None:
             return self._fail(f"{s.solver.name} provides no mesh geometry")
         region, _, fields = cells
-        params = _shown(view, fields)
+        params = _params(view, view, fields)
         if params is None:
             return
-        key = (self._epoch, region, params["field"], params["component"], _fingerprint(fields[params["field"]]))
+        key = (self._epoch, region, *params.values(), _fingerprint(fields[params["field"]]))
         if key == self._sent:
             return
         self._sent = key
@@ -232,26 +251,26 @@ class _FieldView:
         asked = (requested.get("field"), requested.get("component", "mag"))
         alone = s.peers is None and not s.follower
         # read once: the command reader may replace the view meanwhile
-        view = (self.view if alone else self.shared) or asked
-        params = _shown(view if view[0] else asked, fields)
+        view = (self.view if alone else self.shared) or (*asked, "image", {})
+        params = _params(view, view if view[0] else asked, fields)
         if params is None:
             return
-        self._sent = (self._epoch, region, params["field"], params["component"],
-                      _fingerprint(fields[params["field"]]))
+        self._sent = (self._epoch, region, *params.values(), _fingerprint(fields[params["field"]]))
         self._frame_at = time.monotonic()
         self._render_guarded(params, describe=not s.follower)
         if not s.follower:
             self._emit_frame(self._rendered, params, view, fields)
 
-    def _emit_frame(self, file: Optional[str], params: dict[str, str], view: tuple[Optional[str], str],
+    def _emit_frame(self, image: Optional[bytes], params: dict[str, str], view: _View,
                     fields: dict[str, np.ndarray]) -> None:
-        """Send the ``frame`` message of the image ``file`` (``None``: the render failed)."""
+        """Send the ``frame`` message of ``image`` (``None`` in image mode: the render failed)."""
         s = self._s
-        if file is None:
+        if image is None and params["mode"] != "data":
             return self._fail(self._error or "in-situ view failed")
         frame = {
-            "type": "frame", "file": file, "field": params["field"], "component": params["component"],
-            "view": list(view),  # the request this frame answers (field/component may be a fallback)
+            "type": "frame", "image": base64.b64encode(image).decode("ascii") if image is not None else None,
+            "mode": params["mode"], "field": params["field"], "component": params["component"],
+            "view": list(view[:3]),  # the request this frame answers (field/component may be a fallback)
             "time": s.solver.scalars(s.ctx).get("time"),
             "fields": [{"name": k, "ncomp": int(v.shape[1]) if v.ndim == 2 else 1}
                        for k, v in fields.items()],
@@ -264,15 +283,15 @@ class _FieldView:
                 self._pipeline_sent = key_
                 frame["pipeline"] = graph
             frame["pipeline_ms"] = self.pipeline.get("ms", {})
+        report = getattr(self.renderer, "report", None)
+        if report:  # what the renderer tells of the frame (domain bounds, notes)
+            frame["report"] = report
         s.emit(frame)
-        prune = getattr(self.renderer, "prune", None)
-        if prune is not None:
-            prune(s.keep_frames)
         if s.wait_ui and s.barrier is not None:
             s.barrier()
 
-    def render(self, params: dict[str, str], describe: bool = False) -> Optional[str]:
-        """Hand this rank's cells and fields to the renderer (collective); the image file name.
+    def render(self, params: dict[str, str], describe: bool = False) -> Optional[bytes]:
+        """Hand this rank's cells and fields to the renderer (collective); the image (rank 0).
 
         ``describe``: afterwards also read back the pipeline (:attr:`pipeline`); one rank does.
         """
@@ -291,7 +310,7 @@ class _FieldView:
             self._s.emit({"type": "stdout", "text": "Catalyst: " + traceback.format_exc()})
 
     def _render_here(self, params: dict[str, str], describe: bool) -> None:
-        """Render on the calling (solver) thread; the image name in :attr:`_rendered`."""
+        """Render on the calling (solver) thread; the image in :attr:`_rendered`."""
         s = self._s
         cells = self._cells() if s.ctx is not None else None
         if cells is None:

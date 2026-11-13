@@ -1,4 +1,4 @@
-"""Where Catalyst is, where its images go, and which pipeline script runs (environment)."""
+"""Where Catalyst is and which pipeline script runs (environment)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 
 import neofoam_ui
 from neofoam_ui.protocol import CATALYST_ENV as ENV
-from neofoam_ui.protocol import CATALYST_OUT_ENV as OUT_ENV
 from neofoam_ui.protocol import CATALYST_SCRIPT_ENV as SCRIPT_ENV
 
 __all__ = ()
@@ -19,8 +18,8 @@ _PIPELINE = str(Path(neofoam_ui.__file__).resolve().parent / "pipelines" / "view
 
 
 def configured() -> bool:
-    """A Catalyst install and an image directory are set."""
-    return bool(os.environ.get(ENV)) and bool(os.environ.get(OUT_ENV))
+    """A Catalyst install is set."""
+    return bool(os.environ.get(ENV))
 
 
 def custom_script() -> bool:

@@ -55,10 +55,6 @@ class PaneContext(Protocol):
     #: MPI ranks of the run (1: serial).
     np: int
 
-    @property
-    def run_dir(self) -> str:
-        """The current run's directory below the served ``insitu/`` (its images)."""
-
     def send(self, cmd: dict[str, Any]) -> None:
         """A command to the worker (see :mod:`neofoam_ui.worker`); dropped without a worker."""
 

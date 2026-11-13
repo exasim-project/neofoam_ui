@@ -54,7 +54,6 @@ class StepperApp:
         self.link = _WorkerLink(solver_spec, case, python or sys.executable, np, shlex.split(mpirun),
                                 catalyst or os.environ.get(CATALYST_ENV), sync_host)
         self.link.bind(self._receive, self._on_stderr, self._on_exit)
-        self.server.enable_module({"serve": {"insitu": self.link.insitu_dir}})
         self.model = _RunModel()
         self.pusher = _Pusher(self.state)
         self._restarting = False
@@ -62,7 +61,9 @@ class StepperApp:
         registry = registry if registry is not None else ExtensionRegistry()
         registry.load_entry_points()
         self.dag = _DagPane(self)
-        self.panes: list[Pane] = [self.dag, _FieldPane(self), _PlotsPane(self)]
+        field = _FieldPane(self)
+        self.link.data_url = field.data_url
+        self.panes: list[Pane] = [self.dag, field, _PlotsPane(self)]
         self.panes += [factory(self) for factory in registry.panes]
         #: The panels of the layout (built with the page, :mod:`neofoam_ui._ui._panels`).
         self.panels: list[Any] = []
@@ -98,16 +99,6 @@ class StepperApp:
     @proc.setter
     def proc(self, proc: Any) -> None:
         self.link.proc = proc
-
-    @property
-    def insitu_dir(self) -> str:
-        """Served as ``insitu/``: one directory of in-situ images per run."""
-        return self.link.insitu_dir
-
-    @property
-    def run_dir(self) -> str:
-        """The current run's directory below :attr:`insitu_dir` (``""`` without Catalyst)."""
-        return self.link.run_dir
 
     def send(self, cmd: dict[str, Any]) -> None:
         self.link.send(cmd)

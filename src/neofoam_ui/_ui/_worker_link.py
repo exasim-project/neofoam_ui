@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import atexit
 import json
 import os
-import shutil
 import socket
-import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import neofoam_ui
-from neofoam_ui.protocol import CATALYST_ENV, CATALYST_OUT_ENV, SYNC_ENV
+from neofoam_ui.protocol import CATALYST_DATA_ENV, CATALYST_ENV, SYNC_ENV
 
 __all__ = ()
 
@@ -29,7 +26,7 @@ def _free_port(host: str = "127.0.0.1") -> int:
 
 
 class _WorkerLink:
-    """One worker process at a time; its images in a per-run directory of :attr:`insitu_dir`."""
+    """One worker process at a time."""
 
     def __init__(self, solver_spec: str, case: Optional[str], python: str, np: int, mpirun: list[str],
                  catalyst: Optional[str], sync_host: str) -> None:
@@ -40,12 +37,8 @@ class _WorkerLink:
         self.mpirun = mpirun
         self.catalyst = catalyst
         self.sync_host = sync_host
-        #: Images the solver renders in situ, served as ``insitu/<run>/view_*.png``.
-        self.insitu_dir = tempfile.mkdtemp(prefix="neofoam_ui_insitu_")
-        atexit.register(shutil.rmtree, self.insitu_dir, True)
-        self._runs = 0
-        #: The current run's directory below :attr:`insitu_dir` (``""`` without Catalyst).
-        self.run_dir = ""
+        #: ``host:port`` the field view's data mode listens on with Catalyst Live (``None``: none).
+        self.data_url: Optional[str] = None
         self.proc: Optional[asyncio.subprocess.Process] = None
         self._on_message: Callable[[dict[str, Any]], None] = lambda msg: None
         self._on_stderr: Callable[[str], None] = lambda line: None
@@ -61,13 +54,10 @@ class _WorkerLink:
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(p for p in (_SRC, env.get("PYTHONPATH")) if p)
         cmd = [self.python, "-u", "-m", "neofoam_ui.worker", self.solver_spec]
-        if self.run_dir:  # the previous run's images
-            shutil.rmtree(os.path.join(self.insitu_dir, self.run_dir), ignore_errors=True)
         if self.catalyst:
-            self._runs += 1
-            self.run_dir = f"run{self._runs}"
             env[CATALYST_ENV] = self.catalyst
-            env[CATALYST_OUT_ENV] = os.path.join(self.insitu_dir, self.run_dir)
+            if self.data_url:
+                env[CATALYST_DATA_ENV] = self.data_url
         if self.np > 1:
             env[SYNC_ENV] = f"{self.sync_host}:{_free_port(self.sync_host)}"
             cmd = [*self.mpirun, "-np", str(self.np), *cmd]

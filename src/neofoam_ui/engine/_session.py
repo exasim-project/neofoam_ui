@@ -96,8 +96,6 @@ class Session:
         self.live_view = True
         self.frame_every = 1
         self.frame_seconds = 0.5
-        #: Rendered frames kept on disk (older images of this session are deleted).
-        self.keep_frames = 20
         self._view = _FieldView(self, renderer)
         #: A multi-region solver's graph: each region's ops (and its stepping rank), in order.
         self._region_ops: dict[str, tuple[Optional[int], list[Op]]] = {}
@@ -471,14 +469,21 @@ class Session:
     pipeline = property(lambda self: self._view.pipeline)
     view = property(lambda self: self._view.view)
 
-    def set_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
-        """Open (``on``) or close the field view; renders the current frame right away."""
-        self._view.request(field, component, on)
+    def set_view(self, field: Optional[str], component: str = "mag", on: bool = True, mode: str = "image") -> None:
+        """Open (``on``) or close the field view; renders the current frame right away.
+
+        ``mode``: ``image`` (a picture per frame) or ``data`` (Catalyst Live, the UI draws)."""
+        self._view.request(field, component, on, mode)
         self._view.send()
 
-    def request_view(self, field: Optional[str], component: str = "mag", on: bool = True) -> None:
+    def request_view(self, field: Optional[str], component: str = "mag", on: bool = True,
+                     mode: str = "image") -> None:
         """Open or close the field view from any thread; the next frame (live or pause) shows it."""
-        self._view.request(field, component, on)
+        self._view.request(field, component, on, mode)
+
+    def set_view_options(self, options: dict[str, str]) -> None:
+        """Display options (image size, camera, colours, slice) from the next view request on."""
+        self._view.options = dict(options)
 
     def send_view(self) -> None:
         """Render the viewed field in situ if the view is open and the values changed."""
@@ -490,10 +495,10 @@ class Session:
 
     def share_view(self, view: Optional[list[str]]) -> None:
         """A follower: rank 0's field view at its last ``go``, for the solver's frames."""
-        self._view.shared = (view[0], view[1]) if view else None
+        self._view.shared = (view[0], view[1], view[2], dict(view[3])) if view else None
 
-    def render(self, params: dict[str, str], describe: bool = False) -> Optional[str]:
-        """Hand this rank's cells and fields to the renderer (collective); the image file name."""
+    def render(self, params: dict[str, str], describe: bool = False) -> Optional[bytes]:
+        """Hand this rank's cells and fields to the renderer (collective); the image (rank 0)."""
         return self._view.render(params, describe)
 
     def finalize_view(self) -> None:

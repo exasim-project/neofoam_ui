@@ -1,8 +1,7 @@
-"""One Catalyst session per rank: publish a frame, prune old images, describe the pipeline."""
+"""One Catalyst session per rank: publish a frame, capture its image, describe the pipeline."""
 
 from __future__ import annotations
 
-import contextlib
 import gc
 import os
 import sys
@@ -12,7 +11,7 @@ from typing import Any, Optional
 import numpy as np
 
 from neofoam_ui.catalyst._blueprint import _blueprint
-from neofoam_ui.catalyst._config import _CHANNEL, _PIPELINE, ENV, OUT_ENV, SCRIPT_ENV
+from neofoam_ui.catalyst._config import _CHANNEL, _PIPELINE, ENV, SCRIPT_ENV
 from neofoam_ui.catalyst._describe import _describe_pipeline
 from neofoam_ui.catalyst._native import _import, _no_fp_traps
 
@@ -20,32 +19,43 @@ __all__ = ()
 
 
 class InSitu:
-    """One Catalyst session (per rank) for the life of the worker."""
+    """One Catalyst session (per rank) for the life of the worker.
+
+    ``out_dir``: the pipeline's extracts go there (the default pipeline then writes its
+    images); ``capture``: :meth:`execute` captures the view and returns the image (the
+    stepper; a solver's own post-processing writes files only)."""
 
     def __init__(self, prefix: Optional[str] = None, out_dir: Optional[str] = None,
-                 script: Optional[str] = None) -> None:
+                 script: Optional[str] = None, capture: bool = True) -> None:
         prefix = prefix or os.environ[ENV]
-        self.out_dir = out_dir or os.environ[OUT_ENV]
-        os.makedirs(self.out_dir, exist_ok=True)
+        self.out_dir = out_dir
+        self.capture = capture
         self._catalyst, self._conduit = _import(prefix)
         init = self._conduit.Node()
         self.script = script or os.environ.get(SCRIPT_ENV) or _PIPELINE
         init["catalyst/scripts/view/filename"] = self.script
-        init["catalyst/scripts/view/args"].append().set(self.out_dir)
+        if out_dir is not None:
+            os.makedirs(out_dir, exist_ok=True)
+            init["catalyst/scripts/view/args"].append().set(out_dir)
         init["catalyst_load/implementation"] = "paraview"
         init["catalyst_load/search_paths/paraview"] = os.path.join(prefix, "lib", "catalyst")
         with _no_fp_traps():
             self._catalyst.initialize(init)
         self.step = 0
-        self._pruned = 0  # images below this step are deleted
         #: Milliseconds of the last execute: ``total`` and per pipeline node (see :meth:`describe`).
         self.ms: dict[str, float] = {}
+        #: What the pipeline script reported of the last execute (its global ``report``, if any).
+        self.report: dict[str, Any] = {}
+        self._module: Any = None  # the pipeline script's module, once loaded
         self._timed: set[str] = set()  # nodes with timing observers
         self._started: dict[str, float] = {}
 
     def execute(self, geom: dict[str, Any], fields: dict[str, np.ndarray], time: float,
-                params: dict[str, str]) -> str:
-        """Publish this rank's part; returns the image file name (written by rank 0)."""
+                params: dict[str, str]) -> Optional[bytes]:
+        """Publish this rank's part; the PNG of the whole domain on rank 0 when captured.
+
+        Captured with ``capture`` unless ``params["mode"]`` is ``data`` (Catalyst Live
+        carries the data then); collective: every rank captures, IceT composites on rank 0."""
         node = self._conduit.Node()
         node["catalyst/state/timestep"] = self.step
         node["catalyst/state/time"] = float(time)
@@ -56,19 +66,24 @@ class InSitu:
         _blueprint(node[f"catalyst/channels/{_CHANNEL}/data"], geom, fields, keep)
         self.ms, self._started = {}, {}
         start = perf_counter()
+        image = None
         with _no_fp_traps():
             self._catalyst.execute(node)
+            if self.capture and params.get("mode") != "data":
+                image = _capture()
+            _release_context()
+        self.report = dict(getattr(self._script_module(), "report", None) or {})
         self.ms["total"] = (perf_counter() - start) * 1e3
-        name = f"view_{self.step:06d}.png"
         self.step += 1
-        return name
+        return image
 
-    def prune(self, keep: int) -> None:
-        """Delete this session's images but the newest ``keep`` (rank 0 writes them)."""
-        for step in range(self._pruned, max(self._pruned, self.step - max(1, keep))):
-            with contextlib.suppress(OSError):
-                os.remove(os.path.join(self.out_dir, f"view_{step:06d}.png"))
-            self._pruned = step + 1
+    def _script_module(self) -> Any:
+        """The module Catalyst loaded the pipeline script as (``None`` before the first execute)."""
+        if self._module is None:
+            self._module = next((m for m in list(sys.modules.values())
+                                 if getattr(m, "__file__", None)
+                                 and os.path.abspath(m.__file__) == os.path.abspath(self.script)), None)
+        return self._module
 
     def describe(self) -> dict[str, Any]:
         """The live ParaView pipeline after the last execute (call on one rank, solver thread).
@@ -102,6 +117,38 @@ class InSitu:
         with _no_fp_traps():
             self._catalyst.finalize(self._conduit.Node())
             _release_session(self.script)
+
+
+def _capture() -> Optional[bytes]:
+    """The first render view as PNG, composited over the ranks (collective); ``None`` off rank 0."""
+    from paraview import simple  # noqa: PLC0415 - on sys.path only once Catalyst is loaded
+    from vtkmodules.vtkIOImage import vtkPNGWriter  # noqa: PLC0415
+    from vtkmodules.vtkParallelCore import vtkMultiProcessController  # noqa: PLC0415
+
+    views = simple.GetRenderViews()
+    if not views:
+        return None
+    image = views[0].CaptureWindow(1)
+    controller = vtkMultiProcessController.GetGlobalController()
+    if controller is not None and controller.GetLocalProcessId() > 0:
+        return None
+    writer = vtkPNGWriter()
+    writer.WriteToMemoryOn()
+    writer.SetInputData(image)
+    writer.Write()
+    return bytes(memoryview(writer.GetResult()))
+
+
+def _release_context() -> None:
+    """Leave no OpenGL context current on this thread.
+
+    All views render through ParaView's one process window; an EGL context can be current on
+    one thread only, and a multi-region solver renders on whichever region thread is held:
+    another thread's frame would fail to make it current (``EGL_BAD_ACCESS``) and come out black.
+    """
+    from paraview.modules.vtkRemotingViews import vtkPVProcessWindow  # noqa: PLC0415 - on sys.path only once Catalyst is loaded
+
+    vtkPVProcessWindow.GetRenderWindow().ReleaseCurrent()
 
 
 def _release_session(script: str) -> None:

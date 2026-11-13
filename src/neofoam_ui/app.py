@@ -3,6 +3,13 @@
 Launch: ``neofoam-ui [--solver module:Factory] [--port 8080]``. The solver runs
 in a worker process (:mod:`neofoam_ui.worker`); this process only renders and
 sends stepping commands. Panes can be added without editing it: :mod:`neofoam_ui.extensions`.
+The field view's data mode (Catalyst Live, drawn interactively here) needs this process under
+the ``pvpython`` of a ParaView 6.0 with web modules, e.g. Kitware's 6.0.1 release (a
+Catalyst-only build has none; data mode is greyed out there), while the worker keeps the
+Catalyst build::
+
+    ~/software/ParaView-6.0.1/bin/pvpython --venv .pixi/envs/default -m neofoam_ui.app
+        --catalyst <prefix> --python <solver venv>/bin/python ...
 """
 
 from __future__ import annotations

@@ -23,16 +23,55 @@
   "fields_rows": [],
   "finished": false,
   "follow": true,
+  "fv_axis": null,
+  "fv_bounds": null,
+  "fv_camera": "reset",
+  "fv_cmap": "viridis",
+  "fv_cmaps": [
+   {
+    "title": "Viridis",
+    "value": "viridis"
+   },
+   {
+    "title": "Cool to Warm",
+    "value": "coolwarm"
+   },
+   {
+    "title": "Inferno",
+    "value": "inferno"
+   },
+   {
+    "title": "Jet",
+    "value": "jet"
+   },
+   {
+    "title": "Grayscale",
+    "value": "grayscale"
+   }
+  ],
   "fv_comp": "mag",
   "fv_comps": [],
+  "fv_data_ok": false,
+  "fv_data_shown": false,
+  "fv_data_why": "data mode needs the UI under the pvpython of a ParaView with web modules: pvpython --venv <env> -m neofoam_ui.app \u2026",
   "fv_every": 1,
   "fv_field": null,
   "fv_fields": [],
+  "fv_flip": false,
+  "fv_hi": null,
   "fv_live": true,
+  "fv_lo": null,
+  "fv_log": false,
+  "fv_mode": "image",
   "fv_msg": "the field view starts once the solver context exists (after initialization)",
   "fv_on": false,
+  "fv_pos": 50,
+  "fv_range": "auto",
   "fv_secs": 0.5,
+  "fv_show": "surface",
+  "fv_size": null,
   "fv_src": null,
+  "fv_zoom": 1.0,
   "heat": {},
   "heat_ms": {},
   "heat_on": false,
@@ -123,6 +162,9 @@
   "nf_dag_mounted",
   "nf_every_pass",
   "nf_field",
+  "nf_fv_camera",
+  "nf_fv_size",
+  "nf_fv_zoom",
   "nf_key",
   "nf_select",
   "nf_toggle_bp",

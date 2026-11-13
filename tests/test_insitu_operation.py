@@ -12,6 +12,7 @@ Opt-in: needs a NeoFOAM interpreter (``NEOFOAM_PYTHON``) and a sourced OpenFOAM;
 tests also ``NEOFOAM_UI_CATALYST``. The worker is a subprocess: one solver per process.
 """
 
+import base64
 import json
 import os
 import shutil
@@ -31,6 +32,8 @@ needs_catalyst = pytest.mark.skipif(not CATALYST, reason="set NEOFOAM_UI_CATALYS
 TESTS = Path(__file__).resolve().parent
 SRC = TESTS.parent / "src"
 CASE = TESTS / "neofoam" / "cases" / "insitu_view"
+#: The signature every PNG starts with.
+PNG = b"\x89PNG\r\n\x1a\n"
 #: The case's end time (``helpers/neofoam_case.py``).
 END_TIME = 5e-4
 
@@ -87,12 +90,12 @@ def test_the_insitu_operation_is_a_node_of_the_graph(tmp_path):
 
 @needs_catalyst
 def test_the_stepper_receives_catalyst_images_while_running(tmp_path):
-    out = tmp_path / "images"
-    messages = _run_worker(_case(tmp_path), "neofoam_ui.adapters.neofoam:incompressible_fluid",
-                           NEOFOAM_UI_CATALYST_OUT=str(out))
+    case = _case(tmp_path)
+    messages = _run_worker(case, "neofoam_ui.adapters.neofoam:incompressible_fluid")
     frames = _frames(messages)
-    assert frames and all((out / f["file"]).is_file() for f in frames[-3:])
+    assert frames and all(base64.b64decode(f["image"])[:8] == PNG for f in frames[-3:])
     assert "pipeline" in frames[0]
+    assert not (case / "postProcessing" / "view").exists()  # the stepper's frames are no files
 
 
 @needs_catalyst
