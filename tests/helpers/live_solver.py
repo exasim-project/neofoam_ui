@@ -1,7 +1,7 @@
 """A solver side for the data-mode test: four unit hexahedra published in data mode, frame
 after frame (``T`` = the frame's number), a second apart so the listener can pick another
 source in between: the first frame shows the built-in ``Field`` scene, the others the scene of
-the file given as second argument. Prints the source each frame's report names (``extract``).
+the file given as second argument. Prints the sources each frame's report names (``extracts``).
 ``NEOFOAM_UI_CATALYST_DATA`` names the listener."""
 
 import json
@@ -27,6 +27,6 @@ for frame in range(4):
     image = insitu.execute(geom, {"T": np.full(N, float(frame))}, float(frame),
                            {"field": "T", "component": "mag", "mode": "data", **(then if frame else {})})
     assert image is None
-    print(json.dumps({"extract": insitu.report.get("extract")}), flush=True)
+    print(json.dumps({"extracts": [e["source"] for e in insitu.report.get("extracts", [])]}), flush=True)
     time.sleep(1.0)
 insitu.finalize()

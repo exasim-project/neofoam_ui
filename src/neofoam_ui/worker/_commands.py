@@ -129,6 +129,13 @@ def _view(w: _Worker, cmd: dict[str, Any]) -> None:
     w.queue.put({"cmd": "view"})
 
 
+@_command("export")
+def _export(w: _Worker, cmd: dict[str, Any]) -> None:
+    # Written by the next frame: at a pause the queued view renders it now.
+    w.session.export_view(str(cmd["path"]))
+    w.queue.put({"cmd": "view"})
+
+
 @_command("live")
 def _live(w: _Worker, cmd: dict[str, Any]) -> None:
     w.session.live_view = bool(cmd["on"])

@@ -1,7 +1,8 @@
 """The solver-side scene builder (``pipelines/view.py``) in a real ParaView, through Catalyst 2:
 a changed graph keeps the proxies of unchanged nodes, switching keeps every scene built and runs
 only the shown one, every node type builds, a bad scene fails alone, the built-in ``Field`` runs
-without pydantic, and under ``mpirun -np 2`` every rank builds the same scene.
+without pydantic, under ``mpirun -np 2`` every rank builds the same scene, and an exported
+scene runs on its own (through Catalyst on a written case, and in pvbatch).
 
 Each case runs ``helpers/catalyst_scenes.py`` in a fresh interpreter (Catalyst stays
 initialised for the life of a process) on the scene files of ``tests/scenes/cases/builder``.
@@ -22,6 +23,7 @@ PYTHON = os.environ.get("NEOFOAM_PYTHON", sys.executable)
 pytestmark = pytest.mark.skipif(not PREFIX, reason="set NEOFOAM_UI_CATALYST to a Catalyst + ParaView install")
 HERE = Path(__file__).resolve().parent
 HELPER = str(HERE / "helpers" / "catalyst_scenes.py")
+EXPORT = HERE / "helpers" / "catalyst_export.py"
 SCENES = str(HERE / "scenes" / "cases" / "builder" / "system" / "scenes")
 #: Blocks pydantic, then runs the helper: a worker without it.
 NO_PYDANTIC = "import runpy, sys; sys.modules['pydantic'] = None; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0])"
@@ -118,3 +120,42 @@ def test_every_rank_builds_the_same_scene():
                                                       {"purple": False, "yellow": True, "red": False},
                                                       {"purple": True, "yellow": False, "red": False}]
     assert all(f["colours"] is None for f in by_rank[1])
+
+
+def _run(args, cwd=None):
+    res = subprocess.run(args, capture_output=True, text=True, timeout=300, env=_env(), cwd=cwd)
+    assert res.returncode == 0, res.stderr[-3000:]
+    return [json.loads(line) for line in res.stdout.splitlines() if line.startswith("{")]
+
+
+@pytest.fixture
+def exported(tmp_path):
+    """slice-contour exported as a Catalyst script by the pipeline that shows it."""
+    script = tmp_path / "export" / "slice-contour.py"
+    script.parent.mkdir()
+    (said,) = _run([PYTHON, str(EXPORT), "export", PREFIX, f"{SCENES}/slice-contour.json", str(script)],
+                   cwd=script.parent)
+    assert said == {"exported": str(script), "error": None}
+    return script
+
+
+def test_an_export_writes_the_script_only(exported):
+    """Its PNG extractor exists only while the state is saved: no extract is written now."""
+    assert sorted(p.name for p in exported.parent.rglob("*")) == ["slice-contour.py"]
+
+
+def test_an_exported_scene_runs_through_catalyst_on_a_written_case(exported, tmp_path):
+    (said,) = _run([PYTHON, str(EXPORT), "replay", PREFIX, str(exported), "-"], cwd=tmp_path)
+    assert said["error"] is None
+    assert (tmp_path / "postProcessing" / "slice-contour" / "slice-contour_000000.png").read_bytes()[:4] == b"\x89PNG"
+
+
+def test_pvbatch_runs_an_exported_scene(exported, tmp_path):
+    """ParaView's own post-processing mode: no solver, the extracts written once."""
+    _run([str(Path(PREFIX) / "bin" / "pvbatch"), str(exported)], cwd=tmp_path)
+    assert (tmp_path / "postProcessing" / "slice-contour" / "slice-contour_000000.png").exists()
+
+
+def test_a_field_that_is_not_there_fails_the_node_that_reads_it():
+    (frame,) = _frames(["typo"])
+    assert frame["error"] == "scene 'typo': node 'c1' (Contour): no field 'Ux' (fields: T, U)"

@@ -6,7 +6,8 @@ Channel ``grid``: the solver's cells with every cell field. Parameters per execu
 * ``field=<name>``, ``component=mag|0|1|2`` (what ``@field`` / ``@component`` bind to), ``mode=image|data``;
 * ``scene=<name>`` (default ``Field``, the built-in scene) and, for any other scene, ``graph=<JSON>``
   (a scene graph, :mod:`neofoam_ui.scenes`; checked with :mod:`neofoam_ui.scenes.models`);
-* image size ``width``/``height`` and ``scale`` (device pixels per CSS pixel: fonts grow).
+* image size ``width``/``height`` and ``scale`` (device pixels per CSS pixel: fonts grow);
+* ``export=<path>``: also write the shown scene there as a Catalyst script.
 
 Every scene shown once stays built: a ParaView proxy per node and a render view of its own.
 A new graph for a scene is applied as a diff (unchanged nodes keep their proxies, properties
@@ -18,7 +19,9 @@ graph comes for it; the other scenes are not touched.
 With a directory as the script's first argument it writes ``view_<timestep>.png`` of the
 whole domain there; the caller may capture :data:`shown_view` as well. ``report`` tells the
 caller of the last execute: the domain ``bounds``, the default ``axis``, ``notes``, the shown
-``scene``, its ``error`` and (data mode) the ``extract``: the source Catalyst Live sends.
+``scene``, its ``error`` (and ``error_node``), each node's proxies (``proxies``, for timings), in
+data mode the ``extracts`` (each Display's input, the source Catalyst Live sends, with the
+Display's settings), and ``exported`` after ``export=<path>`` (a Catalyst script of the scene).
 ``NEOFOAM_UI_CATALYST_LIVE=host:port`` lets a ParaView attach (Catalyst ▸ Connect) at every
 execute; ``NEOFOAM_UI_CATALYST_DATA=host:port`` (the stepper UI's data mode) publishes to
 Live only in ``mode=data``, where the input of the scene's first Display is updated but
@@ -37,7 +40,7 @@ from vtkmodules.vtkCommonDataModel import vtkDataObjectTreeIterator
 from vtkmodules.vtkParallelCore import vtkCommunicator, vtkMultiProcessController
 from vtkmodules.vtkRenderingFreeType import vtkMathTextUtilities
 
-from neofoam_ui.scenes import FIELD, field_graph, inputs, ordered
+from neofoam_ui.scenes import FIELD, camera_fit, field_graph, inputs, ordered
 
 _args = catalyst.get_args()
 
@@ -66,7 +69,7 @@ shown_view = None
 _state = {"bounds": None}
 #: The scenes built so far, by name, and those that failed (name: (graph text, error)).
 _scenes: dict[str, Any] = {}
-_failed: dict[str, tuple[str, str]] = {}
+_failed: dict[str, tuple[str, str, Any]] = {}
 
 
 def _local(proxy=grid):
@@ -467,37 +470,14 @@ def _image_size(params, b):
     return [1000, int(min(max(1000 * aspect * 1.15 + 130, 280), 1000))]
 
 
-def _look(camera, b):
-    """The axis looked along and the side looked from for a ``camera`` preset."""
-    if camera in ("+x", "-x", "+y", "-y", "+z", "-z"):
-        return _AXES.index(camera[1]), 1.0 if camera[0] == "+" else -1.0
-    extent = _extents(b)
-    return extent.index(min(extent)), 1.0
-
-
 def _fit_camera(view, pick, b, size, bar_px):
     """Look from the preset's side, the domain filling the image above the colour bars, zoomed."""
-    camera, zoom = pick
-    thin, sign = _look(camera, b)
-    extent = _extents(b)
-    centre = [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2]
-    up_axis = 1 if thin != 1 else 2
-    side = next(a for a in range(3) if a not in (thin, up_axis))
-    width, height = size
-    fit = 1.04 * max(extent[up_axis] / 2 * height / max(height - bar_px, 1), extent[side] / 2 * height / width)
-    zoom = max(zoom, 1e-3)
-    shift = bar_px / 2 * 2 * fit / height / zoom  # centre the mesh above the colour bars
-    focal = list(centre)
-    focal[up_axis] -= shift
-    position = list(focal)
-    position[thin] += sign * 10 * max(extent)
-    up = [0.0, 0.0, 0.0]
-    up[up_axis] = 1.0
-    view.CameraFocalPoint = focal
-    view.CameraPosition = position
-    view.CameraViewUp = up
+    fit = camera_fit(pick[0], pick[1], b, size, bar_px)
+    view.CameraFocalPoint = fit["focal"]
+    view.CameraPosition = fit["position"]
+    view.CameraViewUp = fit["up"]
     view.CameraParallelProjection = 1
-    view.CameraParallelScale = fit / zoom
+    view.CameraParallelScale = fit["scale"]
 
 
 def _place_camera(scene, ctx, bars):
@@ -571,6 +551,7 @@ class _Scene:
 
     def _set(self, node, sources, ctx):
         kind, proxy = node["type"], self.proxies[node["id"]]
+        _check_fields(self, node, ctx)
         if sources[node["id"]]:
             ctx.association = _association(self, sources[node["id"]][0])
         if kind in _SETTERS:
@@ -578,11 +559,24 @@ class _Scene:
         elif kind in _HELPED_SETTERS:
             _HELPED_SETTERS[kind](proxy, self.helpers[node["id"]], node["props"], ctx)
 
-    def extract(self):
-        """The input of the first Display: the source data mode sends (``None``: no Display)."""
+    def displays(self):
+        """The Display nodes linked to the View, each with the node it draws."""
         sources = inputs(self.graph)
-        first = next((n for n in ordered(self.graph) if n["type"] == "Display"), None)
-        return None if first is None else sources[first["id"]][0]
+        view = next(n["id"] for n in self.graph["nodes"] if n["type"] == "View")
+        return [(n, sources[n["id"]][0]) for n in ordered(self.graph)
+                if n["type"] == "Display" and n["id"] in sources[view]]
+
+    def source_name(self, node_id):
+        """The registration name of a node's proxy (what Catalyst Live extracts by)."""
+        return "grid" if self.proxies[node_id] is grid else f"{self.name}:{node_id}"
+
+    def proxy_ids(self):
+        """Each node's proxies as the pipeline diagram names them (``pv<global id>``): its timings."""
+        out = {}
+        for node_id, proxy in self.proxies.items():
+            proxies = [proxy, *self.helpers.get(node_id, [])]
+            out[node_id] = ["pv" + p.GetGlobalIDAsString() for p in proxies]
+        return out
 
     def close(self):
         """Delete every proxy built (consumers first) and the view."""
@@ -603,8 +597,37 @@ def _graph_of(params):
 
 
 def _failure(scene_name, node, exc):
+    if node:
+        report["error_node"] = node["id"]
     where = f"node {node['id']!r} ({node['type']}): " if node else ""
     return f"scene {scene_name!r}: {where}{exc}"
+
+
+def _check_fields(scene, node, ctx):
+    """A field a node reads by name must be in the grid or made upstream (a Calculator's result)."""
+    props = node["props"]
+    named = [props.get(k) for k in ("field", "vectors") if k in props]
+    names = [ctx.field_of(v) for v in named if v is not None and v != "@field"]
+    if not names:
+        return
+    arrays = _arrays(grid, "CELLS")
+    known = {arrays.GetArrayName(i) for i in range(arrays.GetNumberOfArrays())} if arrays is not None else set()
+    known |= _results_upstream(scene, node["id"])
+    missing = [n for n in names if n not in known]
+    if missing and arrays is not None:
+        raise ValueError(f"no field {missing[0]!r} (fields: {', '.join(sorted(known))})")
+
+
+def _results_upstream(scene, node_id):
+    """The fields Calculators upstream of a node add."""
+    sources, by_id, out = inputs(scene.graph), {n["id"]: n for n in scene.graph["nodes"]}, set()
+    todo = list(sources[node_id])
+    while todo:
+        up = by_id[todo.pop()]
+        if up["type"] == "Calculator":
+            out.add(up["props"]["result"])
+        todo += sources[up["id"]]
+    return out
 
 
 def _scene(params, ctx):
@@ -614,7 +637,9 @@ def _scene(params, ctx):
     fails to build drops the scene."""
     name, text = params.get("scene") or FIELD, params.get("graph", "")
     if name in _failed and _failed[name][0] == text:
-        report["error"] = _failed[name][1]
+        report["error"], node = _failed[name][1:]
+        if node:
+            report["error_node"] = node
         return None
     scene = _scenes.get(name)
     if scene is not None and scene.text == text:
@@ -623,7 +648,9 @@ def _scene(params, ctx):
     try:
         graph = _graph_of(params)[1]
     except (ValueError, ImportError) as exc:  # not a scene (the message names the node), or no pydantic
-        _failed[name] = (text, report.setdefault("error", f"scene {name!r}: {exc}"))
+        if getattr(exc, "node", None):
+            report["error_node"] = exc.node
+        _failed[name] = (text, report.setdefault("error", f"scene {name!r}: {exc}"), report.get("error_node"))
         return None
     try:
         if scene is None:
@@ -640,7 +667,7 @@ def _scene(params, ctx):
 def _drop(name, scene, text, exc):
     """Forget a scene that failed (its proxies go); remember why, for as long as its graph stays."""
     error = _failure(name, scene.failing if scene is not None else None, exc)
-    _failed[name] = (text, error)
+    _failed[name] = (text, error, report.get("error_node"))
     report["error"] = error
     if _scenes.pop(name, None) is not None:
         scene.close()
@@ -690,16 +717,54 @@ def catalyst_execute(info):
     if _show(scene, params, ctx):
         shown_view = scene.view
         _point_png(scene.view)
+        report["proxies"] = scene.proxy_ids()
+        if params.get("export"):
+            _export(scene, params["export"], ctx)
 
 
 def _extract(scene, params, ctx, time):
-    """Data mode: bring the source Live sends up to date; name it in the report."""
+    """Data mode: bring each Display's input up to date (Live sends those the UI asks for); the
+    report names them with the displays' settings, the pane's field bound (``extracts``)."""
     try:
         scene.set_properties(ctx)
     except Exception as exc:  # noqa: BLE001 - a broken scene leaves the others working
         _drop(scene.name, scene, params.get("graph", ""), exc)
         return
-    node_id = scene.extract()
-    if node_id is not None:
-        report["extract"] = "grid" if scene.proxies[node_id] is grid else f"{scene.name}:{node_id}"
-        scene.proxies[node_id].UpdatePipeline(time)
+    report["extracts"], updated = [], set()
+    for display, source in scene.displays():
+        props = display["props"]
+        report["extracts"].append({**props, "id": display["id"], "source": scene.source_name(source),
+                                   "field": ctx.field_of(props["field"]),
+                                   "component": ctx.component_of(props["component"])})
+        if source not in updated:
+            updated.add(source)
+            scene.proxies[source].UpdatePipeline(time)
+
+
+def _export(scene, path, ctx):
+    """Write the scene as a Catalyst script (ParaView's exporter), with a PNG extractor of its view.
+
+    Every rank builds the state (it reads the proxies only); rank 0 writes the file. The
+    extractor exists only while the state is saved, so nothing is written now."""
+    from paraview.detail.catalyst_export import _get_catalyst_state  # noqa: PLC0415 - only for an export
+
+    # not through CreateExtractor: in situ it also tags the extractor for Catalyst, which would
+    # still write it after it is deleted (and fail on its writer)
+    extractor = servermanager._getPyProxy(servermanager.vtkSMExtractsController().CreateExtractor(
+        scene.view.SMProxy, "PNG", f"{scene.name}:png"))
+    extractor.Writer.FileName = scene.name + "_{timestep:06d}.png"
+    extractor.Writer.ImageResolution = list(ctx.size)
+    export = catalyst.Options()
+    export.ExtractsOutputDirectory = f"postProcessing/{scene.name}"
+    for lut in scene.bars:  # a range the builder set each frame: the script rescales on its own
+        lut.AutomaticRescaleRangeMode = "Grow and update every timestep"
+    try:
+        state = _get_catalyst_state(servermanager._getPyProxy(export))
+    finally:
+        Delete(extractor)
+        Delete(export)
+    controller = vtkMultiProcessController.GetGlobalController()
+    if controller is None or controller.GetLocalProcessId() == 0:
+        with open(path, "w") as out:
+            out.write(state + "\n")
+    report["exported"] = path

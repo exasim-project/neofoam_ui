@@ -173,32 +173,73 @@ def live(monkeypatch):
     monkeypatch.setattr(_field, "_LIVE", type("Live", (), {"_LiveData": _FakeLive}))
 
 
-def test_data_mode_is_offered_for_the_field_scene_only(live, case):
-    app, _ = _app("field_pane_data_field_only", case)
-    assert app.state.fv_data_ok
+def test_data_mode_is_offered_for_every_scene(live, case):
+    app, _ = _app("field_pane_data_every_scene", case)
     app.pane("field").scenes.switch("threshold")
-    assert not app.state.fv_data_ok and "Field scene only" in app.state.fv_data_why
+    assert app.state.fv_data_ok
 
 
-def test_another_scene_leaves_data_mode(live, case):
-    app, sent = _app("field_pane_data_leaves", case)
+def test_another_scene_stays_in_data_mode(live, case):
+    app, sent = _app("field_pane_data_stays", case)
     app.state.fv_mode = "data"
     app.pane("field").scenes.switch("threshold")
-    assert app.state.fv_mode == "image" and _last_view(sent)["mode"] == "image"
+    assert app.state.fv_mode == "data" and _last_view(sent)["options"]["scene"] == "threshold"
 
 
-def test_data_mode_extracts_the_source_the_frame_names(live, case):
-    app, _ = _app("field_pane_data_extract", case)
+def test_data_mode_draws_the_displays_the_frame_names(live, case):
+    app, _ = _app("field_pane_data_extracts", case)
     pane = app.pane("field")
     app.state.fv_mode = "data"
     pane.send_view()
-    app.dispatch(_frame(mode="data", image=None, view=["T", "mag", "data"], report={"extract": "Field:surface"}))
-    assert ("extract", "Field:surface") in pane.data.calls
+    extracts = [{"id": "d1", "source": "threshold:t1", "field": "T", "component": "mag", "colormap": "jet"}]
+    app.dispatch(_frame(mode="data", image=None, view=["T", "mag", "data"], report={"extracts": extracts}))
+    assert ("show", extracts) in pane.data.calls
 
 
-def test_the_camera_in_data_mode_moves_the_data_view_not_the_scene(live, case):
-    app, sent = _app("field_pane_data_camera", case)
+BOUNDS = [0.0, 4.0, 0.0, 1.0, 0.0, 0.1]
+
+
+def _in_data_mode(app):
+    """Data mode with a frame shown: its bounds known, the data view drawn."""
     pane = app.pane("field")
     app.state.fv_mode = "data"
+    app.state.fv_size = [800, 400, 1]
+    pane.send_view()
+    app.dispatch(_frame(mode="data", image=None, view=["T", "mag", "data"],
+                        report={"bounds": BOUNDS, "extracts": [{"id": "display", "source": "Field:surface"}]}))
+    return pane
+
+
+def _fits(pane):
+    return [c[1:] for c in pane.data.calls if c[0] == "fit"]
+
+
+def test_the_first_data_fits_the_view_to_the_domain_as_the_scene_says(live, case):
+    app, _ = _app("field_pane_data_first_fit", case)
+    assert _fits(_in_data_mode(app)) == [("reset", 1.0, BOUNDS, (800, 400))]
+
+
+def test_a_camera_preset_in_data_mode_sets_the_scene_and_refits(live, case):
+    app, _ = _app("field_pane_data_camera", case)
+    pane = _in_data_mode(app)
     pane.look("+z")
-    assert ("look", "+z", 1.0) in pane.data.calls and app.state.sc_current == "Field"
+    assert app.state.sc_current == "field-copy" and _fits(pane)[-1] == ("+z", 1.0, BOUNDS, (800, 400))
+
+
+def test_a_new_size_or_scene_refits_the_data_view(live, case):
+    app, _ = _app("field_pane_data_refit", case)
+    pane = _in_data_mode(app)
+    pane._on_size(600, 600, 1)
+    pane.scenes.switch("slice")  # its View looks from +x
+    assert _fits(pane)[-2:] == [("reset", 1.0, BOUNDS, (600, 600)), ("+x", 1.0, BOUNDS, (600, 600))]
+
+
+def test_data_mode_asks_for_the_frame_again_with_new_extracts(live, case):
+    app, sent = _app("field_pane_data_again", case)
+    pane = app.pane("field")
+    app.state.fv_mode = "data"
+    pane.send_view()
+    pane.data.requested = "slice:s1"  # what the frame's displays need now
+    app.dispatch(_frame(mode="data", image=None, view=["T", "mag", "data"],
+                        report={"extracts": [{"id": "d1", "source": "slice:s1"}]}))
+    assert _last_view(sent)["options"]["extracts"] == "slice:s1"

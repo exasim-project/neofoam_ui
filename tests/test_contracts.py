@@ -186,7 +186,7 @@ PUBLIC = {
     "neofoam_ui.adapters": [],
     "neofoam_ui.adapters.neofoam": ["ObservedNeoFoamSolver", "incompressible_fluid", "multi_run",
                                     "neofoam_solver", "register_insitu"],
-    "neofoam_ui.scenes": ["FIELD", "SCENES_DIR", "field_graph", "inputs", "ordered"],
+    "neofoam_ui.scenes": ["FIELD", "SCENES_DIR", "camera_fit", "field_graph", "inputs", "ordered"],
     "neofoam_ui.scenes.models": ["CalculatorNode", "ClipNode", "ContourNode", "DisplayNode", "GlyphNode", "GridNode",
                                  "Scene", "SceneError", "SceneFile", "SliceNode", "StreamTracerNode", "SurfaceNode",
                                  "ThresholdNode", "ViewNode", "parse", "read_scenes", "write_scene"],

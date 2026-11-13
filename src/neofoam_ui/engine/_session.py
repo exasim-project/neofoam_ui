@@ -485,6 +485,11 @@ class Session:
         """Display options (image size, camera, colours, slice) from the next view request on."""
         self._view.options = dict(options)
 
+    def export_view(self, path: str) -> None:
+        """At the next frame (at a pause: :meth:`send_view`) also write the shown scene to ``path``
+        as a Catalyst script (the frame's report names it, ``exported``)."""
+        self._view.export(path)
+
     def send_view(self) -> None:
         """Render the viewed field in situ if the view is open and the values changed."""
         self._view.send()

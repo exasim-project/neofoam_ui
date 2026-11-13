@@ -119,6 +119,11 @@ mdi-sitemap-outline
 mdi-chart-line
 </VIcon>
 </button>
+<button :class="['ab', nf_dk.vis.editor ? 'on' : nf_dk.open.editor ? 'bg' : '']" title="Scene editor: the current scene as a node graph: add, link, set; Apply shows it" @click="window.nfL.toggle('editor')">
+<VIcon size="20">
+mdi-graph-outline
+</VIcon>
+</button>
 <button :class="['ab', nf_dk.vis.cfd ? 'on' : nf_dk.open.cfd ? 'bg' : '']" title="CFD 3D: a solver field on the mesh (Catalyst), refreshed at every pause" @click="window.nfL.toggle('cfd')">
 <VIcon size="20">
 mdi-cube-outline
@@ -616,6 +621,14 @@ mdi-chart-line
 Plots
 </span>
 </button>
+<button :class="['pb2', nf_lay.phone.includes('editor') ? 'on' : '']" title="Scene editor: the current scene as a node graph: add, link, set; Apply shows it" @click="window.nfL.toggle('editor')">
+<VIcon size="20">
+mdi-graph-outline
+</VIcon>
+<span >
+Editor
+</span>
+</button>
 <button :class="['pb2', nf_lay.phone.includes('cfd') ? 'on' : '']" title="CFD 3D: a solver field on the mesh (Catalyst), refreshed at every pause" @click="window.nfL.toggle('cfd')">
 <VIcon size="20">
 mdi-cube-outline
@@ -747,6 +760,25 @@ Plots
 </div>
 <div class="nf-pb" v-if="!nf_lay.col.plots">
 <trame-template templateName="nf_p_plots" />
+</div>
+</section>
+<section data-id="editor" :class="['nf-panel', { collapsed: nf_lay.col.editor }]" :style="{ order: nf_lay.phone.indexOf('editor') }" v-if="nf_lay.phone.includes('editor')">
+<div class="nf-ph">
+<VIcon size="15">
+mdi-graph-outline
+</VIcon>
+<span class="t" title="the current scene as a node graph: add, link, set; Apply shows it">
+Scene editor
+</span>
+<button class="hb" title="collapse / expand" @click="window.nfL.collapse('editor')">
+{{ nf_lay.col.editor ? '▸' : '▾' }}
+</button>
+<button class="hb" title="close" @click="window.nfL.close('editor')">
+×
+</button>
+</div>
+<div class="nf-pb" v-if="!nf_lay.col.editor">
+<trame-template templateName="nf_p_editor" />
 </div>
 </section>
 <section data-id="cfd" :class="['nf-panel', { collapsed: nf_lay.col.cfd }]" :style="{ order: nf_lay.phone.indexOf('cfd') }" v-if="nf_lay.phone.includes('cfd')">
@@ -1007,6 +1039,15 @@ Plots
 </span>
 <i class="nf-sw" />
 </div>
+<div :class="['nf-drow', { on: nf_lay.phone.includes('editor') }]" @click="window.nfL.toggle('editor')">
+<VIcon size="18">
+mdi-graph-outline
+</VIcon>
+<span >
+Scene editor
+</span>
+<i class="nf-sw" />
+</div>
 <div :class="['nf-drow', { on: nf_lay.phone.includes('cfd') }]" @click="window.nfL.toggle('cfd')">
 <VIcon size="18">
 mdi-cube-outline
@@ -1167,9 +1208,9 @@ data
 </VBtn>
 </span>
 </VBtnToggle>
-<VSelect :key="`w864-${tts}`" title="the scene drawn (Scenes panel: new, save, …)" v-model="sc_current" density="compact" variant="outlined" :items="sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))" label="scene" hideDetails />
-<VSelect :key="`w865-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w866-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w1015-${tts}`" title="the scene drawn (Scenes panel: new, save, …)" v-model="sc_current" density="compact" variant="outlined" :items="sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))" label="scene" hideDetails />
+<VSelect :key="`w1016-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w1017-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -1224,6 +1265,159 @@ data
 <div class="nf-console">
 <div :class="l.c" :key="i" v-for="(l, i) in logs">
 {{ l.t }}
+</div>
+</div>
+</div>
+<!-- template nf_p_editor -->
+<div class="nf-pc nf-pc-main nf-pc-editor">
+<div class="nf-se" v-show="se_on">
+<div class="nf-se-top">
+<div class="nf-se-pal">
+<div class="g">
+source
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'grid')" :class="['e', { off: se_present.includes('grid') }]" :draggable="!(se_present.includes('grid'))" title="click: add after the selected node · drag: place grid on the canvas" @click="!(se_present.includes('grid')) && trigger('nf_se_add', ['grid'])">
+grid
+</div>
+<div class="g">
+filters
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Surface')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Surface on the canvas" @click="!(false) && trigger('nf_se_add', ['Surface'])">
+Surface
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Slice')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Slice on the canvas" @click="!(false) && trigger('nf_se_add', ['Slice'])">
+Slice
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Clip')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Clip on the canvas" @click="!(false) && trigger('nf_se_add', ['Clip'])">
+Clip
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Contour')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Contour on the canvas" @click="!(false) && trigger('nf_se_add', ['Contour'])">
+Contour
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Threshold')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Threshold on the canvas" @click="!(false) && trigger('nf_se_add', ['Threshold'])">
+Threshold
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Calculator')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Calculator on the canvas" @click="!(false) && trigger('nf_se_add', ['Calculator'])">
+Calculator
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Glyph')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Glyph on the canvas" @click="!(false) && trigger('nf_se_add', ['Glyph'])">
+Glyph
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'StreamTracer')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place StreamTracer on the canvas" @click="!(false) && trigger('nf_se_add', ['StreamTracer'])">
+StreamTracer
+</div>
+<div class="g">
+output
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'Display')" :class="['e', { off: false }]" :draggable="!(false)" title="click: add after the selected node · drag: place Display on the canvas" @click="!(false) && trigger('nf_se_add', ['Display'])">
+Display
+</div>
+<div @dragstart="$event.dataTransfer.setData('nf/node', 'View')" :class="['e', { off: se_present.includes('View') }]" :draggable="!(se_present.includes('View'))" title="click: add after the selected node · drag: place View on the canvas" @click="!(se_present.includes('View')) && trigger('nf_se_add', ['View'])">
+View
+</div>
+</div>
+<div @dragover.prevent="" @drop.prevent="const k = $event.dataTransfer.getData('nf/node'); if (k) { const p = window.trame.refs.nf_se_editor.screenToFlowCoordinate({x: $event.clientX, y: $event.clientY}); trigger('nf_se_drop', [k, p.x, p.y]); }" class="nf-se-canvas">
+<node-editor :ref="(el) => trame.refs['nf_se_editor'] = el" :min-zoom="0.75" style="width: 100%; height: 100%;" :isValidConnection="(c) => c.source !== c.target && c.sourceHandle === c.targetHandle" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('nf_se_select', [$event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="trigger('nf_se_select', [null])">
+<Background gap="16" size="1" patternColor="#c3c8d2" />
+<Controls :showInteractive="false" />
+<template v-slot:node-scene=props>
+<div :class="['nf-sn', props.data.role, { sel: props.id === se_sel, err: !!se_errors[props.id] }]">
+<Handle :class="props.data.takes" :id="props.data.takes" v-if="props.data.takes" position="left" type="target" />
+<Handle :class="props.data.gives" :id="props.data.gives" v-if="props.data.gives" position="right" type="source" />
+<div class="h">
+<span >
+{{ props.data.kind }}
+</span>
+<span class="id">
+{{ props.id }}
+</span>
+<span class="ms" v-if="se_ms[props.id]">
+{{ se_ms[props.id] }}
+</span>
+</div>
+<div class="b" v-for="l in props.data.lines">
+{{ l }}
+</div>
+<div class="m" v-if="se_errors[props.id]">
+{{ se_errors[props.id] }}
+</div>
+</div>
+</template>
+</node-editor>
+</div>
+</div>
+<div class="nf-se-form" v-if="se_node">
+<div class="d-flex align-center ga-2 mb-1">
+<b >
+{{ se_node.type }}
+</b>
+<span style="opacity: .6">
+· {{ se_node.id }}
+</span>
+<span class="ml-4" style="opacity: .7">
+input {{ se_node.inputs.join(', ') || '—' }}
+</span>
+<VSpacer  />
+<VBtn size="x-small" variant="text" prependIcon="mdi-delete-outline" @click="trigger('nf_se_remove')">
+Remove node
+</VBtn>
+</div>
+<div class="err mb-1" v-if="se_errors[se_node.id]">
+{{ se_errors[se_node.id] }}
+</div>
+<div class="row" :key="f.name" v-for="f in se_fields">
+<span class="k">
+{{ f.label }}{{ f.required ? ' *' : '' }}
+</span>
+<div class="v">
+<template v-if="f.kind === 'choice'">
+<VBtnToggle v-if="f.buttons" v-model="se_form[f.name]" density="compact" variant="outlined" mandatory divided @update:modelValue="trigger('nf_se_prop', [f.name, $event])">
+<VBtn :key="c" v-for="c in f.items" size="small" :value="c">
+{{ c }}
+</VBtn>
+</VBtnToggle>
+<VSelect :key="`w988-${tts}`" style="max-width: 220px;" v-else v-model="se_form[f.name]" density="compact" variant="outlined" :items="f.items" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
+</template>
+<template v-else-if="f.kind === 'check'">
+<VCheckbox v-model="se_form[f.name]" density="compact" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
+</template>
+<template v-else-if="f.kind === 'slider'">
+<VSlider v-model.number="se_form[f.name]" :max="f.max" :min="f.min" :step="f.step" density="compact" hideDetails @end="trigger('nf_se_prop', [f.name, $event])" />
+<span class="nf-mono" style="min-width: 48px;">
+{{ se_form[f.name] }}
+</span>
+</template>
+<template v-else-if="f.kind === 'number'">
+<VTextField @change="trigger('nf_se_prop', [f.name, $event.target.value])" @keydown.stop="" style="max-width: 160px;" v-model="se_form[f.name]" type="number" density="compact" variant="outlined" hideDetails />
+</template>
+<template v-else-if="f.kind === 'field'">
+<VCombobox @keydown.stop="" style="max-width: 220px;" v-model="se_form[f.name]" density="compact" variant="outlined" :items="['@field', ...fv_fields.map(x => x.value), ...(f.solid ? ['(solid)'] : [])]" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
+</template>
+<template v-else-if="f.kind === 'string'">
+<VTextField @change="trigger('nf_se_prop', [f.name, $event.target.value])" @keydown.stop="" style="max-width: 320px;" v-model="se_form[f.name]" :placeholder="f.kind === 'text' ? 'e.g. 1, 2, 3' : ''" density="compact" variant="outlined" hideDetails />
+</template>
+<template v-else>
+<VTextField @change="trigger('nf_se_prop', [f.name, $event.target.value])" @keydown.stop="" style="max-width: 320px;" v-model="se_form[f.name]" :placeholder="f.kind === 'text' ? 'e.g. 1, 2, 3' : ''" density="compact" variant="outlined" hideDetails />
+</template>
+</div>
+</div>
+<div style="font-size: 11px; opacity: .5">
+form from {{ se_node.type }}Props.model_json_schema() (pydantic)
+</div>
+</div>
+<div class="nf-se-form" style="opacity: .6" v-if="!se_node">
+Select a node to set it; click a palette entry to add one after it, or drag one onto the canvas.
+</div>
+<div class="nf-se-foot">
+<span :class="['msg', { err: se_msg_err }]">
+{{ se_msg || (se_changes ? se_changes + ' change' + (se_changes > 1 ? 's' : '') + ' since last apply' : 'no changes since last apply') }}
+</span>
+<VBtn :disabled="!se_changes" size="small" variant="outlined" @click="trigger('nf_se_revert')">
+Revert
+</VBtn>
+<VBtn :disabled="!se_changes" size="small" color="primary" variant="flat" @click="trigger('nf_se_apply')">
+Apply
+</VBtn>
 </div>
 </div>
 </div>
@@ -1420,7 +1614,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w850-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w935-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>
@@ -1471,10 +1665,16 @@ Delete
 <VBtn title="a new scene (the Field scene's graph, unsaved)" size="small" variant="tonal" prependIcon="mdi-plus" @click="trigger('nf_sc_new')">
 New
 </VBtn>
+<VBtn title="the scene shown, as a Catalyst script next to its file (runs without the UI)" size="small" variant="tonal" @click="trigger('nf_sc_export')">
+Export .py
+</VBtn>
 <VBtn title="read system/scenes/ again (unsaved edits stay)" size="small" icon="mdi-refresh" variant="text" @click="trigger('nf_sc_load')" />
 </div>
 <div class="nf-scene-path">
 {{ (sc_list.find(s => s.name === sc_current) || {}).path }}
+</div>
+<div class="nf-scene-path" v-if="sc_msg && !sc_rename">
+{{ sc_msg }}
 </div>
 <div class="nf-scene-hint">
 Switching: the solver keeps every scene's ParaView objects; only the shown one executes.

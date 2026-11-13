@@ -14,7 +14,8 @@ UI → worker (stdin)::
     {"cmd": "ack", "seq": 7}              # ... the ``sync`` message 7 (and all before it)
     {"cmd": "view", "field": "U", "component": "mag|0|1|2", "on": true,  # field view
      "mode": "image|data",                    # data: Catalyst Live
-     "options": {"width": "800", ...}}        # display options (pipelines/view.py)
+     "options": {"scene": "...", "graph": "...", "width": "800", ...}}  # scene, size (pipelines/view.py)
+    {"cmd": "export", "path": ".../x.py"}  # the next frame also writes the scene as a Catalyst script
     {"cmd": "live", "on": true}           # field view frames while running ...
     {"cmd": "frames", "every": 1, "seconds": 0.5}   # ... every N time steps, >= s apart
     {"cmd": "stop"}

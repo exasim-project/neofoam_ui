@@ -28,3 +28,15 @@ def test_ordered_refuses_a_cycle():
 def test_the_field_graph_is_a_fresh_copy():
     scenes.field_graph()["nodes"].clear()
     assert len(scenes.field_graph()["nodes"]) == 4
+
+
+@pytest.mark.parametrize("camera, zoom, position, up, scale", [
+    # a 2D case 4 x 1 (x, y), one cell (0.1) thick: looked at along z, its width fills the image
+    ("reset", 1.0, [2.0, 0.5, 40.05], [0.0, 1.0, 0.0], 1.04),
+    ("-z", 2.0, [2.0, 0.5, -39.95], [0.0, 1.0, 0.0], 0.52),
+    ("+x", 1.0, [42.0, 0.5, 0.05], [0.0, 1.0, 0.0], 0.52),  # up y, the height fills it
+])
+def test_camera_fit_frames_the_domain(camera, zoom, position, up, scale):
+    fit = scenes.camera_fit(camera, zoom, [0.0, 4.0, 0.0, 1.0, 0.0, 0.1], (800, 400))
+    assert fit["position"] == pytest.approx(position) and fit["up"] == up
+    assert fit["scale"] == pytest.approx(scale), camera

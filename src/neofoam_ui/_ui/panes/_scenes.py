@@ -1,9 +1,10 @@
 """The Scenes panel: the built-in ``Field`` scene and the case's ``system/scenes/*.json``.
 
-Switch, new, duplicate, rename, delete (confirmed), save; ``●`` marks unsaved edits, which
-stay in this process until saved. ``Field`` is a read-only template: editing it (the camera
-overlay) makes an unsaved copy, ``field-copy``. A file that is not a scene is listed with its
-error and cannot be shown.
+Switch, new, duplicate, rename, delete (confirmed), save, export; ``●`` marks unsaved edits,
+which stay in this process until saved. A scene's graph is what the solver shows; the scene
+editor's edits are a draft of it until Apply (kept per scene; Revert drops it). ``Field`` is a
+read-only template: editing it (the camera overlay, the editor) makes an unsaved copy,
+``field-copy``. A file that is not a scene is listed with its error and cannot be shown.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from trame.widgets import html
 from trame.widgets import vuetify3 as v3
 
 from neofoam_ui.scenes import FIELD, SCENES_DIR, field_graph
-from neofoam_ui.scenes.models import Scene, parse, read_scenes, write_scene
+from neofoam_ui.scenes.models import Scene, SceneError, parse, read_scenes, write_scene
 
 __all__ = ()
 
@@ -46,17 +47,35 @@ _SCENES_CSS = r"""
 
 @dataclass
 class _Entry:
-    """One scene as the UI holds it: its graph (with layout; ``{}`` for a bad file) and the one on
-    disk (``None``: unsaved)."""
+    """One scene as the UI holds it: its graph (with layout; ``{}`` for a bad file), the one on
+    disk (``None``: unsaved) and the editor's draft (``None``: none)."""
 
     graph: dict[str, Any]
     saved: Optional[dict[str, Any]]
     error: Optional[str] = None
     builtin: bool = False
+    draft: Optional[dict[str, Any]] = None
 
     @property
     def unsaved(self) -> bool:
         return not self.builtin and self.error is None and self.graph != self.saved
+
+    @property
+    def edited(self) -> dict[str, Any]:
+        """What the editor shows: the draft, else the graph."""
+        return self.draft if self.draft is not None else self.graph
+
+
+def _core(graph: dict[str, Any]) -> tuple[dict[str, Any], set[tuple[str, str]]]:
+    """A graph's nodes (by id) and edges, without layout and title: what Apply changes."""
+    return ({n["id"]: n for n in graph.get("nodes", [])}, {tuple(e) for e in graph.get("edges", [])})
+
+
+def _changes(old: dict[str, Any], new: dict[str, Any]) -> int:
+    """Nodes added, removed or changed and edges added or removed from ``old`` to ``new``."""
+    (old_nodes, old_edges), (new_nodes, new_edges) = _core(old), _core(new)
+    nodes = sum(old_nodes.get(k) != new_nodes.get(k) for k in old_nodes.keys() | new_nodes.keys())
+    return nodes + len(old_edges ^ new_edges)
 
 
 def _dumped(scene: Scene) -> dict[str, Any]:
@@ -69,6 +88,8 @@ def _summary(entry: _Entry) -> str:
         return "built-in"
     if entry.error is not None:
         return entry.error
+    if entry.draft is not None:
+        return "edits not applied"
     if entry.unsaved:
         return "edited, not saved" if entry.saved is not None else "new, not saved"
     kinds = [n["type"] for n in entry.graph["nodes"] if n["type"] in _FILTERS]
@@ -84,6 +105,8 @@ class _Scenes:
         self._case = Path(case)
         self._changed = changed
         self.entries: dict[str, _Entry] = {}
+        #: Called after every change of the list or of a scene (the scene editor follows).
+        self.listeners: list[Callable[[], None]] = []
         #: The scene shown last (a click on a bad file goes back to it).
         self._shown = FIELD
         state.change("sc_current")(lambda sc_current, **_: self.switch(sc_current))
@@ -113,16 +136,60 @@ class _Scenes:
         if self.current == FIELD:
             self.duplicate()
         entry = self.entries[self.current]
-        view = next(n for n in entry.graph["nodes"] if n["type"] == "View")
-        view.setdefault("props", {}).update(camera=camera, zoom=float(zoom))
+        for graph in (entry.graph, entry.draft or {"nodes": []}):  # a draft keeps the camera too
+            for view in (n for n in graph["nodes"] if n["type"] == "View"):
+                view.setdefault("props", {}).update(camera=camera, zoom=float(zoom))
         self._publish()
         self._changed()
+
+    # -- the scene editor ------------------------------------------------------------------
+
+    def entry(self, name: Optional[str] = None) -> _Entry:
+        return self.entries[name or self.current]
+
+    def edit(self, graph: dict[str, Any]) -> None:
+        """The editor's graph of the current scene: a draft (``Field`` is copied first). Node
+        positions alone need no Apply: they go to the scene's graph as well."""
+        entry = self.entries[self.current]
+        if entry.builtin:
+            if _changes(entry.graph, graph) == 0:
+                return  # Field's nodes moved: nothing to keep
+            self.duplicate()
+            entry = self.entries[self.current]
+            graph = {**graph, "title": entry.graph.get("title")}
+        entry.graph["layout"] = copy.deepcopy(graph.get("layout", {}))
+        entry.draft = graph if _changes(entry.graph, graph) else None
+        self._publish()
+
+    def changes(self) -> int:
+        """How many changes the current scene's draft makes."""
+        entry = self.entries[self.current]
+        return _changes(entry.graph, entry.draft) if entry.draft is not None else 0
+
+    def apply(self) -> Optional[SceneError]:
+        """Show the current draft: checked first (the error, naming the node, refuses it)."""
+        entry = self.entries[self.current]
+        if entry.draft is None:
+            return None
+        try:
+            scene = parse(entry.draft)
+        except SceneError as exc:
+            return exc
+        entry.graph, entry.draft = _dumped(scene), None
+        self._publish()
+        self._changed()
+        return None
+
+    def revert(self) -> None:
+        """Drop the current scene's draft."""
+        self.entries[self.current].draft = None
+        self._publish()
 
     # -- the panel's actions -------------------------------------------------------------
 
     def load(self) -> None:
         """Read the case's scene files again; unsaved edits stay."""
-        kept = {k: e for k, e in self.entries.items() if e.unsaved}
+        kept = {k: e for k, e in self.entries.items() if e.unsaved or e.draft is not None}
         self.entries = {FIELD: _Entry(field_graph(), None, builtin=True)}
         for file in read_scenes(self._case):
             if file.name == FIELD:  # listed by its file name: the scene's is taken
@@ -133,7 +200,8 @@ class _Scenes:
                 graph = _dumped(file.scene)
                 self.entries[file.name] = _Entry(graph, copy.deepcopy(graph))
         for name, entry in kept.items():
-            self.entries[name] = _Entry(entry.graph, self.entries[name].saved if name in self.entries else None)
+            saved = self.entries[name].saved if name in self.entries else None
+            self.entries[name] = _Entry(entry.graph, saved, draft=entry.draft)
         if self.current not in self.entries or self.entries[self.current].error is not None:
             self._state.sc_current = FIELD
         self._publish()
@@ -206,6 +274,11 @@ class _Scenes:
         self._state.sc_confirm = False
         self.switch(FIELD)
 
+    def export_path(self) -> Path:
+        """Where the current scene's Catalyst script goes: next to its file (``Field``: ``field.py``)."""
+        name = self.current
+        return self._path(_slug(name) if self.entries[name].builtin else name).with_suffix(".py")
+
     def ask_rename(self) -> None:
         s = self._state
         s.sc_new_name, s.sc_msg, s.sc_rename = self.title(self.current), "", True
@@ -231,9 +304,12 @@ class _Scenes:
     def _publish(self) -> None:
         """The list the panel and the bar show."""
         self._state.sc_list = [
-            {"name": name, "title": self.title(name), "sub": _summary(e), "unsaved": e.unsaved, "error": e.error is not None,
+            {"name": name, "title": self.title(name), "sub": _summary(e), "unsaved": e.unsaved,
+             "drafted": e.draft is not None, "error": e.error is not None,
              "builtin": e.builtin, "path": "built-in, read-only" if e.builtin else f"{SCENES_DIR}/{name}.json"}
             for name, e in self.entries.items()]
+        for listener in self.listeners:
+            listener()
 
 
 def _slug(title: str) -> str:
@@ -295,9 +371,12 @@ def _scenes_panel() -> None:
                     disabled=(f"({cur}).builtin",))
             v3.VBtn("New", size="small", variant="tonal", click="trigger('nf_sc_new')", prepend_icon="mdi-plus",
                     title="a new scene (the Field scene's graph, unsaved)")
+            v3.VBtn("Export .py", size="small", variant="tonal", click="trigger('nf_sc_export')",
+                    title="the scene shown, as a Catalyst script next to its file (runs without the UI)")
             v3.VBtn(icon="mdi-refresh", size="small", variant="text", click="trigger('nf_sc_load')",
                     title="read system/scenes/ again (unsaved edits stay)")
         html.Div(f"{{{{ ({cur}).path }}}}", classes="nf-scene-path")
+        html.Div("{{ sc_msg }}", classes="nf-scene-path", v_if="sc_msg && !sc_rename")
         html.Div("Switching: the solver keeps every scene's ParaView objects; only the shown one executes.",
                  classes="nf-scene-hint")
     _scene_dialogs()

@@ -62,7 +62,7 @@ def test_the_ui_gets_the_field_surface_then_the_source_the_scene_names(scene, th
     listener.wait()
     assert solver.returncode == 0, solver.stderr[-3000:]
     # the frames name what the UI extracts: the Field scene's surface, then the scene's display input
-    assert [line["extract"] for line in _said(solver.stdout.splitlines())] == ["Field:surface"] + [then] * 3
+    assert [line["extracts"] for line in _said(solver.stdout.splitlines())] == [["Field:surface"]] + [[then]] * 3
     # four unit hexahedra with their own points: 24 boundary quads, 4 cells; T = the frame's number
     assert held[0] == {"source": "Field:surface", "cells": 24, "T": [0.0, 0.0]}
     assert held[-1]["source"] == then and held[-1]["cells"] == cells and held[-1]["T"][0] > 0

@@ -21,6 +21,7 @@ Use it in the UI process and, for a scene of the case, in the solver's pipeline;
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Optional, Union
@@ -44,7 +45,12 @@ Port = Literal["data", "display"]
 
 
 class SceneError(ValueError):
-    """A scene that cannot be built: the message names the node and the reason."""
+    """A scene that cannot be built: the message names the node (``node``, if one) and the reason."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        named = re.match(r"node '([^']+)'", message)
+        self.node: Optional[str] = named.group(1) if named else None
 
 
 class _Props(BaseModel):

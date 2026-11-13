@@ -24,6 +24,7 @@ from neofoam_ui._ui._worker_link import _WorkerLink
 from neofoam_ui._ui.panes._dag import _DagPane
 from neofoam_ui._ui.panes._field import _FieldPane
 from neofoam_ui._ui.panes._plots import _PlotsPane
+from neofoam_ui._ui.panes._scene_editor import _SceneEditorPane
 from neofoam_ui.extensions import ExtensionRegistry, Pane
 from neofoam_ui.protocol import CATALYST_ENV
 
@@ -63,7 +64,7 @@ class StepperApp:
         self.dag = _DagPane(self)
         field = _FieldPane(self)
         self.link.data_url = field.data_url
-        self.panes: list[Pane] = [self.dag, field, _PlotsPane(self)]
+        self.panes: list[Pane] = [self.dag, field, _PlotsPane(self), _SceneEditorPane(self, field.scenes)]
         self.panes += [factory(self) for factory in registry.panes]
         #: The panels of the layout (built with the page, :mod:`neofoam_ui._ui._panels`).
         self.panels: list[Any] = []

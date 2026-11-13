@@ -16,7 +16,7 @@ from trame.app import get_server
 from neofoam_ui._ui import _dock
 from neofoam_ui.app import StepperApp
 
-VIEWS = ["step", "plots", "cfd", "console", "fields"]
+VIEWS = ["step", "plots", "editor", "cfd", "console", "fields"]
 SIDE = ["tree", "breakpoints", "scenes", "inspector", "callstack", "vars", "options", "legend"]
 
 
@@ -46,7 +46,8 @@ def test_every_panel_is_a_template_with_a_launcher(built):
         n = main.count(f'<trame-template templateName="{p.template}" />')
         assert n == (3 if p.kind == "side" else 1)
     # the views' flags: what the server must know
-    assert {p.id: p.flag for p in app.panels if p.flag} == {"step": "dag_on", "plots": "pt_on", "cfd": "fv_on"}
+    assert {p.id: p.flag for p in app.panels if p.flag} == {"step": "dag_on", "plots": "pt_on", "editor": "se_on",
+                                                               "cfd": "fv_on"}
     assert "nfL.toggle('options')" in main.split("</header>")[0]  # ⚙ in the toolbar
 
 
@@ -169,6 +170,7 @@ def test_the_controller_in_a_browser(built, tmp_path):
     assert out["defaultDock"] == [
         ["addPanel", "step", None],
         ["addPanel", "plots", {"referencePanel": "step", "direction": "within"}],
+        ["addPanel", "editor", {"referencePanel": "step", "direction": "within"}],
         ["addPanel", "cfd", {"referencePanel": "step", "direction": "within"}],
         ["addPanel", "console", {"referencePanel": "step", "direction": "below"}],
         ["addPanel", "fields", {"referencePanel": "console", "direction": "within"}]]

@@ -3,7 +3,7 @@
 Two kinds of panel:
 
 * **views** (``kind="main"``): wide; tabs of the dock (trame-dockview) in the main area,
-  split and docked freely. The step view (the diagram), plots, the CFD view (Catalyst) and
+  split and docked freely. The step view (the diagram), plots, the scene editor, the CFD view (Catalyst) and
   every extension pane, the console and the field table.
 * **side panels** (``kind="side"``): narrow; stacked and collapsible in the left or the
   right sidebar, movable to the other one. Containment tree, call stack, breakpoints,
@@ -67,6 +67,7 @@ def _catalogue(app: StepperApp) -> list[_Panel]:
     """Every panel, in launcher order: the views (the built-in ones, the extension panes), then
     the side panels."""
     dag, field, plots = app.dag, cast("_FieldPane", app.pane("field")), app.pane("plots")
+    editor = app.pane("scene_editor")
 
     def view(pane: Any, pid: str, icon: Optional[str] = None) -> _Panel:
         t = pane.toggle
@@ -74,11 +75,12 @@ def _catalogue(app: StepperApp) -> list[_Panel]:
             return _Panel(pane.name, pane.name, pane.name, "mdi-puzzle-outline", "main", pane.build)
         return _Panel(pid, t.label, t.short or t.label, icon or t.icon, "main", pane.build, t.key, t.title)
 
-    builtin = {dag.name, field.name, plots.name}
+    builtin = {dag.name, field.name, plots.name, editor.name}
     side = dag.side_panels()
     return [
         view(dag, "step"),
         view(plots, "plots"),
+        view(editor, "editor"),
         view(field, "cfd"),
         _Panel("console", "Console", "Console", "mdi-console", "main", _console,
                tip="the simulation console, newest first"),

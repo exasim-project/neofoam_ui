@@ -31,7 +31,6 @@ __all__ = ()
 #: wheel: each frame at a pause is one collective render).
 _SETTLE = 0.25
 _ZOOM = (0.25, 50.0)
-_FIELD_ONLY = "data mode shows the built-in Field scene only, for now (per scene: with the scene editor)"
 
 
 def _paraview_web() -> bool:
@@ -80,10 +79,11 @@ class _FieldPane(BasePane):
         else:
             self._data_why = ""
             self.data = _LIVE._LiveData(_free_port(), self._data_status)
-        #: The data view's own camera (data mode draws here; the scene's camera is the image's).
-        self._data_camera: tuple[str, float] = ("reset", 1.0)
+        #: The domain's bounds (the last frame's report): what the data view's camera fits.
+        self._bounds: Optional[list[float]] = None
         self.scenes = _Scenes(ctx.state, ctx.case, self._on_scene)
         _register(ctx.server, self.scenes)
+        ctx.server.trigger("nf_sc_export")(self.export)
         state = ctx.state
         state.change("fv_field", "fv_comp")(lambda **_: self.send_view())
         state.change("fv_mode")(self._on_mode)
@@ -149,6 +149,9 @@ class _FieldPane(BasePane):
         """The view options: the current scene and, in image mode, the image's size."""
         s = self.ctx.state
         options = self.scenes.options()
+        if s.fv_mode == "data" and self.data is not None:
+            # what Live extracts for this process: when it changes, the frame is sent again with them
+            options["extracts"] = self.data.requested
         if s.fv_mode != "data" and s.fv_size:
             width, height, scale = s.fv_size
             options.update(width=str(int(width)), height=str(int(height)), scale=f"{float(scale):.3g}")
@@ -167,26 +170,34 @@ class _FieldPane(BasePane):
         self.ctx.send({"cmd": "view", "on": on, "field": s.fv_field, "component": s.fv_comp, "mode": s.fv_mode,
                        "options": options})
 
+    def export(self) -> None:
+        """Write the current scene as a Catalyst script next to its file (the next frame does)."""
+        s = self.ctx.state
+        if s.fv_mode == "data":
+            s.sc_msg = "export from image mode (data mode draws here, not in the solver)"
+            return
+        path = self.scenes.export_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        s.sc_msg = f"exporting to {path.name} …"
+        self.ctx.send({"cmd": "export", "path": str(path)})
+
     def look(self, camera: str) -> None:
-        """A camera preset (``reset``, ``+x`` … ``-z``), at zoom 1: the scene's View node (image
-        mode, unsaved), or the data view's own camera."""
-        self._camera(camera, 1.0)
+        """A camera preset (``reset``, ``+x`` … ``-z``), at zoom 1: the scene's View node (unsaved)."""
+        self.scenes.edit_view(camera, 1.0)
 
     def zoom(self, factor: float) -> None:
         """Zoom by ``factor`` (bounded)."""
-        camera, zoom = self._data_camera if self._in_data() else \
-            (self.scenes.view_props()["camera"], self.scenes.view_props()["zoom"])
-        self._camera(camera, min(max(float(zoom) * float(factor), _ZOOM[0]), _ZOOM[1]))
+        props = self.scenes.view_props()
+        self.scenes.edit_view(props["camera"], min(max(float(props["zoom"]) * float(factor), _ZOOM[0]), _ZOOM[1]))
 
-    def _in_data(self) -> bool:
-        return self.ctx.state.fv_mode == "data" and self.data is not None
-
-    def _camera(self, camera: str, zoom: float) -> None:
-        if self._in_data():
-            self._data_camera = (camera, zoom)
-            self.data.look(camera, zoom)
+    def _refit(self) -> None:
+        """Data mode: the data view looks as the scene's View says, fitted to the domain and the pane."""
+        s = self.ctx.state
+        if s.fv_mode != "data" or self.data is None or self._bounds is None:
             return
-        self.scenes.edit_view(camera, zoom)
+        props = self.scenes.view_props()
+        width, height = (s.fv_size or [800, 600])[:2]
+        self.data.fit(props["camera"], float(props["zoom"]), self._bounds, (width, height))
 
     def _on_scene(self) -> None:
         """Another scene, or the current one edited: render it once settled."""
@@ -194,16 +205,17 @@ class _FieldPane(BasePane):
         if s.fv_mode == "data" and not self._data_ok():
             s.fv_mode = "image"
         self._data_offer()
+        self._refit()
         self._soon()
 
     def _data_ok(self) -> bool:
-        return self.data is not None and self.scenes.current == FIELD
+        return self.data is not None
 
     def _data_offer(self) -> None:
         """Data mode on offer, or why not."""
         s = self.ctx.state
         s.fv_data_ok = self._data_ok()
-        s.fv_data_why = self._data_why or ("" if s.fv_data_ok else _FIELD_ONLY)
+        s.fv_data_why = self._data_why
 
     def _soon(self) -> None:
         """:meth:`send_view` once the settings rested for :data:`_SETTLE` seconds."""
@@ -218,12 +230,13 @@ class _FieldPane(BasePane):
 
     def _on_size(self, width: int, height: int, scale: float) -> None:
         self.ctx.state.fv_size = [width, height, scale]
+        self._refit()
         self.send_view()  # already settled in the browser
 
     def _on_mode(self, fv_mode: str, **_: Any) -> None:
         if fv_mode == "data" and self.data is not None:
             self.data.listen()  # before the worker's next frame tries to connect
-            self.data.look(*self._data_camera)
+            self._refit()
         self.send_view()
 
     def _data_status(self, text: str) -> None:
@@ -260,10 +273,15 @@ class _FieldPane(BasePane):
         s.fv_field, s.fv_comp = msg["field"], msg["component"]
         report = msg.get("report") or {}
         notes = list(report.get("notes") or [])
+        self._bounds = report.get("bounds") or self._bounds
+        if report.get("exported"):
+            s.sc_msg = f"exported {report['exported']}"
         if msg["mode"] == "data":
-            if report.get("extract"):
-                self.data.extract(report["extract"])
-            s.fv_data_shown = self.data.show(msg["field"], msg["component"])
+            shown = self.data.show(report.get("extracts") or [])
+            first, s.fv_data_shown = shown and not s.fv_data_shown, shown
+            if first:  # fitted once the view shows (it had no size while hidden)
+                self._refit()
+            self.send_view()  # a source not extracted before comes with the next frame
             notes += [self.data.note] if self.data.note else []
             how = "data via Catalyst Live"
         else:

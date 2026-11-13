@@ -132,6 +132,7 @@ class _FieldView:
         self._described: Optional[tuple[Any, float]] = None  # (params, when) of the last read-back
         self.describe_every = _DESCRIBE_EVERY
         self._rendered: Optional[bytes] = None  # the image of the last render
+        self._export: Optional[str] = None  # where the next frame writes the scene as a script
 
     # -- requests -------------------------------------------------------------------------
 
@@ -141,6 +142,11 @@ class _FieldView:
         if not on:
             self._epoch += 1  # before the swap: whoever sees the new view sees the new epoch
         self.view = (field, component, mode, dict(self.options)) if on else None
+
+    def export(self, path: str) -> None:
+        """The next frame also writes the shown scene to ``path`` (rendered even if nothing changed)."""
+        self._export = path
+        self._sent = None
 
     def share(self) -> Optional[_View]:
         """Rank 0, before the ranks resume: the view its solver frames draw until the next ``go``."""
@@ -202,11 +208,12 @@ class _FieldView:
             return fields
         return {params["field"]: fields[params["field"]]}
 
-    def _fail(self, text: str) -> None:
+    def _fail(self, text: str, node: Optional[str] = None) -> None:
+        """An error frame instead of a picture; ``node``: the scene's node that failed."""
         if self._sent != ("error", self._epoch, text):
             self._sent = ("error", self._epoch, text)
             scene = (self.view or (None, None, None, {}))[3].get("scene", FIELD)
-            self._s.emit({"type": "frame", "image": None, "fields": [], "error": text, "scene": scene})
+            self._s.emit({"type": "frame", "image": None, "fields": [], "error": text, "scene": scene, "node": node})
 
     def send(self) -> None:
         """Render the viewed field if the view is open and the values changed; send the frame."""
@@ -226,6 +233,8 @@ class _FieldView:
         params = _params(view, view, fields)
         if params is None:
             return
+        if self._export:
+            params, self._export = {**params, "export": self._export}, None
         key = (self._epoch, region, *params.values(), _fingerprint(fields[params["field"]]))
         if key == self._sent:
             return
@@ -269,7 +278,7 @@ class _FieldView:
         s = self._s
         report = getattr(self.renderer, "report", None) or {}
         if report.get("error"):  # the shown scene failed; the view and the other scenes go on
-            return self._fail(report["error"])
+            return self._fail(report["error"], report.get("error_node"))
         if image is None and params["mode"] != "data":
             return self._fail(self._error or "in-situ view failed")
         frame = {

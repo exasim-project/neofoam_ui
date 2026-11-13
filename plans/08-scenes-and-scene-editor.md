@@ -105,5 +105,9 @@ camera*; everything else (cuts, colours, filters) lives in the scene.
 | 8 | **Nodes are pydantic models.** There is one model per node type, and a `Scene` holds a discriminated union over `type`. Validation runs on load and on Apply. The editor's property forms come from `model_json_schema()`. pydantic is a dependency of neofoam_ui. The worker needs it only to apply a custom scene, so the built-in `Field` scene runs without it. |
 | 9 | **`Field` is a read-only template.** Editing it creates a copy (`system/scenes/field-copy.json`). |
 | 10 | **Two milestones.** **M1:** models, solver builder, protocol, Scenes panel, pane shrink (steps 1–4 and 6). **M2:** node editor, Apply/Revert, data mode per scene, export to `.py` (steps 5, 7, 8). There is a review with screenshots after M1. |
+| 11 | **Adding nodes:** click a palette entry to add the node after the selected node, already linked; drag an entry onto the canvas to place it unlinked. |
+| 12 | **The property form sits below the graph** in the editor tab, with Apply and Revert, as in the mockup. |
+| 13 | **Nodes show errors and timings:** a node that failed to build gets a red border and the message; each node shows its last execute time in ms. The read-only pipeline diagram stays. |
+| 14 | **Unapplied edits are kept per scene** until Apply or Revert, and switching back shows them. |
 
 Mockup: [`mockups/scene-editor.html`](mockups/scene-editor.html).
