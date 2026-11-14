@@ -47,7 +47,7 @@ class _LiveData:
     """One Live listener (started on the first :meth:`listen`) and the view that draws its data."""
 
     def __init__(self, port: int, on_status: Callable[[str], None]) -> None:
-        #: What the worker connects to (``NEOFOAM_UI_CATALYST_DATA``).
+        #: What the worker connects to (its ``--data``).
         self.url = f"localhost:{port}"
         self._port = port
         self._on_status = on_status

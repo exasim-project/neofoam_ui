@@ -1,14 +1,14 @@
 """A Catalyst-v2 script other than the stepper's own: threshold, slice, a data extractor.
 
-Used by the post-processing diagram test (``NEOFOAM_UI_CATALYST_SCRIPT``-style pipelines).
+Used by the post-processing diagram test (``catalyst.script``-style pipelines).
 """
 
 from paraview import catalyst
 from paraview.simple import CreateExtractor, CreateView, Show, Threshold, TrivialProducer
 
-_args = catalyst.get_args()
+_args = dict(arg.split("=", 1) for arg in catalyst.get_args())
 options = catalyst.Options()
-options.ExtractsOutputDirectory = _args[0] if _args else "."
+options.ExtractsOutputDirectory = _args.get("out", ".")
 
 grid = TrivialProducer(registrationName="grid")
 hot = Threshold(registrationName="hot", Input=grid)

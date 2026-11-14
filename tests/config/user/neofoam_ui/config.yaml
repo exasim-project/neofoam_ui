@@ -1,0 +1,10 @@
+# machine settings of a user
+worker:
+  python: /opt/neofoam/bin/python
+  np: 2
+catalyst:
+  prefix: /opt/catalyst
+  live: localhost:22222
+ui:
+  delay_ms: 50
+  port: 9000

@@ -1,0 +1,3 @@
+# a desktop ParaView attaches with Catalyst Live
+catalyst:
+  live: localhost:22222

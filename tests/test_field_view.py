@@ -18,6 +18,7 @@ from neofoam_ui import catalyst
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
 from neofoam_ui.catalyst._blueprint import _blueprint
 from neofoam_ui.catalyst._native import _import
+from neofoam_ui.config import CatalystConfig
 from neofoam_ui.engine import Session
 from neofoam_ui.geometry import cell_centres_geometry, cell_count, merged, polyhedral, read_polymesh
 from neofoam_ui.toy.heat1d import Heat1D
@@ -65,7 +66,7 @@ def fake_catalyst(monkeypatch):
     FakeInSitu.out_dirs = []
     FakeInSitu.ms = {}
     FakeInSitu.pipeline = json.loads(json.dumps(PIPELINE))
-    monkeypatch.setenv(catalyst.ENV, "/nowhere")
+    catalyst.use(CatalystConfig(prefix="/nowhere"))
     monkeypatch.setattr(catalyst, "InSitu", FakeInSitu)
     return FakeInSitu.calls
 
@@ -124,18 +125,17 @@ def test_frames_only_when_values_change(fake_catalyst):
     assert messages[-1]["type"] == "paused" and messages[-2] is frames[-1]
 
 
-def test_another_pipeline_script_gets_every_field(fake_catalyst, monkeypatch):
-    monkeypatch.setenv(catalyst.SCRIPT_ENV, "/my/pipeline.py")
+def test_another_pipeline_script_gets_every_field(fake_catalyst):
+    catalyst.use(CatalystConfig(prefix="/nowhere", script="/my/pipeline.py"))
     session, _ = session_after_init()
     session.set_view("T")
     assert set(renders(fake_catalyst)[0]["fields"]) == {"T", "T_old", "kappa", "source_mask"}
 
 
 @pytest.mark.parametrize("script, out_dir", [(None, None), ("/my/pipeline.py", "postProcessing/catalyst")])
-def test_only_another_pipeline_script_gets_an_output_directory(fake_catalyst, monkeypatch, script, out_dir):
+def test_only_another_pipeline_script_gets_an_output_directory(fake_catalyst, script, out_dir):
     """The stepper's own pipeline writes nothing; another script's extracts go into the case."""
-    if script:
-        monkeypatch.setenv(catalyst.SCRIPT_ENV, script)
+    catalyst.use(CatalystConfig(prefix="/nowhere", script=script))
     session, _ = session_after_init()
     session.set_view("T")
     assert FakeInSitu.out_dirs == [out_dir]
@@ -337,12 +337,12 @@ def test_solver_without_geometry_reports_it_once():
     assert len(frames) == 1 and frames[0]["image"] is None and "no mesh" in frames[0]["error"]
 
 
-def test_unconfigured_catalyst_says_so(monkeypatch):
-    monkeypatch.delenv(catalyst.ENV)
+def test_unconfigured_catalyst_says_so():
+    catalyst.use(CatalystConfig())
     session, messages = session_after_init()
     session.set_view("T")
     (frame,) = of(messages, "frame")
-    assert frame["image"] is None and catalyst.ENV in frame["error"]
+    assert frame["image"] is None and "catalyst.prefix" in frame["error"]
 
 
 def test_a_failing_catalyst_disables_the_view_not_the_session(monkeypatch):
@@ -543,9 +543,8 @@ def test_worker_switches_the_field_while_running():
 
 
 def test_worker_reports_unconfigured_view():
-    env = {k: v for k, v in os.environ.items() if k != catalyst.ENV}
     proc = subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "neofoam_ui.toy.heat1d:Heat1D"],
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 
     def send(cmd):
         proc.stdin.write(json.dumps(cmd) + "\n")
@@ -565,7 +564,7 @@ def test_worker_reports_unconfigured_view():
         send({"cmd": "step", "mode": "skip_init"})
         seen = until("paused")
         (frame,) = [m for m in seen if m["type"] == "frame"]
-        assert frame["image"] is None and catalyst.ENV in frame["error"]
+        assert frame["image"] is None and "catalyst.prefix" in frame["error"]
         send({"cmd": "stop"})
         until("stopped")
     finally:
@@ -676,8 +675,8 @@ def test_cell_centres_geometry():
 
 # -- the real thing: conduit Blueprint + ParaView through Catalyst 2 ---------------------------
 
-PREFIX = os.environ.get(catalyst.ENV)
-needs_catalyst = pytest.mark.skipif(not PREFIX, reason=f"set {catalyst.ENV} to a Catalyst + ParaView install")
+PREFIX = os.environ.get("NEOFOAM_TEST_CATALYST")
+needs_catalyst = pytest.mark.skipif(not PREFIX, reason="set NEOFOAM_TEST_CATALYST to a Catalyst + ParaView install")
 #: The interpreter ParaView was built for.
 PYTHON = os.environ.get("NEOFOAM_PYTHON", sys.executable)
 #: The signature every PNG starts with.

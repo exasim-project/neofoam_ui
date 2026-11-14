@@ -16,19 +16,18 @@ the scene's View node; the camera is fitted again for a new size. A scene that
 cannot be built is dropped with its error (``report["error"]`` names the node), until another
 graph comes for it; the other scenes are not touched.
 
-With a directory as the script's first argument it writes ``view_<timestep>.png`` of the
-whole domain there; the caller may capture :data:`shown_view` as well. ``report`` tells the
+Script arguments (``key=value``, each optional): with ``out=<dir>`` it writes
+``view_<timestep>.png`` of the whole domain there; the caller may capture :data:`shown_view` as well. ``report`` tells the
 caller of the last execute: the domain ``bounds``, the default ``axis``, ``notes``, the shown
 ``scene``, its ``error`` (and ``error_node``), each node's proxies (``proxies``, for timings), in
 data mode the ``extracts`` (each Display's input, the source Catalyst Live sends, with the
 Display's settings), and ``exported`` after ``export=<path>`` (a Catalyst script of the scene).
-``NEOFOAM_UI_CATALYST_LIVE=host:port`` lets a ParaView attach (Catalyst ▸ Connect) at every
-execute; ``NEOFOAM_UI_CATALYST_DATA=host:port`` (the stepper UI's data mode) publishes to
+``live=host:port`` lets a ParaView attach (Catalyst ▸ Connect) at every
+execute; ``data=host:port`` (the stepper UI's data mode) publishes to
 Live only in ``mode=data``, where the input of the scene's first Display is updated but
 nothing is drawn.
 """
 
-import os
 from typing import Any
 
 from paraview import catalyst, servermanager
@@ -41,21 +40,21 @@ from vtkmodules.vtkParallelCore import vtkCommunicator, vtkMultiProcessControlle
 from vtkmodules.vtkRenderingFreeType import vtkMathTextUtilities
 
 from neofoam_ui.scenes import FIELD, camera_fit, field_graph, inputs, ordered
+from neofoam_ui.scenes.models import parse
 
-_args = catalyst.get_args()
+_args = dict(arg.split("=", 1) for arg in catalyst.get_args())
 
 options = catalyst.Options()
-_live = os.environ.get("NEOFOAM_UI_CATALYST_LIVE", "off")
-_live = "" if _live == "off" else _live
-_data = os.environ.get("NEOFOAM_UI_CATALYST_DATA", "")
+_live = _args.get("live", "")
+_data = _args.get("data", "")
 if _live or _data:
     options.CatalystLiveURL = _live or _data
     options.EnableCatalystLive = int(bool(_live))
 
 grid = TrivialProducer(registrationName="grid")
 png = None
-if _args:
-    options.ExtractsOutputDirectory = _args[0]
+if "out" in _args:
+    options.ExtractsOutputDirectory = _args["out"]
 
 _COMPONENT = {"mag": "Magnitude", "0": "X", "1": "Y", "2": "Z"}
 _CMAPS = {"viridis": "Viridis (matplotlib)", "coolwarm": "Cool to Warm", "inferno": "Inferno (matplotlib)",
@@ -590,9 +589,6 @@ def _graph_of(params):
     name = params.get("scene") or FIELD
     if not params.get("graph"):
         return name, field_graph()
-    # pydantic only for a scene of the case: the built-in Field scene runs without it
-    from neofoam_ui.scenes.models import parse  # noqa: PLC0415
-
     return name, parse(params["graph"]).graph()
 
 
@@ -686,7 +682,7 @@ def _show(scene, params, ctx):
 
 def _point_png(view):
     global png
-    if not _args:
+    if "out" not in _args:
         return
     if png is None:
         png = CreateExtractor("PNG", view, registrationName="png")

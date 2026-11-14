@@ -1,12 +1,12 @@
 """The solver-side scene builder (``pipelines/view.py``) in a real ParaView, through Catalyst 2:
 a changed graph keeps the proxies of unchanged nodes, switching keeps every scene built and runs
-only the shown one, every node type builds, a bad scene fails alone, the built-in ``Field`` runs
-without pydantic, under ``mpirun -np 2`` every rank builds the same scene, and an exported
+only the shown one, every node type builds, a bad scene fails alone, under ``mpirun -np 2``
+every rank builds the same scene, and an exported
 scene runs on its own (through Catalyst on a written case, and in pvbatch).
 
 Each case runs ``helpers/catalyst_scenes.py`` in a fresh interpreter (Catalyst stays
 initialised for the life of a process) on the scene files of ``tests/scenes/cases/builder``.
-Opt-in: needs ``NEOFOAM_UI_CATALYST`` and the interpreter ParaView was built for
+Opt-in: needs ``NEOFOAM_TEST_CATALYST`` and the interpreter ParaView was built for
 (``NEOFOAM_PYTHON``)."""
 
 import json
@@ -18,15 +18,13 @@ from pathlib import Path
 
 import pytest
 
-PREFIX = os.environ.get("NEOFOAM_UI_CATALYST")
+PREFIX = os.environ.get("NEOFOAM_TEST_CATALYST")
 PYTHON = os.environ.get("NEOFOAM_PYTHON", sys.executable)
-pytestmark = pytest.mark.skipif(not PREFIX, reason="set NEOFOAM_UI_CATALYST to a Catalyst + ParaView install")
+pytestmark = pytest.mark.skipif(not PREFIX, reason="set NEOFOAM_TEST_CATALYST to a Catalyst + ParaView install")
 HERE = Path(__file__).resolve().parent
 HELPER = str(HERE / "helpers" / "catalyst_scenes.py")
 EXPORT = HERE / "helpers" / "catalyst_export.py"
 SCENES = str(HERE / "scenes" / "cases" / "builder" / "system" / "scenes")
-#: Blocks pydantic, then runs the helper: a worker without it.
-NO_PYDANTIC = "import runpy, sys; sys.modules['pydantic'] = None; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0])"
 
 
 def _env():
@@ -95,12 +93,6 @@ def test_a_bad_scene_fails_alone_and_keeps_its_last_build():
     assert frames[2]["colours"] is None
     assert frames[3]["error"] is None and frames[3]["colours"]["yellow"]
     assert frames[4]["error"] is None and frames[4]["ids"] == frames[1]["ids"]
-
-
-def test_the_built_in_scene_runs_without_pydantic():
-    frames = _frames(["Field", "slice"], launch=(PYTHON, "-c", NO_PYDANTIC))
-    assert frames[0]["error"] is None and frames[0]["colours"] == {"purple": True, "yellow": True, "red": False}
-    assert "pydantic" in frames[1]["error"]
 
 
 @pytest.mark.skipif(not shutil.which("mpirun"), reason="needs mpirun")

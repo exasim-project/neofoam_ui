@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import neofoam_ui
-from neofoam_ui.protocol import CATALYST_DATA_ENV, CATALYST_ENV, SYNC_ENV
 
 __all__ = ()
 
@@ -55,12 +54,11 @@ class _WorkerLink:
         env["PYTHONPATH"] = os.pathsep.join(p for p in (_SRC, env.get("PYTHONPATH")) if p)
         cmd = [self.python, "-u", "-m", "neofoam_ui.worker", self.solver_spec]
         if self.catalyst:
-            env[CATALYST_ENV] = self.catalyst
-            if self.data_url:
-                env[CATALYST_DATA_ENV] = self.data_url
+            cmd += ["--catalyst", self.catalyst]
+        if self.data_url:
+            cmd += ["--data", self.data_url]
         if self.np > 1:
-            env[SYNC_ENV] = f"{self.sync_host}:{_free_port(self.sync_host)}"
-            cmd = [*self.mpirun, "-np", str(self.np), *cmd]
+            cmd = [*self.mpirun, "-np", str(self.np), *cmd, "--sync", f"{self.sync_host}:{_free_port(self.sync_host)}"]
         self.proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=self.case,

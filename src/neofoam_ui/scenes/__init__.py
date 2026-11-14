@@ -2,9 +2,8 @@
 
 A scene is a graph of nodes (``grid`` → filters → ``Display`` → ``View``); the UI picks one, the
 solver's pipeline (``pipelines/view.py``) builds it in ParaView and keeps it while others show.
-This module is plain data and needs no pydantic: the worker uses it for the built-in ``Field``
-scene. The node models and the checks of a graph are in :mod:`neofoam_ui.scenes.models`
-(pydantic), needed only for a scene of the case.
+This module is plain data: the built-in ``Field`` scene and the graph helpers. The node models
+and the checks of a graph are in :mod:`neofoam_ui.scenes.models` (pydantic).
 
 A graph as the solver gets it: ``{"version": 1, "nodes": [{"id", "type", "props"}, ...],
 "edges": [[source, target], ...]}`` with every property given (``models.Scene.graph()``)::

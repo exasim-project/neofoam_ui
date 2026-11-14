@@ -81,7 +81,7 @@ def _params(view: _View, shown: Sequence[Optional[str]], fields: dict[str, np.nd
 
 
 class _CatalystBackend:
-    """The default :class:`RenderBackend`: Catalyst 2 + ParaView, configured by the environment.
+    """The default :class:`RenderBackend`: Catalyst 2 + ParaView, configured by :func:`neofoam_ui.catalyst.settings`.
 
     :mod:`neofoam_ui.catalyst` is looked up at each call (Catalyst itself is loaded by the first
     :class:`~neofoam_ui.catalyst.InSitu`)."""
@@ -89,7 +89,7 @@ class _CatalystBackend:
     def unavailable(self) -> Optional[str]:
         if catalyst.configured():
             return None
-        return f"in-situ view off: set {catalyst.ENV} to a Catalyst + ParaView install"
+        return "in-situ view off: set catalyst.prefix in the config (or --catalyst) to a Catalyst + ParaView install"
 
     def publishes_all(self) -> bool:
         return catalyst.custom_script()

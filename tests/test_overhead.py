@@ -16,10 +16,10 @@ from self_driven import RankSelfDriven, SelfDriven
 from test_parallel import _port
 
 from neofoam_ui import catalyst
+from neofoam_ui.config import CatalystConfig
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
 from neofoam_ui.engine import _tracking as engine
 from neofoam_ui.engine import UNTRACKED, Session
-from neofoam_ui.parallel import SYNC_ENV
 from neofoam_ui.protocol import LOSSY
 from neofoam_ui.toy.heat1d import Heat1D
 from neofoam_ui.worker._out import _Out
@@ -184,7 +184,7 @@ class FakeInSitu:
 
 @pytest.fixture
 def fake_catalyst(monkeypatch):
-    monkeypatch.setenv(catalyst.ENV, "/nowhere")
+    catalyst.use(CatalystConfig(prefix="/nowhere"))
     monkeypatch.setattr(catalyst, "InSitu", FakeInSitu)
 
 
@@ -371,9 +371,9 @@ def test_followers_pass_the_events_of_a_free_run_alike(monkeypatch):
 
     def worker(rank, **kw):
         env = {**os.environ, "OMPI_COMM_WORLD_RANK": str(rank), "OMPI_COMM_WORLD_SIZE": "2",
-               SYNC_ENV: f"127.0.0.1:{port}",
                "PYTHONPATH": os.pathsep.join([HELPERS, os.environ.get("PYTHONPATH", "")])}
-        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven"],
+        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven",
+                                 "--sync", f"127.0.0.1:{port}"],
                                 env=env, text=True, **kw)
 
     root = worker(0, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -426,10 +426,10 @@ def test_followers_honour_a_pause_at_the_next_time_step():
     port = _port()
 
     def worker(rank, **kw):
-        env = {**os.environ, "OMPI_COMM_WORLD_RANK": str(rank), "OMPI_COMM_WORLD_SIZE": "2",
-               SYNC_ENV: f"127.0.0.1:{port}", "SELF_DRIVEN_SLEEP": "0.02",
+        env = {**os.environ, "OMPI_COMM_WORLD_RANK": str(rank), "OMPI_COMM_WORLD_SIZE": "2", "SELF_DRIVEN_SLEEP": "0.02",
                "PYTHONPATH": os.pathsep.join([HELPERS, os.environ.get("PYTHONPATH", "")])}
-        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven"],
+        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven",
+                                 "--sync", f"127.0.0.1:{port}"],
                                 env=env, text=True, **kw)
 
     root = worker(0, stdin=subprocess.PIPE, stdout=subprocess.PIPE)

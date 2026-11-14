@@ -11,7 +11,7 @@ from typing import Any, Optional
 import numpy as np
 
 from neofoam_ui.catalyst._blueprint import _blueprint
-from neofoam_ui.catalyst._config import _CHANNEL, _PIPELINE, ENV, SCRIPT_ENV
+from neofoam_ui.catalyst._config import _CHANNEL, _PIPELINE, _data_url, settings
 from neofoam_ui.catalyst._describe import _describe_pipeline
 from neofoam_ui.catalyst._native import _import, _no_fp_traps
 
@@ -21,22 +21,28 @@ __all__ = ()
 class InSitu:
     """One Catalyst session (per rank) for the life of the worker.
 
-    ``out_dir``: the pipeline's extracts go there (the default pipeline then writes its
-    images); ``capture``: :meth:`execute` captures the view and returns the image (the
-    stepper; a solver's own post-processing writes files only)."""
+    ``prefix`` and ``script`` default to :func:`~neofoam_ui.catalyst.settings`; ``out_dir``: the
+    pipeline's extracts go there (the default pipeline then writes its images); ``capture``:
+    :meth:`execute` captures the view and returns the image (the stepper; a solver's own
+    post-processing writes files only)."""
 
     def __init__(self, prefix: Optional[str] = None, out_dir: Optional[str] = None,
                  script: Optional[str] = None, capture: bool = True) -> None:
-        prefix = prefix or os.environ[ENV]
+        config = settings()
+        prefix = prefix or config.prefix
+        if prefix is None:
+            raise RuntimeError("no Catalyst install: set catalyst.prefix in the config or pass --catalyst")
         self.out_dir = out_dir
         self.capture = capture
         self._catalyst, self._conduit = _import(prefix)
         init = self._conduit.Node()
-        self.script = script or os.environ.get(SCRIPT_ENV) or _PIPELINE
+        self.script = script or config.script or _PIPELINE
         init["catalyst/scripts/view/filename"] = self.script
         if out_dir is not None:
             os.makedirs(out_dir, exist_ok=True)
-            init["catalyst/scripts/view/args"].append().set(out_dir)
+        for key, value in (("out", out_dir), ("live", config.live), ("data", _data_url())):
+            if value:
+                init["catalyst/scripts/view/args"].append().set(f"{key}={value}")
         init["catalyst_load/implementation"] = "paraview"
         init["catalyst_load/search_paths/paraview"] = os.path.join(prefix, "lib", "catalyst")
         with _no_fp_traps():

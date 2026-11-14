@@ -7,7 +7,6 @@ import socket
 import sys
 from typing import Any, Optional
 
-from neofoam_ui.parallel._ranks import _address
 
 __all__ = ()
 
@@ -18,8 +17,8 @@ _REPLY_TIMEOUT = 60.0
 class _Hub:
     """Rank 0's end: the connections to all followers (the session's :class:`~neofoam_ui.engine.Peers`)."""
 
-    def __init__(self, followers: int, timeout: float = 300.0) -> None:
-        server = socket.create_server(_address())
+    def __init__(self, followers: int, address: tuple[str, int], timeout: float = 300.0) -> None:
+        server = socket.create_server(address)
         server.settimeout(timeout)
         self._peers: list[tuple[int, Any]] = []
         try:

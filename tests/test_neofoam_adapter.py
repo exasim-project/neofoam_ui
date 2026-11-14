@@ -112,8 +112,8 @@ def test_mpi_free_runs_keep_the_ranks_in_step(tmp_path):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     proc = subprocess.Popen(["mpirun", "-np", "2", PYTHON, "-u", "-m", "neofoam_ui.worker",
-                             "neofoam_ui.adapters.neofoam:incompressible_fluid"],
-                            cwd=case, env=_env(NEOFOAM_UI_SYNC=f"127.0.0.1:{port}"),
+                             "neofoam_ui.adapters.neofoam:incompressible_fluid", "--sync", f"127.0.0.1:{port}"],
+                            cwd=case, env=_env(),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=open(tmp_path / "stderr", "w"), text=True)
     graph = []

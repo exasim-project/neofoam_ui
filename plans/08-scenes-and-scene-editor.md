@@ -77,7 +77,7 @@ camera*; everything else (cuts, colours, filters) lives in the scene.
 
 - **Export → Catalyst `.py`:** the builder writes the scene as a standalone Catalyst script,
   using ParaView's own exporter (`paraview.detail.catalyst_export.save_catalyst_state`), so
-  the scene also runs without the UI (`NEOFOAM_UI_CATALYST_SCRIPT` or a postProcess `insitu`
+  the scene also runs without the UI (`catalyst.script` in the config or a postProcess `insitu`
   entry).
 - **Import:** not in the first version. A ParaView state cannot be mapped back to the core node
   set in general.
@@ -102,7 +102,7 @@ camera*; everything else (cuts, colours, filters) lives in the scene.
 | 5 | **The camera is saved in the scene**: the View node holds camera and zoom. Switching restores it. The overlay edits the current scene's view, unsaved until Save. |
 | 6 | **Only the shown scene runs.** Hidden scenes stay built but idle. |
 | 7 | **multiRun: one `grid` with the `region` field**, as today. A Threshold on `region` picks one region. |
-| 8 | **Nodes are pydantic models.** There is one model per node type, and a `Scene` holds a discriminated union over `type`. Validation runs on load and on Apply. The editor's property forms come from `model_json_schema()`. pydantic is a dependency of neofoam_ui. The worker needs it only to apply a custom scene, so the built-in `Field` scene runs without it. |
+| 8 | **Nodes are pydantic models.** There is one model per node type, and a `Scene` holds a discriminated union over `type`. Validation runs on load and on Apply. The editor's property forms come from `model_json_schema()`. pydantic is a dependency of neofoam_ui, and the worker needs it too: it reads the config files (`neofoam_ui.config`, pydantic models) at start. |
 | 9 | **`Field` is a read-only template.** Editing it creates a copy (`system/scenes/field-copy.json`). |
 | 10 | **Two milestones.** **M1:** models, solver builder, protocol, Scenes panel, pane shrink (steps 1–4 and 6). **M2:** node editor, Apply/Revert, data mode per scene, export to `.py` (steps 5, 7, 8). There is a review with screenshots after M1. |
 | 11 | **Adding nodes:** click a palette entry to add the node after the selected node, already linked; drag an entry onto the canvas to place it unlinked. |

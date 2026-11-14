@@ -38,7 +38,12 @@ errors, ``stopped``, …) always goes out, in order. With "wait for UI" on nothi
 and the session blocks at every time step and frame on a ``sync`` message until the UI
 answers it with an ``ack``: every event and frame is shown, the solver runs at the UI's pace.
 
-Usage: ``python -m neofoam_ui.worker neofoam_ui.toy.heat1d:Heat1D``
+Usage: ``python -m neofoam_ui.worker neofoam_ui.toy.heat1d:Heat1D [--sync host:port]
+[--catalyst PREFIX] [--data host:port]``, run in the case directory. The UI sets the options:
+``--sync`` where rank 0 listens for the other ranks of an MPI run (``mpirun`` passes the
+arguments to every rank), ``--catalyst`` the Catalyst install over the config files
+(:mod:`neofoam_ui.config`, whose ``catalyst`` section the worker reads), ``--data`` the
+Catalyst Live listener of the field view's data mode.
 
 The message and command names are in :mod:`neofoam_ui.protocol`.
 

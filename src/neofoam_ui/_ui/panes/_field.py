@@ -15,14 +15,13 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
-import os
 from typing import Any, Mapping, Optional
 
 from neofoam_ui._ui._worker_link import _free_port
 from neofoam_ui._ui.panes._field_view import _FIELD_CSS, _field_pane
 from neofoam_ui._ui.panes._scenes import _SCENES_CSS, _register, _Scenes, _scenes_panel
+from neofoam_ui.config import load_config
 from neofoam_ui.extensions import BasePane, PaneContext, PaneToggle
-from neofoam_ui.protocol import CATALYST_LIVE_ENV
 from neofoam_ui.scenes import FIELD
 
 __all__ = ()
@@ -67,12 +66,12 @@ class _FieldPane(BasePane):
         self._view_req: Optional[tuple[Any, ...]] = None
         self._settle: Optional[asyncio.TimerHandle] = None
         #: Render at every pause even with the panes closed (a ParaView is attached via Live).
-        desktop = os.environ.get(CATALYST_LIVE_ENV, "off")
-        self.live = desktop != "off"
+        desktop = load_config(ctx.case).catalyst.live
+        self.live = desktop is not None
         #: The data mode's Live listener and view (``None``: image mode only, see ``fv_data_why``).
         self.data: Any = None
         if self.live:
-            self._data_why = f"Catalyst Live goes to the ParaView at {desktop} ({CATALYST_LIVE_ENV})"
+            self._data_why = f"Catalyst Live goes to the ParaView at {desktop} (catalyst.live)"
         elif _LIVE is None:
             self._data_why = ("data mode needs the UI under the pvpython of a ParaView with web modules: "
                               "pvpython --venv <env> -m neofoam_ui.app …")

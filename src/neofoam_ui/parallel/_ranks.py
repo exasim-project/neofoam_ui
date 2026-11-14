@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import os
-
-from neofoam_ui.protocol import SYNC_ENV
+from typing import Optional
 
 __all__ = ()
 
@@ -23,9 +22,9 @@ def rank_info() -> tuple[int, int]:
     return 0, 1
 
 
-def _address() -> tuple[str, int]:
-    value = os.environ.get(SYNC_ENV)
+def _address(value: Optional[str]) -> tuple[str, int]:
+    """``host:port`` (the worker's ``--sync``) as an address."""
     if not value:
-        raise RuntimeError(f"an MPI run of the stepper needs {SYNC_ENV}=host:port")
+        raise RuntimeError("an MPI run of the stepper needs the worker's --sync host:port")
     host, _, port = value.rpartition(":")
     return host or "127.0.0.1", int(port)

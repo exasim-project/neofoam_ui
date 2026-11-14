@@ -2,7 +2,7 @@
 trame state and template the browser binds to, and the message trace of a session.
 
 The golden files in ``tests/golden`` were recorded before the refactor; regenerate them
-(``NEOFOAM_UI_REGOLD=1 pytest tests/test_contracts.py``) only for an intended change.
+(``NEOFOAM_TEST_REGOLD=1 pytest tests/test_contracts.py``) only for an intended change.
 """
 
 import importlib
@@ -25,7 +25,7 @@ from neofoam_ui.toy.heat1d import Heat1D
 
 GOLDEN = Path(__file__).parent / "golden"
 SRC = Path(__file__).resolve().parents[1] / "src"
-REGOLD = bool(os.environ.get("NEOFOAM_UI_REGOLD"))
+REGOLD = bool(os.environ.get("NEOFOAM_TEST_REGOLD"))
 
 
 def _golden(name: str, value: str) -> str:
@@ -71,19 +71,6 @@ def test_the_worker_side_imports_without_trame():
         "import neofoam_ui, neofoam_ui.worker, neofoam_ui.engine, neofoam_ui.parallel\n"
         "import neofoam_ui.catalyst, neofoam_ui.pptables, neofoam_ui.geometry\n"
         "import neofoam_ui.adapters.neofoam, neofoam_ui.toy.heat1d\n"
-    )
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")]))}
-    subprocess.run([sys.executable, "-c", code], check=True, env=env)
-
-
-def test_the_worker_side_and_the_field_scene_need_no_pydantic():
-    """pydantic is needed only for a scene of the case; the built-in Field scene runs without it."""
-    code = (
-        "import sys\n"
-        "sys.modules['pydantic'] = None\n"
-        "import neofoam_ui.worker, neofoam_ui.engine, neofoam_ui.parallel, neofoam_ui.catalyst\n"
-        "from neofoam_ui import scenes\n"
-        "assert [n['type'] for n in scenes.ordered(scenes.field_graph())] == ['grid', 'Surface', 'Display', 'View']\n"
     )
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")]))}
     subprocess.run([sys.executable, "-c", code], check=True, env=env)
@@ -171,16 +158,15 @@ PUBLIC = {
                           "MeshProvider", "Mode", "Op", "PassControl", "Peers", "PointMapping", "ProgramContext", "Region", "RegionProvider", "RenderBackend",
                           "Renderer", "ResultObserver", "SelfDrivingSolver", "Session", "Solver",
                           "ThreadedProgram", "UNTRACKED", "ViewFieldProvider", "assign_ids", "topological_order"],
-    "neofoam_ui.protocol": ["CATALYST_DATA_ENV", "CATALYST_ENV", "CATALYST_LIVE_ENV", "CATALYST_OUT_ENV", "CATALYST_SCRIPT_ENV",
-                            "COMMANDS", "DELAY_ENV", "LOSSY", "MESSAGES", "RANK_OPS", "SYNC_ENV",
-                            "UI_URGENT", "WAIT_ENV", "WORKER_URGENT"],
-    "neofoam_ui.app": ["StepperApp", "main", "parse_args"],
+    "neofoam_ui.protocol": ["COMMANDS", "LOSSY", "MESSAGES", "RANK_OPS", "UI_URGENT", "WORKER_URGENT"],
+    "neofoam_ui.config": ["CatalystConfig", "Config", "UiConfig", "WorkerConfig", "load_config"],
+    "neofoam_ui.app": ["Launch", "StepperApp", "main", "parse_args"],
     "neofoam_ui.extensions": ["ENTRY_POINT_GROUP", "BasePane", "ExtensionRegistry", "Pane", "PaneContext",
                               "PaneToggle"],
     "neofoam_ui.worker": ["load_solver", "main"],
-    "neofoam_ui.parallel": ["SYNC_ENV", "rank_info"],
-    "neofoam_ui.catalyst": ["ENV", "FrameDriver", "LIVE_ENV", "OUT_ENV", "SCRIPT_ENV", "InSitu", "configured",
-                            "custom_script", "frame_driver", "set_frame_driver"],
+    "neofoam_ui.parallel": ["rank_info"],
+    "neofoam_ui.catalyst": ["FrameDriver", "InSitu", "configured", "custom_script", "frame_driver",
+                            "set_frame_driver", "settings", "use"],
     "neofoam_ui.geometry": ["cell_centres_geometry", "cell_count", "polyhedral", "read_polymesh"],
     "neofoam_ui.pptables": ["NodeDescriber", "describe_table", "observe", "register_describer", "rows_message"],
     "neofoam_ui.adapters": [],

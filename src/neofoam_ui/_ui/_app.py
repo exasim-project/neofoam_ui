@@ -26,7 +26,6 @@ from neofoam_ui._ui.panes._field import _FieldPane
 from neofoam_ui._ui.panes._plots import _PlotsPane
 from neofoam_ui._ui.panes._scene_editor import _SceneEditorPane
 from neofoam_ui.extensions import ExtensionRegistry, Pane
-from neofoam_ui.protocol import CATALYST_ENV
 
 __all__ = ()
 
@@ -51,9 +50,10 @@ class StepperApp:
         self.wait_ui = wait_ui
         #: MPI ranks; > 1 starts the worker under ``mpirun`` (see neofoam_ui.parallel).
         self.np = np
-        #: The worker: its interpreter (e.g. a NeoFOAM venv), case, Catalyst prefix, rank 0's address.
+        #: The worker: its interpreter (e.g. a NeoFOAM venv), case, Catalyst prefix (``None``: the
+        #: worker's config files), rank 0's address.
         self.link = _WorkerLink(solver_spec, case, python or sys.executable, np, shlex.split(mpirun),
-                                catalyst or os.environ.get(CATALYST_ENV), sync_host)
+                                catalyst, sync_host)
         self.link.bind(self._receive, self._on_stderr, self._on_exit)
         self.model = _RunModel()
         self.pusher = _Pusher(self.state)

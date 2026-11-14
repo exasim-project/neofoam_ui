@@ -4,7 +4,7 @@ source: first the ``Field`` scene's surface, then another scene's (the whole gri
 only the source asked for travels (the one the shown scene's report names), and every data
 frame brings the solver's current values.
 
-Opt-in: needs ``NEOFOAM_UI_CATALYST`` (its ``bin/pvpython`` hosts the listener; the solver side
+Opt-in: needs ``NEOFOAM_TEST_CATALYST`` (its ``bin/pvpython`` hosts the listener; the solver side
 runs in ``NEOFOAM_PYTHON``, the interpreter ParaView was built for). Two processes, as in the
 stepper: Live connects a solver to a separate ParaView."""
 
@@ -17,11 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from neofoam_ui.protocol import CATALYST_DATA_ENV
-
-PREFIX = os.environ.get("NEOFOAM_UI_CATALYST")
+PREFIX = os.environ.get("NEOFOAM_TEST_CATALYST")
 PVPYTHON = Path(PREFIX or "/nowhere") / "bin" / "pvpython"
-pytestmark = pytest.mark.skipif(not PVPYTHON.is_file(), reason="set NEOFOAM_UI_CATALYST to an install with pvpython")
+pytestmark = pytest.mark.skipif(not PVPYTHON.is_file(), reason="set NEOFOAM_TEST_CATALYST to an install with pvpython")
 HERE = Path(__file__).resolve().parent
 SRC = HERE.parent / "src"
 SOLVER = HERE / "helpers" / "live_solver.py"
@@ -53,9 +51,8 @@ def test_the_ui_gets_the_field_surface_then_the_source_the_scene_names(scene, th
     try:
         assert "listening" in next(_said(listener.stdout))
         solver = subprocess.run([os.environ.get("NEOFOAM_PYTHON", sys.executable), str(SOLVER), PREFIX,
-                                 str(SCENES / f"{scene}.json")],
-                                capture_output=True, text=True, timeout=300,
-                                env={**env, CATALYST_DATA_ENV: f"localhost:{port}"})
+                                 str(SCENES / f"{scene}.json"), f"localhost:{port}"],
+                                capture_output=True, text=True, timeout=300, env=env)
     finally:
         listener.kill()
     held = list(_said(listener.stdout))

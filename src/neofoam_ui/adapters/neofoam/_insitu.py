@@ -107,7 +107,7 @@ class CatalystView(InSitu):
                  params: dict[str, str]) -> None:
         """One frame on this entry's own session (started on the first)."""
         if self._session is None:
-            out_dir = os.environ.get(catalyst.OUT_ENV) or os.path.join("postProcessing", self.name)
+            out_dir = catalyst.settings().out or os.path.join("postProcessing", self.name)
             self._session = catalyst.InSitu(out_dir=out_dir, capture=False)
         published = fields if catalyst.custom_script() else {params["field"]: fields[params["field"]]}
         time_value = float(np.asarray(getattr(ctx.time, "value", 0.0)))

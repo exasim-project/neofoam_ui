@@ -10,7 +10,9 @@ authors = [{ name = "Henning Scheufler", email = "henning.scheufler@web.de" }]
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "click>=8",
     "pydantic>=2",
+    "pyyaml>=6",
     "trame>=3.12,<4",
     "trame-vuetify>=3.0",
     "trame-flow>=2.2.2",

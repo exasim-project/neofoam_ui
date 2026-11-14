@@ -1,8 +1,7 @@
 """Heat1D with Catalyst faked inside the worker process (frames are placeholder bytes, nothing renders)."""
 
-import os
-
 from neofoam_ui import catalyst
+from neofoam_ui.config import CatalystConfig
 from neofoam_ui.toy.heat1d import Heat1D
 
 
@@ -19,6 +18,6 @@ class _FakeInSitu:
 
 
 def ViewHeat():  # noqa: N802 - a solver factory, like a class
-    os.environ.setdefault(catalyst.ENV, "/nowhere")
+    catalyst.use(CatalystConfig(prefix="/nowhere"))
     catalyst.InSitu = _FakeInSitu
     return Heat1D()

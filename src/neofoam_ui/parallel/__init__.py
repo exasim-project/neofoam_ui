@@ -2,7 +2,7 @@
 
 ``mpirun -np N python -m neofoam_ui.worker ...`` starts one worker per rank.
 Rank 0 is the ordinary worker (stdin/stdout protocol to the UI). The others
-are *followers*: they connect to rank 0 over a socket (``NEOFOAM_UI_SYNC=host:port``,
+are *followers*: they connect to rank 0 over a socket (the worker's ``--sync host:port``,
 set by the UI) and run the same solver, but only advance when rank 0 does —
 one ``go`` per event — so all ranks pause at the same event and a step never
 leaves a rank behind in a collective. In a free run (Run, Run to, Next time step)
@@ -24,6 +24,5 @@ nothing here calls MPI.
 """
 
 from neofoam_ui.parallel._ranks import rank_info
-from neofoam_ui.protocol import SYNC_ENV
 
-__all__ = ["SYNC_ENV", "rank_info"]
+__all__ = ["rank_info"]

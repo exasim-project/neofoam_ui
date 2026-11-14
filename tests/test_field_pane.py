@@ -13,10 +13,10 @@ from trame.app import get_server
 
 from neofoam_ui._ui.panes import _field
 from neofoam_ui.app import StepperApp
-from neofoam_ui.protocol import CATALYST_LIVE_ENV
 
 PNG = b"\x89PNG\r\n\x1a\n"
 CASES = Path(__file__).parent / "scenes" / "cases"
+CONFIG = Path(__file__).parent / "config" / "cases"
 
 
 @pytest.fixture
@@ -150,8 +150,8 @@ def test_data_mode_is_greyed_out_without_paraview(case):
     assert app.link.data_url is None
 
 
-def test_data_mode_is_greyed_out_while_a_desktop_paraview_has_live(monkeypatch, case):
-    monkeypatch.setenv(CATALYST_LIVE_ENV, "localhost:22222")
+def test_data_mode_is_greyed_out_while_a_desktop_paraview_has_live(case):
+    shutil.copy(CONFIG / "desktop_live" / "system" / "neofoam_ui.yaml", case / "system")
     app, _ = _app("field_pane_desktop_live", case)
     assert not app.state.fv_data_ok and "localhost:22222" in app.state.fv_data_why
 
