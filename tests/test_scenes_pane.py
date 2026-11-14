@@ -70,7 +70,8 @@ def test_saving_writes_the_scene_file(case):
     scenes.edit_view("+z", 2.0)
     scenes.save()
     saved = json.loads((case / "system" / "scenes" / "field-copy.json").read_text())
-    assert next(n for n in saved["nodes"] if n["type"] == "View")["props"] == {"camera": "+z", "zoom": 2.0}
+    assert next(n for n in saved["nodes"] if n["type"] == "View")["props"] == {
+        "camera": "+z", "zoom": 2.0, "layout": "1", "cameras": "linked", "cell_cameras": {}}
     assert not _listed(state)["field-copy"][1]
 
 

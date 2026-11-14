@@ -7,7 +7,9 @@ rank 0 sends one PNG per frame with the ``frame`` message, shown as a data URL, 
 the pane's size; no field data passes through the UI. In data mode (only under ``pvpython``,
 :mod:`neofoam_ui._ui._live`, and only for the built-in ``Field`` scene for now) Catalyst Live
 sends the surface and this process draws it interactively. The scene travels with the
-``view`` command's options (``pipelines/view.py`` names them).
+``view`` command's options (``pipelines/view.py`` names them). A scene whose View has a layout
+of more than one cell is one picture of all cells, image mode only; with cameras per cell the
+camera buttons are on each cell and the mouse wheel zooms the cell under it.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from neofoam_ui._ui.panes._field_view import _FIELD_CSS, _field_pane
 from neofoam_ui._ui.panes._scenes import _SCENES_CSS, _register, _Scenes, _scenes_panel
 from neofoam_ui.config import load_config
 from neofoam_ui.extensions import BasePane, PaneContext, PaneToggle
-from neofoam_ui.scenes import FIELD
+from neofoam_ui.scenes import FIELD, cells, shape
 
 __all__ = ()
 
@@ -108,6 +110,7 @@ class _FieldPane(BasePane):
         s.sc_new_name = ""
         s.sc_msg = ""
         self.scenes.load()
+        self._grid()
         s.fv_mode = s.fv_mode if s.fv_mode == "data" and self._data_ok() else "image"
         self._data_offer()
         s.fv_data_shown = False
@@ -180,14 +183,15 @@ class _FieldPane(BasePane):
         s.sc_msg = f"exporting to {path.name} …"
         self.ctx.send({"cmd": "export", "path": str(path)})
 
-    def look(self, camera: str) -> None:
-        """A camera preset (``reset``, ``+x`` … ``-z``), at zoom 1: the scene's View node (unsaved)."""
-        self.scenes.edit_view(camera, 1.0)
+    def look(self, camera: str, cell: Optional[str] = None) -> None:
+        """A camera preset (``reset``, ``+x`` … ``-z``), at zoom 1: the scene's View node (unsaved);
+        with cameras per cell, ``cell``'s camera only."""
+        self.scenes.edit_view(camera, 1.0, cell)
 
-    def zoom(self, factor: float) -> None:
-        """Zoom by ``factor`` (bounded)."""
-        props = self.scenes.view_props()
-        self.scenes.edit_view(props["camera"], min(max(float(props["zoom"]) * float(factor), _ZOOM[0]), _ZOOM[1]))
+    def zoom(self, factor: float, cell: Optional[str] = None) -> None:
+        """Zoom by ``factor`` (bounded); with cameras per cell, ``cell`` only."""
+        camera, zoom = self.scenes.camera_of(cell)
+        self.scenes.edit_view(camera, min(max(zoom * float(factor), _ZOOM[0]), _ZOOM[1]), cell)
 
     def _refit(self) -> None:
         """Data mode: the data view looks as the scene's View says, fitted to the domain and the pane."""
@@ -201,20 +205,36 @@ class _FieldPane(BasePane):
     def _on_scene(self) -> None:
         """Another scene, or the current one edited: render it once settled."""
         s = self.ctx.state
+        self._grid()
         if s.fv_mode == "data" and not self._data_ok():
             s.fv_mode = "image"
         self._data_offer()
         self._refit()
         self._soon()
 
+    def _grid(self) -> None:
+        """The current scene's cells (``fv_grid``): rows, columns, names, and whether each has its own camera."""
+        props = self.scenes.view_props()
+        layout = props.get("layout", "1")
+        rows, columns = shape(layout)
+        self.ctx.state.fv_grid = {"rows": rows, "cols": columns, "names": list(cells(layout)),
+                                  "per_cell": props.get("cameras") == "per_cell" and rows * columns > 1}
+
+    def _layout(self) -> Optional[str]:
+        """The current scene's layout when it has more than one cell."""
+        layout = str(self.scenes.view_props().get("layout", "1"))
+        return layout if len(cells(layout)) > 1 else None
+
     def _data_ok(self) -> bool:
-        return self.data is not None
+        return self.data is not None and self._layout() is None
 
     def _data_offer(self) -> None:
         """Data mode on offer, or why not."""
         s = self.ctx.state
         s.fv_data_ok = self._data_ok()
-        s.fv_data_why = self._data_why
+        layout = self._layout()
+        s.fv_data_why = self._data_why or (
+            f"data mode shows one cell: this scene's View has the {layout} layout (image mode only)" if layout else "")
 
     def _soon(self) -> None:
         """:meth:`send_view` once the settings rested for :data:`_SETTLE` seconds."""
@@ -288,5 +308,7 @@ class _FieldPane(BasePane):
             how = "rendered in situ (Catalyst)"
         t = msg.get("time")
         ranks = f"{self.ctx.np} ranks" if self.ctx.np > 1 else ""
-        parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "", f"scene {self.scenes.title(msg.get('scene', FIELD))}", how, ranks]
+        count = len(s.fv_grid["names"]) if s.fv_grid else 1
+        parts = [f"t = {t:.6g}" if isinstance(t, (int, float)) else "", f"scene {self.scenes.title(msg.get('scene', FIELD))}", how, ranks,
+                 f"{count} cells" if count > 1 else ""]
         s.fv_msg = " · ".join(p for p in parts + [f"⚠ {n}" for n in notes] if p)

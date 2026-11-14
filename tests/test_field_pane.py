@@ -51,7 +51,9 @@ def _graph(sent):
 
 
 def _view_node(graph):
-    return next(n for n in graph["nodes"] if n["type"] == "View")["props"]
+    """The View node's camera (its layout and cell cameras aside)."""
+    props = next(n for n in graph["nodes"] if n["type"] == "View")["props"]
+    return {k: props[k] for k in ("camera", "zoom")}
 
 
 def test_an_image_frame_shows_as_a_data_url(case):
@@ -243,3 +245,70 @@ def test_data_mode_asks_for_the_frame_again_with_new_extracts(live, case):
     app.dispatch(_frame(mode="data", image=None, view=["T", "mag", "data"],
                         report={"extracts": [{"id": "d1", "source": "slice:s1"}]}))
     assert _last_view(sent)["options"]["extracts"] == "slice:s1"
+
+
+@pytest.fixture
+def builder(tmp_path):
+    """A case with scenes whose View has a layout (``side-by-side``, ``side-by-side-per-cell``, ``quad``)."""
+    shutil.copytree(CASES / "builder", tmp_path / "case")
+    return tmp_path / "case"
+
+
+def _cell_cameras(graph):
+    return next(n for n in graph["nodes"] if n["type"] == "View")["props"]["cell_cameras"]
+
+
+def test_data_mode_is_greyed_out_for_a_view_of_more_than_one_cell(live, builder):
+    app, _ = _app("field_pane_data_layout", builder)
+    app.state.fv_mode = "data"
+    app.pane("field").scenes.switch("side-by-side")
+    assert (app.state.fv_data_ok, app.state.fv_mode) == (False, "image")
+    assert app.state.fv_data_why == "data mode shows one cell: this scene's View has the 1x2 layout (image mode only)"
+
+
+def test_data_mode_is_back_for_a_scene_of_one_cell(live, builder):
+    app, _ = _app("field_pane_data_back", builder)
+    app.pane("field").scenes.switch("side-by-side")
+    app.pane("field").scenes.switch("slice")
+    assert app.state.fv_data_ok
+
+
+def test_the_pane_knows_the_cells_of_the_scene(builder):
+    app, _ = _app("field_pane_grid", builder)
+    app.pane("field").scenes.switch("quad")
+    assert app.state.fv_grid == {"rows": 2, "cols": 2, "names": ["tl", "tr", "bl", "br"], "per_cell": False}
+
+
+def test_linked_cameras_move_every_cell(builder):
+    app, sent = _app("field_pane_linked", builder)
+    pane = app.pane("field")
+    pane.scenes.switch("side-by-side")
+    pane.look("-y", "right")
+    graph = _graph(sent)
+    assert _view_node(graph) == {"camera": "-y", "zoom": 1.0} and _cell_cameras(graph) == {}
+
+
+def test_per_cell_a_camera_button_moves_its_cell(builder):
+    app, sent = _app("field_pane_per_cell", builder)
+    pane = app.pane("field")
+    pane.scenes.switch("side-by-side-per-cell")
+    assert app.state.fv_grid["per_cell"]
+    pane.look("+z", "left")
+    graph = _graph(sent)
+    assert _view_node(graph) == {"camera": "+x", "zoom": 1.0}
+    assert _cell_cameras(graph) == {"left": {"camera": "+z", "zoom": 1.0}, "right": {"camera": "-x", "zoom": 2.0}}
+
+
+def test_per_cell_the_wheel_zooms_the_cell_under_the_mouse(builder):
+    app, sent = _app("field_pane_per_cell_zoom", builder)
+    pane = app.pane("field")
+    pane.scenes.switch("side-by-side-per-cell")
+    pane.zoom(1.25, "right")
+    assert _cell_cameras(_graph(sent))["right"] == {"camera": "-x", "zoom": 2.5}
+
+
+def test_a_frame_of_several_cells_says_how_many(builder):
+    app, _ = _app("field_pane_cells_msg", builder)
+    app.pane("field").scenes.switch("quad")
+    app.dispatch(_frame(scene="quad"))
+    assert "4 cells" in app.state.fv_msg

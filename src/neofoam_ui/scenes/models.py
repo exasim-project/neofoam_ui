@@ -7,8 +7,10 @@ gets it: a bad one raises :class:`SceneError` naming the node and the reason.
 
 Ports are typed: ``grid`` and the filters give *data*, a ``Display`` takes data and gives a
 *display*, the ``View`` takes displays; each port has a name the editor shows (``takes_name``,
-``gives_name``). A filter and a display take exactly one input; a scene
-has one ``View`` and at most one ``grid``. Field properties are a field name or ``@field``
+``gives_name``). The View has a ``layout`` of cells, each an input port of its own named by the
+layout (:func:`neofoam_ui.scenes.cells`): an edge to it names the cell as a third element
+(``[display, view, "left"]``; one to a one-cell View may leave it out). A filter and a display
+take exactly one input, a display shows in one cell; a scene has one ``View`` and at most one ``grid``. Field properties are a field name or ``@field``
 (the pane's pick); components are ``mag``, ``0``–``2`` or ``@component``. Positions are 0–1 of
 the domain's extent along the axis (``auto``: the longest in-plane axis of a 2D case, else z).
 
@@ -29,9 +31,9 @@ from typing import Annotated, Any, ClassVar, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
-from neofoam_ui.scenes import SCENES_DIR, ordered
+from neofoam_ui.scenes import SCENES_DIR, cells, ordered
 
-__all__ = ["CalculatorNode", "ClipNode", "ContourNode", "DisplayNode", "GlyphNode", "GridNode", "Scene",
+__all__ = ["CalculatorNode", "CellCamera", "ClipNode", "ContourNode", "DisplayNode", "GlyphNode", "GridNode", "Scene",
            "SceneError", "SceneFile", "SliceNode", "StreamTracerNode", "SurfaceNode", "ThresholdNode",
            "ViewNode", "parse", "read_scenes", "write_scene"]
 
@@ -41,6 +43,8 @@ Axis = Literal["auto", "x", "y", "z"]
 Fraction = Annotated[float, Field(ge=0.0, le=1.0)]
 Colormap = Literal["viridis", "coolwarm", "inferno", "jet", "grayscale"]
 Camera = Literal["reset", "+x", "-x", "+y", "-y", "+z", "-z"]
+Zoom = Annotated[float, Field(ge=0.25, le=50.0)]
+Layout = Literal["1", "1x2", "2x1", "2x2"]
 #: The ports: what a node takes and gives.
 Port = Literal["data", "display"]
 
@@ -71,6 +75,11 @@ class _Node(BaseModel):
     gives_name: ClassVar[Optional[str]] = "output"
 
     id: FieldName
+
+    @classmethod
+    def input_ports(cls, props: dict[str, Any]) -> tuple[str, ...]:
+        """The names of the input ports a node of these properties has (one, or none)."""
+        return (cls.takes_name,) if cls.takes_name else ()
 
 
 class GridProps(_Props):
@@ -223,9 +232,28 @@ class DisplayNode(_Node):
     props: DisplayProps = DisplayProps()
 
 
-class ViewProps(_Props):
+class CellCamera(_Props):
     camera: Camera = "reset"
-    zoom: Annotated[float, Field(ge=0.25, le=50.0)] = 1.0
+    zoom: Zoom = 1.0
+
+
+class ViewProps(_Props):
+    #: The camera of every cell, while they are linked (per cell: of a cell without its own).
+    camera: Camera = "reset"
+    zoom: Zoom = 1.0
+    #: The cells (each an input port): ``1``, ``1x2``, ``2x1`` or ``2x2``.
+    layout: Layout = "1"
+    #: ``linked``: one camera for all cells; ``per_cell``: each cell's own (``cell_cameras``).
+    cameras: Literal["linked", "per_cell"] = "linked"
+    cell_cameras: dict[str, CellCamera] = {}
+
+    @model_validator(mode="after")
+    def _cameras_of_cells(self) -> ViewProps:
+        names = cells(self.layout)
+        for cell in self.cell_cameras:
+            if cell not in names:
+                raise ValueError(f"cell_cameras: no cell {cell!r} in the {self.layout} layout ({', '.join(names)})")
+        return self
 
 
 class ViewNode(_Node):
@@ -239,6 +267,11 @@ class ViewNode(_Node):
     type: Literal["View"]
     props: ViewProps = ViewProps()
 
+    @classmethod
+    def input_ports(cls, props: dict[str, Any]) -> tuple[str, ...]:
+        """One port per cell of the layout, named by it."""
+        return cells(props.get("layout", "1"))
+
 
 AnyNode = Annotated[Union[GridNode, SurfaceNode, SliceNode, ClipNode, ContourNode, ThresholdNode, CalculatorNode,
                           GlyphNode, StreamTracerNode, DisplayNode, ViewNode], Field(discriminator="type")]
@@ -248,8 +281,12 @@ def _label(node: _Node) -> str:
     return f"node {node.id!r} ({node.type})"  # type: ignore[attr-defined]
 
 
+Edge = Union[tuple[FieldName, FieldName], tuple[FieldName, FieldName, FieldName]]
+
+
 class Scene(BaseModel):
-    """A scene: its nodes, the edges between them (``[source, target]``), the editor's layout."""
+    """A scene: its nodes, the edges between them (``[source, target]`` or ``[source, target,
+    port]``), the editor's layout."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -257,7 +294,7 @@ class Scene(BaseModel):
     #: What the panel calls it (else the file's stem, its name).
     title: Optional[str] = None
     nodes: list[AnyNode]
-    edges: list[tuple[FieldName, FieldName]] = []
+    edges: list[Edge] = []
     #: Node positions in the editor (the solver ignores them).
     layout: dict[str, tuple[float, float]] = {}
 
@@ -267,6 +304,7 @@ class Scene(BaseModel):
         self._one_view_one_grid()
         self._edges_fit(by_id)
         self._inputs_complete(by_id)
+        self._one_cell_each(by_id)
         ordered(self.graph())
         return self
 
@@ -288,21 +326,31 @@ class Scene(BaseModel):
 
     def _edges_fit(self, by_id: dict[str, _Node]) -> None:
         seen = set()
-        for source, target in self.edges:
+        for edge in self.edges:
+            source, target = edge[:2]
             for end in (source, target):
                 if end not in by_id:
                     raise ValueError(f"edge {source!r} → {target!r}: no node {end!r}")
-            if (source, target) in seen:
-                raise ValueError(f"edge {source!r} → {target!r} is there twice")
-            seen.add((source, target))
             src, dst = by_id[source], by_id[target]
             if dst.takes is None or src.gives != dst.takes:
                 takes = f"takes {dst.takes}" if dst.takes else "takes no input"
                 raise ValueError(f"{_label(dst)} {takes}, not the {src.gives or 'nothing'} of {_label(src)}")
+            key = (source, target, _port(edge, dst))
+            if key in seen:
+                raise ValueError(f"edge {source!r} → {target!r} is there twice")
+            seen.add(key)
+
+    def _one_cell_each(self, by_id: dict[str, _Node]) -> None:
+        count = {node_id: 0 for node_id in by_id}
+        for source, *_ in self.edges:
+            count[source] += 1
+        for node in self.nodes:
+            if node.gives == "display" and count[node.id] > 1:
+                raise ValueError(f"{_label(node)} shows in one cell of the View, not {count[node.id]}")
 
     def _inputs_complete(self, by_id: dict[str, _Node]) -> None:
         count = {node_id: 0 for node_id in by_id}
-        for _, target in self.edges:
+        for _, target, *_ in self.edges:
             count[target] += 1
         for node in self.nodes:
             if node.takes is not None and not node.many and count[node.id] != 1:
@@ -311,6 +359,20 @@ class Scene(BaseModel):
     def graph(self) -> dict[str, Any]:
         """What the solver builds: version, nodes with every property, edges (no title, no layout)."""
         return self.model_dump(mode="json", exclude={"title", "layout"})
+
+
+def _port(edge: tuple[str, ...], target: _Node) -> str:
+    """The input port an edge goes to: the one it names, else the target's only port."""
+    ports = target.input_ports(target.props.model_dump())  # type: ignore[attr-defined]
+    if len(edge) > 2:
+        if edge[2] not in ports:
+            raise ValueError(f"edge {edge[0]!r} → {edge[1]!r}: {_label(target)} has no port {edge[2]!r}"
+                             f" (ports: {', '.join(ports)})")
+        return edge[2]
+    if len(ports) > 1:
+        layout = target.props.layout  # type: ignore[attr-defined]
+        raise ValueError(f"edge {edge[0]!r} → {edge[1]!r}: name the cell of the {layout} layout ({', '.join(ports)})")
+    return ports[0]
 
 
 def _where(raw: Any, loc: tuple[Any, ...]) -> str:

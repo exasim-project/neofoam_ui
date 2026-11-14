@@ -1208,9 +1208,9 @@ data
 </VBtn>
 </span>
 </VBtnToggle>
-<VSelect :key="`w1027-${tts}`" title="the scene drawn (Scenes panel: new, save, …)" v-model="sc_current" density="compact" variant="outlined" :items="sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))" label="scene" hideDetails />
-<VSelect :key="`w1028-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w1029-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w1049-${tts}`" title="the scene drawn (Scenes panel: new, save, …)" v-model="sc_current" density="compact" variant="outlined" :items="sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))" label="scene" hideDetails />
+<VSelect :key="`w1050-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w1051-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -1220,30 +1220,58 @@ data
 </div>
 <div class="nf-field-stage">
 <trame-client-triggers :ref="(el) => trame.refs['trame_triggers'] = el" @mounted="if (!window.nfFvSize) { window.nfFvSize = true; let seen = '', since = 0, sent = ''; window.setInterval(() => { const el = window.document.querySelector('.nf-field-stage'); if (!el) return; const r = el.getBoundingClientRect(); if (r.width < 32 || r.height < 32) return; const d = Math.min(window.devicePixelRatio || 1, 2); const w = Math.round(r.width * d), h = Math.round(r.height * d), k = w + 'x' + h; if (k !== seen) { seen = k; since = Date.now(); return; } if (k !== sent && Date.now() - since >= 300) { sent = k; trigger('nf_fv_size', [w, h, d]); } }, 150); }" />
-<div class="nf-field-cam" v-show="fv_mode === 'image' ? fv_src : fv_data_shown">
-<VBtn title="reset the camera" size="x-small" icon="mdi-fit-to-screen-outline" variant="text" @click="trigger('nf_fv_camera', ['reset'])" />
-<VBtn title="look from +x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+x'])">
+<div class="nf-field-cam" v-show="(fv_mode === 'image' ? fv_src : fv_data_shown) && !(fv_grid && fv_grid.per_cell)">
+<VBtn title="reset the camera" size="x-small" icon="mdi-fit-to-screen-outline" variant="text" @click="trigger('nf_fv_camera', ['reset', null])" />
+<VBtn title="look from +x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+x', null])">
 +x
 </VBtn>
-<VBtn title="look from -x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-x'])">
+<VBtn title="look from -x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-x', null])">
 -x
 </VBtn>
-<VBtn title="look from +y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+y'])">
+<VBtn title="look from +y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+y', null])">
 +y
 </VBtn>
-<VBtn title="look from -y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-y'])">
+<VBtn title="look from -y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-y', null])">
 -y
 </VBtn>
-<VBtn title="look from +z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+z'])">
+<VBtn title="look from +z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+z', null])">
 +z
 </VBtn>
-<VBtn title="look from -z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-z'])">
+<VBtn title="look from -z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-z', null])">
 -z
 </VBtn>
-<VBtn title="zoom in" size="x-small" icon="mdi-magnify-plus-outline" variant="text" @click="trigger('nf_fv_zoom', [1.25])" />
-<VBtn title="zoom out" size="x-small" icon="mdi-magnify-minus-outline" variant="text" @click="trigger('nf_fv_zoom', [0.8])" />
+<VBtn title="zoom in" size="x-small" icon="mdi-magnify-plus-outline" variant="text" @click="trigger('nf_fv_zoom', [1.25, null])" />
+<VBtn title="zoom out" size="x-small" icon="mdi-magnify-minus-outline" variant="text" @click="trigger('nf_fv_zoom', [0.8, null])" />
 </div>
-<img @wheel.prevent="trigger('nf_fv_zoom', [$event.deltaY < 0 ? 1.25 : 0.8])" class="nf-field-img" v-show="fv_mode === 'image' && fv_src" alt="in-situ view" :src="fv_src" />
+<template v-if="fv_grid && fv_grid.per_cell">
+<div class="nf-field-cam" :style="{ top: `calc(${Math.floor(i / fv_grid.cols) * 100 / fv_grid.rows}% + 6px)`, right: `calc(${(fv_grid.cols - 1 - i % fv_grid.cols) * 100 / fv_grid.cols}% + 6px)` }" :key="c" v-show="fv_mode === 'image' ? fv_src : fv_data_shown" v-for="(c, i) in fv_grid.names">
+<span class="cell">
+{{ c }}
+</span>
+<VBtn title="reset the camera" size="x-small" icon="mdi-fit-to-screen-outline" variant="text" @click="trigger('nf_fv_camera', ['reset', c])" />
+<VBtn title="look from +x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+x', c])">
++x
+</VBtn>
+<VBtn title="look from -x" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-x', c])">
+-x
+</VBtn>
+<VBtn title="look from +y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+y', c])">
++y
+</VBtn>
+<VBtn title="look from -y" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-y', c])">
+-y
+</VBtn>
+<VBtn title="look from +z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['+z', c])">
++z
+</VBtn>
+<VBtn title="look from -z" size="x-small" variant="text" @click="trigger('nf_fv_camera', ['-z', c])">
+-z
+</VBtn>
+<VBtn title="zoom in" size="x-small" icon="mdi-magnify-plus-outline" variant="text" @click="trigger('nf_fv_zoom', [1.25, c])" />
+<VBtn title="zoom out" size="x-small" icon="mdi-magnify-minus-outline" variant="text" @click="trigger('nf_fv_zoom', [0.8, c])" />
+</div>
+</template>
+<img @wheel.prevent="trigger('nf_fv_zoom', [$event.deltaY < 0 ? 1.25 : 0.8, fv_grid.names[Math.min(fv_grid.rows - 1, Math.floor($event.offsetY / $event.target.clientHeight * fv_grid.rows)) * fv_grid.cols + Math.min(fv_grid.cols - 1, Math.floor($event.offsetX / $event.target.clientWidth * fv_grid.cols))]])" class="nf-field-img" v-show="fv_mode === 'image' && fv_src" alt="in-situ view" :src="fv_src" />
 <div class="nf-field-regions" v-if="!fv_src && !fv_data_shown && fields_rows.some(f => f.region)">
 <div class="nf-field-region" :style="`border-left-color:${f.color}`" :key="f.name" v-for="f in fields_rows.filter(f => f.region)">
 <span class="nf-mono" :style="`color:${f.color}`">
@@ -1317,12 +1345,12 @@ View
 </div>
 </div>
 <div @dragover.prevent="" @drop.prevent="const k = $event.dataTransfer.getData('nf/node'); if (k) { const p = window.trame.refs.nf_se_editor.screenToFlowCoordinate({x: $event.clientX, y: $event.clientY}); trigger('nf_se_drop', [k, p.x, p.y]); }" @contextmenu.prevent="" @keydown="if (['Delete', 'Backspace'].includes($event.key)) { $event.preventDefault(); trigger('nf_se_delete'); } else if ($event.key === 'Escape') { se_menu = null; }" class="nf-se-canvas" tabindex="0">
-<node-editor :ref="(el) => trame.refs['nf_se_editor'] = el" :min-zoom="0.75" :delete-key-code="null" style="width: 100%; height: 100%;" :isValidConnection="(c) => c.source !== c.target && c.sourceHandle === c.targetHandle" @connect="trigger('trigger__N', [$event])" @edgeClick="trigger('trigger__N', [$event.edge.id])" @edgeContextMenu="$event.event.preventDefault(); se_menu = true ? {kind: 'link', id: $event.edge.id, x: $event.event.clientX - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().left, y: $event.event.clientY - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().top} : null" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('nf_se_select', [$event.node.id])" @nodeContextMenu="$event.event.preventDefault(); se_menu = $event.node.data.removable ? {kind: 'node', id: $event.node.id, x: $event.event.clientX - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().left, y: $event.event.clientY - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().top} : null" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="trigger('nf_se_select', [null])">
+<node-editor :ref="(el) => trame.refs['nf_se_editor'] = el" :min-zoom="0.75" :delete-key-code="null" style="width: 100%; height: 100%;" :isValidConnection="(c) => c.source !== c.target && c.sourceHandle === c.targetHandle.split(':')[0]" @connect="trigger('trigger__N', [$event])" @edgeClick="trigger('trigger__N', [$event.edge.id])" @edgeContextMenu="$event.event.preventDefault(); se_menu = true ? {kind: 'link', id: $event.edge.id, x: $event.event.clientX - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().left, y: $event.event.clientY - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().top} : null" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('nf_se_select', [$event.node.id])" @nodeContextMenu="$event.event.preventDefault(); se_menu = $event.node.data.removable ? {kind: 'node', id: $event.node.id, x: $event.event.clientX - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().left, y: $event.event.clientY - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().top} : null" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="trigger('nf_se_select', [null])">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
 <template v-slot:node-scene=props>
 <div :class="['nf-sn', props.data.role, { sel: props.id === se_sel, err: !!se_errors[props.id] }]">
-<Handle :class="[props.data.takes, { many: props.data.many }]" :id="props.data.takes" v-if="props.data.takes" position="left" type="target" />
+<Handle :class="[props.data.takes, { many: props.data.many }]" :id="props.data.takes" v-if="props.data.takes && !props.data.cells.length" position="left" type="target" />
 <Handle :class="props.data.gives" :id="props.data.gives" v-if="props.data.gives" position="right" type="source" />
 <div class="h">
 <span >
@@ -1335,12 +1363,21 @@ View
 {{ se_ms[props.id] }}
 </span>
 </div>
-<div class="p">
+<div class="p" v-if="!props.data.cells.length">
 <span >
 {{ props.data.takes_name }}
 </span>
 <span >
 {{ props.data.gives_name }}
+</span>
+</div>
+<div class="c" :key="c" v-for="c in props.data.cells">
+<Handle :class="[props.data.takes, 'many']" :id="`${props.data.takes}:${c}`" position="left" type="target" />
+<b >
+{{ c }}
+</b>
+<span class="ms" v-if="se_cell_ms[c]">
+{{ se_cell_ms[c] }}
 </span>
 </div>
 <div class="b" v-for="l in props.data.lines">
@@ -1391,7 +1428,7 @@ input {{ se_node.inputs.join(', ') || '—' }}
 {{ c }}
 </VBtn>
 </VBtnToggle>
-<VSelect :key="`w1000-${tts}`" style="max-width: 220px;" v-else v-model="se_form[f.name]" density="compact" variant="outlined" :items="f.items" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
+<VSelect :key="`w1021-${tts}`" style="max-width: 220px;" v-else v-model="se_form[f.name]" density="compact" variant="outlined" :items="f.items" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
 </template>
 <template v-else-if="f.kind === 'check'">
 <VCheckbox v-model="se_form[f.name]" density="compact" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
@@ -1427,6 +1464,9 @@ Select a node to set it; click a palette entry to add one after it, or drag one 
 <span :class="['msg', { err: se_msg_err }]">
 {{ se_msg || (se_changes ? se_changes + ' change' + (se_changes > 1 ? 's' : '') + ' since last apply' : 'no changes since last apply') }}
 </span>
+<VBtn title="arrange the nodes left to right" size="small" variant="text" prependIcon="mdi-auto-fix" @click="trigger('nf_se_arrange')">
+Auto layout
+</VBtn>
 <VBtn :disabled="!se_changes" size="small" variant="outlined" @click="trigger('nf_se_revert')">
 Revert
 </VBtn>
@@ -1629,7 +1669,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w941-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w958-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>

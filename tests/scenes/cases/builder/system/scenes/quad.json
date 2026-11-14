@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "title": "2x2: x 90 %, x 10 %, a red contour, nothing",
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "s1", "type": "Slice", "props": {"axis": "x", "position": 0.9}},
+    {"id": "s2", "type": "Slice", "props": {"axis": "x", "position": 0.1}},
+    {"id": "c1", "type": "Contour", "props": {"field": "T", "values": [0.5]}},
+    {"id": "d1", "type": "Display"},
+    {"id": "d2", "type": "Display"},
+    {"id": "d3", "type": "Display", "props": {"field": null, "color": [1, 0, 0], "line_width": 2}},
+    {"id": "view", "type": "View", "props": {"camera": "+x", "layout": "2x2"}}
+  ],
+  "edges": [["grid", "s1"], ["grid", "s2"], ["grid", "c1"], ["s1", "d1"], ["s2", "d2"], ["c1", "d3"],
+            ["d1", "view", "tl"], ["d2", "view", "tr"], ["d3", "view", "bl"]]
+}

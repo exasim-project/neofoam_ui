@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "title": "side-by-side, each cell its own camera: the right one from -x, zoomed",
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "s1", "type": "Slice", "props": {"axis": "x", "position": 0.9}},
+    {"id": "s2", "type": "Slice", "props": {"axis": "x", "position": 0.1}},
+    {"id": "d1", "type": "Display"},
+    {"id": "d2", "type": "Display"},
+    {"id": "view", "type": "View", "props": {"camera": "+x", "layout": "1x2", "cameras": "per_cell",
+                                             "cell_cameras": {"right": {"camera": "-x", "zoom": 2.0}}}}
+  ],
+  "edges": [["grid", "s1"], ["grid", "s2"], ["s1", "d1"], ["s2", "d2"], ["d1", "view", "left"],
+            ["d2", "view", "right"]]
+}

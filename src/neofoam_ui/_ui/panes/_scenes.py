@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional
 from trame.widgets import html
 from trame.widgets import vuetify3 as v3
 
-from neofoam_ui.scenes import FIELD, SCENES_DIR, field_graph
+from neofoam_ui.scenes import FIELD, SCENES_DIR, cells, field_graph
 from neofoam_ui.scenes.models import Scene, SceneError, parse, read_scenes, write_scene
 
 __all__ = ()
@@ -127,18 +127,27 @@ class _Scenes:
         return {"scene": name, "graph": json.dumps(graph, separators=(",", ":"))}
 
     def view_props(self) -> dict[str, Any]:
-        """The current scene's View node properties (camera, zoom)."""
+        """The current scene's View node properties (camera, zoom, layout, cameras)."""
         entry = self.entries.get(self.current) or self.entries[FIELD]
         return dict(next(n["props"] for n in entry.graph["nodes"] if n["type"] == "View"))
 
-    def edit_view(self, camera: str, zoom: float) -> None:
-        """Set the current scene's camera and zoom (unsaved); ``Field`` is copied first."""
+    def camera_of(self, cell: Optional[str] = None) -> tuple[str, float]:
+        """The camera preset and zoom of a cell of the current scene: its own (cameras per cell),
+        else the View's."""
+        props = self.view_props()
+        own = (props.get("cell_cameras") or {}).get(cell) if props.get("cameras") == "per_cell" else None
+        source = own or props
+        return str(source.get("camera", "reset")), float(source.get("zoom", 1.0))
+
+    def edit_view(self, camera: str, zoom: float, cell: Optional[str] = None) -> None:
+        """Set the current scene's camera and zoom (unsaved); ``Field`` is copied first. With
+        cameras per cell, that of ``cell`` only; linked (or no cell): the View's, every cell's."""
         if self.current == FIELD:
             self.duplicate()
         entry = self.entries[self.current]
         for graph in (entry.graph, entry.draft or {"nodes": []}):  # a draft keeps the camera too
             for view in (n for n in graph["nodes"] if n["type"] == "View"):
-                view.setdefault("props", {}).update(camera=camera, zoom=float(zoom))
+                _set_camera(view.setdefault("props", {}), camera, float(zoom), cell)
         self._publish()
         self._changed()
 
@@ -310,6 +319,14 @@ class _Scenes:
             for name, e in self.entries.items()]
         for listener in self.listeners:
             listener()
+
+
+def _set_camera(props: dict[str, Any], camera: str, zoom: float, cell: Optional[str]) -> None:
+    """A View's camera: of ``cell`` (cameras per cell, a cell of its layout), else the View's own."""
+    if props.get("cameras") == "per_cell" and cell in cells(props.get("layout", "1")):
+        props.setdefault("cell_cameras", {})[cell] = {"camera": camera, "zoom": zoom}
+    else:
+        props.update(camera=camera, zoom=zoom)
 
 
 def _slug(title: str) -> str:

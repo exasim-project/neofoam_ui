@@ -23,6 +23,7 @@ _FIELD_CSS = r"""
 .nf-field-cam { position: absolute; top: 6px; right: 6px; z-index: 2; display: flex; gap: 2px;
   background: rgba(var(--v-theme-surface), .8); border-radius: 6px; padding: 2px; }
 .nf-field-cam .v-btn { min-width: 0; padding: 0 6px; }
+.nf-field-cam .cell { font-size: 11px; opacity: .7; padding: 0 4px; align-self: center; }
 .nf-field-empty { flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
   font-size: 13px; opacity: .6; padding: 16px; text-align: center; }
 .nf-field-regions { padding: 8px 12px 0; display: flex; flex-direction: column; gap: 4px; }
@@ -78,18 +79,38 @@ def _bar() -> None:
         html.Span("{{ fv_msg }}", classes="nf-field-msg")
 
 
+def _camera_row(cell: str) -> None:
+    """The presets and zoom buttons; they act on ``cell`` (a JS expression; ``null``: every cell)."""
+    v3.VBtn(icon="mdi-fit-to-screen-outline", size="x-small", variant="text", title="reset the camera",
+            click=f"trigger('nf_fv_camera', ['reset', {cell}])")
+    for side in ("+x", "-x", "+y", "-y", "+z", "-z"):
+        v3.VBtn(side, size="x-small", variant="text", title=f"look from {side}",
+                click=f"trigger('nf_fv_camera', ['{side}', {cell}])")
+    v3.VBtn(icon="mdi-magnify-plus-outline", size="x-small", variant="text", title="zoom in",
+            click=f"trigger('nf_fv_zoom', [1.25, {cell}])")
+    v3.VBtn(icon="mdi-magnify-minus-outline", size="x-small", variant="text", title="zoom out",
+            click=f"trigger('nf_fv_zoom', [0.8, {cell}])")
+
+
+#: Where cell ``i`` of the layout is in the picture (the image fills the stage: it is rendered at its size).
+_CELL_CORNER = ("{ top: `calc(${Math.floor(i / fv_grid.cols) * 100 / fv_grid.rows}% + 6px)`,"
+                " right: `calc(${(fv_grid.cols - 1 - i % fv_grid.cols) * 100 / fv_grid.cols}% + 6px)` }")
+#: The cell under the mouse (a wheel event on the picture).
+_CELL_AT = ("fv_grid.names[Math.min(fv_grid.rows - 1, Math.floor($event.offsetY / $event.target.clientHeight * fv_grid.rows))"
+            " * fv_grid.cols + Math.min(fv_grid.cols - 1, Math.floor($event.offsetX / $event.target.clientWidth * fv_grid.cols))]")
+
+
 def _camera_buttons() -> None:
-    """Camera presets and zoom, over the picture (the ranks render them; data mode: this view)."""
-    with html.Div(classes="nf-field-cam", v_show="fv_mode === 'image' ? fv_src : fv_data_shown"):
-        v3.VBtn(icon="mdi-fit-to-screen-outline", size="x-small", variant="text", title="reset the camera",
-                click="trigger('nf_fv_camera', ['reset'])")
-        for side in ("+x", "-x", "+y", "-y", "+z", "-z"):
-            v3.VBtn(side, size="x-small", variant="text", title=f"look from {side}",
-                    click=f"trigger('nf_fv_camera', ['{side}'])")
-        v3.VBtn(icon="mdi-magnify-plus-outline", size="x-small", variant="text", title="zoom in",
-                click="trigger('nf_fv_zoom', [1.25])")
-        v3.VBtn(icon="mdi-magnify-minus-outline", size="x-small", variant="text", title="zoom out",
-                click="trigger('nf_fv_zoom', [0.8])")
+    """Camera presets and zoom, over the picture (the ranks render them; data mode: this view):
+    one row for every cell, or with cameras per cell one in each cell's corner."""
+    shown = "fv_mode === 'image' ? fv_src : fv_data_shown"
+    with html.Div(classes="nf-field-cam", v_show=f"({shown}) && !(fv_grid && fv_grid.per_cell)"):
+        _camera_row("null")
+    with html.Template(v_if="fv_grid && fv_grid.per_cell"):
+        with html.Div(v_for="(c, i) in fv_grid.names", key="c", classes="nf-field-cam", v_show=shown,
+                      style=(_CELL_CORNER,)):
+            html.Span("{{ c }}", classes="cell")
+            _camera_row("c")
 
 
 def _stage(data: Any) -> None:
@@ -98,7 +119,8 @@ def _stage(data: Any) -> None:
         client.ClientTriggers(mounted=_SIZE_PROBE)
         _camera_buttons()
         html.Img(src=("fv_src",), classes="nf-field-img", v_show="fv_mode === 'image' && fv_src",
-                 alt="in-situ view", raw_attrs=['@wheel.prevent="trigger(\'nf_fv_zoom\', [$event.deltaY < 0 ? 1.25 : 0.8])"'])
+                 alt="in-situ view",
+                 raw_attrs=[f'@wheel.prevent="trigger(\'nf_fv_zoom\', [$event.deltaY < 0 ? 1.25 : 0.8, {_CELL_AT}])"'])
         if data is not None:
             with html.Div(classes="nf-field-data", v_show="fv_mode === 'data' && fv_data_shown"):
                 data.widget()

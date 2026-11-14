@@ -3,8 +3,11 @@ stepper's pipeline, one per step (JSON list, second argument after the prefix: `
 a scene of the directory given third, or ``<scene>=<file>``: a scene with another file's graph;
 ``@<width>x<height>`` after it: the image size, else 400×300). Prints one JSON line per step: the
 scene's node proxies (global ids), the scenes built, the report's error, the image's colour
-ends and where the mesh is in it, the titles of the colour bars shown, the points of each Display's input and how often each filter has run so far. Rank 0
+ends and where the mesh is in it, the titles of the colour bars shown, the points of each Display's input and how often each filter has run so far;
+for a View with a layout, the colours and camera of each cell. Rank 0
 reads the pipeline back after each frame, as the stepper does.
+With ``OUT=<dir>`` the pipeline also writes its pictures there (``out=``); rank 0 reports each one
+(``out``: its size, a layout's cells as above).
 Under ``mpirun`` every rank publishes its own four cells (``T`` counting on) and prints its own lines."""
 
 import json
@@ -27,25 +30,56 @@ QUADS = [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (
 CUBE = np.array([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)], float)
 
 
-def _colours(png):
+def _rgb(png):
     # VTK only once Catalyst loaded ParaView: earlier, ParaView's own Python setup fails
     from vtkmodules.util.numpy_support import vtk_to_numpy  # noqa: PLC0415
     from vtkmodules.vtkIOImage import vtkPNGReader  # noqa: PLC0415
 
-    if png is None:
-        return None
     reader = vtkPNGReader()
     reader.SetMemoryBuffer(png)
     reader.SetMemoryBufferLength(len(png))
     reader.Update()
     width, height, _ = reader.GetOutput().GetDimensions()
-    rgb = vtk_to_numpy(reader.GetOutput().GetPointData().GetScalars())[:, :3].astype(int).reshape(height, width, 3)
+    return vtk_to_numpy(reader.GetOutput().GetPointData().GetScalars())[:, :3].astype(int).reshape(height, width, 3)
+
+
+def _colours(png):
+    if png is None:
+        return None
+    return _colours_of(_rgb(png))
+
+
+def _cells(png, scene):
+    """Per cell of a View with a layout: the colours of its part of the image (rows from the top)
+    and its view's camera (position, parallel scale)."""
+    from neofoam_ui.scenes import cells, shape  # noqa: PLC0415
+
+    layout = next(n["props"]["layout"] for n in scene.graph["nodes"] if n["type"] == "View")
+    if png is None or layout == "1":
+        return None
+    rgb, (rows, columns) = _rgb(png), shape(layout)
+    height, width, _ = rgb.shape
+    out = {}
+    for i, (cell, view) in enumerate(zip(cells(layout), scene.views)):
+        row, column = divmod(i, columns)
+        part = rgb[(rows - 1 - row) * height // rows:(rows - row) * height // rows,  # VTK images start at the bottom
+                   column * width // columns:(column + 1) * width // columns]
+        colours = _colours_of(part[3:-3, 3:-3])  # off the separator
+        colours.pop("box")
+        out[cell] = {**colours, "camera": [round(c, 6) for c in [*view.CameraPosition, view.CameraParallelScale]],
+                     "size": list(view.ViewSize)}
+    return {"size": [width, height], "cells": out}
+
+
+def _colours_of(rgb):
+    height = rgb.shape[0]
     flat = rgb[int(0.4 * height):].reshape(-1, 3)  # above the colour bar
     r, g, b = flat[:, 0], flat[:, 1], flat[:, 2]
     background = rgb[0, -1]  # VTK images start at the bottom: the bottom-right corner is free
     rows, cols = np.nonzero(np.abs(rgb[int(0.45 * height):] - background).sum(axis=2) > 30)
     box = [int(cols.min()), int(cols.max()), int(rows.min()), int(rows.max())] if len(rows) else None
     return {"box": box,  # the mesh's pixels above the colour bars: columns, rows (from 45 % up)
+            "empty": box is None,
             "purple": bool(((r < 100) & (g < 40) & (b > 40)).any()),
             "yellow": bool(((r > 150) & (g > 150) & (b < 100)).any()),
             "red": bool(((r > 150) & (g < 40) & (b < 40)).any())}
@@ -75,7 +109,7 @@ geom = {"kind": "polyhedral", "points": points, "offsets": np.arange(0, 24 * N +
         "cell_offsets": np.arange(0, 6 * N + 1, 6), "cell_faces": np.arange(6 * N)}
 T = np.arange(N, dtype=float) - 1 + RANK * N
 fields = {"T": T, "U": np.stack([T + 2, np.zeros(N), np.zeros(N)], axis=1)}
-insitu = catalyst.InSitu(PREFIX)
+insitu = catalyst.InSitu(PREFIX, out_dir=os.environ.get("OUT"))  # OUT: the pipeline writes its pictures there too
 for step in STEPS:
     step, _, size = step.partition("@")  # an image size of its own: <scene>@<width>x<height>
     name, _, file = step.partition("=")  # a scene, or a scene with the graph of another file
@@ -101,9 +135,17 @@ for step in STEPS:
                 _count(f"{scene.name}:{node['id']}", proxy)
     colours = _colours(image)
     box = colours.pop("box") if colours else None
+    if colours:
+        colours.pop("empty")
+    layout = _cells(image, scene) if scene is not None else None
+    written = Path(os.environ.get("OUT", "-"), f"view_{insitu.step - 1:06d}.png")  # this frame's out= picture
+    out = None
+    if RANK == 0 and written.exists():
+        out = _cells(written.read_bytes(), scene) or {"size": list(_rgb(written.read_bytes()).shape[1::-1])}
     bars = sorted(str(r.Title) for r in (scene.view.Representations if scene is not None else [])
                   if r.GetProperty("Title") is not None and r.Visibility)
     print(json.dumps({"rank": RANK, "bars": bars, "scene": name, "ids": ids, "built": sorted(module._scenes),
                       "error": insitu.report.get("error"), "colours": colours, "box": box, "points": points,
-                      "runs": dict(RUNS)}), flush=True)
+                      "runs": dict(RUNS), "layout": layout, "cell_ids": insitu.report.get("cells"),
+                      "out": out}), flush=True)
 insitu.finalize()

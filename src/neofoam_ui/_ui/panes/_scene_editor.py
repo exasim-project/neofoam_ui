@@ -4,7 +4,9 @@ node's property form; Apply shows the draft, Revert drops it.
 A palette entry clicked adds its node after the selected one, linked when the ports fit; one
 dragged onto the canvas is placed unlinked. Ports are typed (data → Display → View): a link
 between ports of different types is refused while dragging, and a node that takes one input
-keeps the newest; the ports are named by the node models. A right-click on a node (not ``grid``
+keeps the newest; the ports are named by the node models. The View has a bar port per cell of
+its layout (the form picks the layout: fewer cells drop the links of the cells gone, a Display
+keeps one cell, its newest link). A right-click on a node (not ``grid``
 or the View) or a link offers to remove it, as Del / Backspace do on the selected one: removals,
 like every edit, change the draft on the server (Vue Flow's own delete is off). Each node shows
 its last execute time and, red, why it failed (the solver's build, or the check at Apply).
@@ -23,7 +25,7 @@ from trame_flow.widgets.flow import Background, Controls, CustomNode, Handle, No
 from neofoam_ui._ui.panes import _scene_form
 from neofoam_ui._ui.panes._scenes import _Scenes
 from neofoam_ui.extensions import BasePane, PaneContext, PaneToggle
-from neofoam_ui.scenes import inputs, ordered
+from neofoam_ui.scenes import cells, inputs, ordered
 from neofoam_ui.scenes.models import AnyNode
 
 __all__ = ()
@@ -42,8 +44,9 @@ _ROLE = {"grid": "source", "Display": "display", "View": "view"}
 _DX, _DY = 200, 110
 #: The canvas never zooms out further: nodes stay readable (pan to the rest).
 _MIN_ZOOM = 0.75
-#: A link's ends must be ports of one type (a data port to a data port, a display to the View).
-_VALID_LINK = "(c) => c.source !== c.target && c.sourceHandle === c.targetHandle"
+#: A link's ends must be ports of one type (a data port to a data port, a display to a cell of the
+#: View: its port ``display:<cell>``).
+_VALID_LINK = "(c) => c.source !== c.target && c.sourceHandle === c.targetHandle.split(':')[0]"
 
 _EDITOR_CSS = r"""
 .nf-se { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -73,6 +76,10 @@ _EDITOR_CSS = r"""
 .nf-sn .vue-flow__handle { opacity: 1; width: 12px; height: 12px; top: 35px; border: 2px solid #fff; }
 .nf-sn .vue-flow__handle.many { height: 18px; border-radius: 3px; }
 .nf-sn .vue-flow__handle.data { background: #1a73e8; } .nf-sn .vue-flow__handle.display { background: #9334e6; }
+.nf-sn .c { position: relative; height: 22px; padding: 0 10px; display: flex; align-items: center; gap: 8px;
+  font-size: 10px; border-bottom: 1px dashed rgba(128,128,128,.25); }
+.nf-sn .c b { font-weight: 600; } .nf-sn .c .ms { margin-left: auto; opacity: .6; font-family: monospace; }
+.nf-sn .c .vue-flow__handle { top: 50%; }
 .nf-se-canvas:focus { outline: none; }
 .nf-se-canvas .vue-flow__edge.selected .vue-flow__edge-path { stroke: rgb(var(--v-theme-primary)); stroke-width: 3; }
 .nf-se-menu-off { position: absolute; inset: 0; z-index: 10; }
@@ -100,7 +107,9 @@ def _summary(node: dict[str, Any]) -> list[str]:
     if kind == "grid":
         return ["solver cells", "all fields"]
     if kind == "View":
-        return [f"camera {props.get('camera', 'reset')}", f"zoom {props.get('zoom', 1.0):.3g}"]
+        cameras = "per cell" if props.get("cameras") == "per_cell" else "linked"
+        return [f"camera {props.get('camera', 'reset')} · zoom {props.get('zoom', 1.0):.3g}",
+                f"layout {props.get('layout', '1')} · cameras {cameras}"]
     if kind == "Display":
         field = props.get("field", "@field")
         return [f"colour {field}" if field else "solid", str(props.get("colormap", "viridis"))]
@@ -139,8 +148,17 @@ def _auto_layout(graph: dict[str, Any]) -> dict[str, list[float]]:
             wanted = min((out[s][1] for s in sources.get(member, []) if s in out), default=row)
             row = max(row, wanted)
             out[member] = [float(col * _DX), row]
-            row += _DY
+            row += _DY + _PORT_ROW * (_in_ports(graph, member) - 1)
     return out
+
+
+#: The height of one more input port's row (a View with several cells is taller).
+_PORT_ROW = 22
+
+
+def _in_ports(graph: dict[str, Any], node_id: str) -> int:
+    node = next(n for n in graph["nodes"] if n["id"] == node_id)
+    return len(cells(node.get("props", {}).get("layout", "1"))) if node["type"] == "View" else 1
 
 
 def _free_id(graph: dict[str, Any], kind: str) -> str:
@@ -173,7 +191,7 @@ class _SceneEditorPane(BasePane):
         for name, action in (("nf_se_prop", self.prop), ("nf_se_add", self.add), ("nf_se_drop", self.drop), ("nf_se_select", self.select),
                              ("nf_se_apply", self.apply), ("nf_se_revert", self.revert),
                              ("nf_se_remove_node", self.remove_node), ("nf_se_remove_link", self.remove_link),
-                             ("nf_se_delete", self.delete)):
+                             ("nf_se_delete", self.delete), ("nf_se_arrange", self.arrange)):
             ctx.server.trigger(name)(action)
 
     # -- pane ---------------------------------------------------------------------------
@@ -188,6 +206,7 @@ class _SceneEditorPane(BasePane):
         s.se_form = {}
         s.se_errors = {}
         s.se_ms = {}
+        s.se_cell_ms = {}
         s.se_changes = 0
         s.se_msg = ""
         s.se_msg_err = False
@@ -233,15 +252,17 @@ class _SceneEditorPane(BasePane):
         for node in graph["nodes"]:
             model = _PORTS[node["type"]]
             x, y = layout.get(node["id"]) or auto.get(node["id"], [0, 0])
+            ports = model.input_ports(node.get("props") or {})
             nodes.append({"id": node["id"], "type": "scene", "position": {"x": x, "y": y},
                           "data": {"kind": node["type"], "role": _ROLE.get(node["type"], "filter"),
                                    "takes": model.takes, "gives": model.gives, "many": model.many,
                                    "takes_name": model.takes_name, "gives_name": model.gives_name,
+                                   "cells": list(ports) if len(ports) > 1 else [],
                                    "removable": node["type"] not in _FIXED, "lines": _summary(node)}})
         link = self.ctx.state.se_link
-        edges = [{"id": _link_id(a, b), "source": a, "target": b, "sourceHandle": _PORTS[_type(graph, a)].gives,
-                  "targetHandle": _PORTS[_type(graph, b)].takes, "type": "default", "selected": _link_id(a, b) == link}
-                 for a, b in graph["edges"]]
+        edges = [{"id": _link_id(*e), "source": e[0], "target": e[1], "sourceHandle": _PORTS[_type(graph, e[0])].gives,
+                  "targetHandle": _target_handle(graph, e), "type": "default", "selected": _link_id(*e) == link}
+                 for e in graph["edges"]]
         self._pushing = True
         try:
             self.editor.graph = {"nodes": nodes, "edges": edges}
@@ -260,7 +281,7 @@ class _SceneEditorPane(BasePane):
         by_id = {n["id"]: n for n in old["nodes"]}
         kept = [copy.deepcopy(by_id[n["id"]]) for n in nodes if n["id"] in by_id]
         ids = {n["id"] for n in kept}
-        links = _one_input([(e["source"], e["target"]) for e in edges if e["source"] in ids and e["target"] in ids],
+        links = _one_input([_link(e) for e in edges if e["source"] in ids and e["target"] in ids],
                            {n["id"]: n["type"] for n in kept})
         graph = {**old, "nodes": kept, "edges": [list(e) for e in links],
                  "layout": {n["id"]: [n["position"]["x"], n["position"]["y"]] for n in nodes if n["id"] in ids}}
@@ -276,6 +297,13 @@ class _SceneEditorPane(BasePane):
         if self._pushed is not None and self._pushed[0] != self.scenes.current:  # Field was copied
             self._pushed = (self.scenes.current, self._pushed[1])
         self.refresh()
+
+    def arrange(self) -> None:
+        """Auto layout: every node placed anew, left to right (a draft edit; Revert undoes it)."""
+        graph = self._draft()
+        graph["layout"] = _auto_layout(graph)
+        self._fitted = None
+        self._edit(graph, repush=True)
 
     def _draft(self) -> dict[str, Any]:
         """A copy of the shown graph with every node placed: as stored, else where the canvas has it."""
@@ -306,7 +334,7 @@ class _SceneEditorPane(BasePane):
             graph["edges"].append([after, node_id])
             view = next((n["id"] for n in graph["nodes"] if n["type"] == "View"), None)
             if kind == "Display" and view is not None:  # shown at once: the scene's one View
-                graph["edges"].append([node_id, view])
+                graph["edges"].append(_to_view(graph, node_id))
         s.se_sel = node_id
         self._edit(graph, repush=True)
 
@@ -328,7 +356,7 @@ class _SceneEditorPane(BasePane):
         if _type(graph, node_id) in _FIXED:
             return
         graph["nodes"] = [n for n in graph["nodes"] if n["id"] != node_id]
-        graph["edges"] = [e for e in graph["edges"] if node_id not in e]
+        graph["edges"] = [e for e in graph["edges"] if node_id not in e[:2]]
         graph.get("layout", {}).pop(node_id, None)
         if self.ctx.state.se_sel == node_id:
             self.ctx.state.se_sel = None
@@ -386,9 +414,13 @@ class _SceneEditorPane(BasePane):
             props[name] = parsed
         if props == node.get("props", {}):
             return
+        if node["type"] == "View" and name == "layout":
+            _relayout(graph, node, props)
         node["props"] = props
         self._edit(graph, repush=True)
         s.se_form = _scene_form.shown(self._fields, props)
+        if node["type"] == "View" and self.editor is not None:  # its ports changed: Vue Flow measures them again
+            self.ctx.server.js_call("nf_se_editor", "updateNodeInternals", [node["id"]])
 
     # -- apply ----------------------------------------------------------------------------
 
@@ -427,9 +459,12 @@ class _SceneEditorPane(BasePane):
         ms, proxies = msg.get("pipeline_ms") or {}, (msg.get("report") or {}).get("proxies") or {}
         s.se_ms = {node: f"{sum(ms[p] for p in ids if p in ms):.1f} ms"
                    for node, ids in proxies.items() if any(p in ms for p in ids)}
+        cell_views = (msg.get("report") or {}).get("cells") or {}
+        s.se_cell_ms = {cell: f"{ms[view]:.1f} ms" for cell, view in cell_views.items() if view in ms}
 
 
-def _link_id(source: str, target: str) -> str:
+def _link_id(source: str, target: str, *_: str) -> str:
+    """A link's id on the canvas (one per pair: a Display links to one cell of the View)."""
     return f"{source}->{target}"
 
 
@@ -437,16 +472,63 @@ def _type(graph: dict[str, Any], node_id: str) -> str:
     return next(n["type"] for n in graph["nodes"] if n["id"] == node_id)
 
 
-def _one_input(links: list[tuple[str, str]], kinds: dict[str, str]) -> list[tuple[str, str]]:
-    """The links, a node that takes one input keeping its newest (the last); no duplicates."""
-    out: list[tuple[str, str]] = []
+def _cells_of(graph: dict[str, Any], node_id: str) -> tuple[str, ...]:
+    node = next(n for n in graph["nodes"] if n["id"] == node_id)
+    return _PORTS[node["type"]].input_ports(node.get("props") or {})  # type: ignore[no-any-return]
+
+
+def _target_handle(graph: dict[str, Any], edge: list[str]) -> str:
+    """The canvas port an edge goes to: the target's port type, ``display:<cell>`` for a View of more than one cell."""
+    takes = _PORTS[_type(graph, edge[1])].takes
+    ports = _cells_of(graph, edge[1])
+    if len(ports) < 2:
+        return str(takes)
+    return f"{takes}:{edge[2] if len(edge) > 2 else ports[0]}"
+
+
+def _link(edge: dict[str, Any]) -> tuple[str, ...]:
+    """A canvas link as a scene edge: ``(source, target)``, the cell third (``display:<cell>``)."""
+    _, _, cell = str(edge.get("targetHandle") or "").partition(":")
+    return (edge["source"], edge["target"], cell) if cell else (edge["source"], edge["target"])
+
+
+def _to_view(graph: dict[str, Any], display: str) -> list[str]:
+    """A Display's edge to the View, in its first cell (named when there are more)."""
+    view = next(n["id"] for n in graph["nodes"] if n["type"] == "View")
+    ports = _cells_of(graph, view)
+    return [display, view] if len(ports) < 2 else [display, view, ports[0]]
+
+
+def _one_input(links: list[tuple[str, ...]], kinds: dict[str, str]) -> list[tuple[str, ...]]:
+    """The links, a node that takes one input keeping its newest (the last), a Display one cell
+    (its newest link); no duplicates."""
+    out: list[tuple[str, ...]] = []
     for link in links:
         if link in out:
             continue
         if not _PORTS[kinds[link[1]]].many:
             out = [old for old in out if old[1] != link[1]]
+        if _PORTS[kinds[link[0]]].gives == "display":
+            out = [old for old in out if old[0] != link[0]]
         out.append(link)
     return out
+
+
+def _relayout(graph: dict[str, Any], view: dict[str, Any], props: dict[str, Any]) -> None:
+    """The View's links and cameras follow a new layout, cell by cell in order (``1``'s one cell
+    is the first): those of cells the new layout has not are dropped."""
+    old, new = cells(view.get("props", {}).get("layout", "1")), cells(props["layout"])
+    moved = dict(zip(old, new))
+    edges = []
+    for edge in graph["edges"]:
+        if edge[1] != view["id"]:
+            edges.append(edge)
+            continue
+        cell = moved.get(edge[2] if len(edge) > 2 else old[0])
+        if cell is not None:
+            edges.append(edge[:2] if len(new) == 1 else [*edge[:2], cell])
+    graph["edges"] = edges
+    props["cell_cameras"] = {moved[c]: cam for c, cam in (props.get("cell_cameras") or {}).items() if c in moved}
 
 
 # -- widgets -----------------------------------------------------------------------------------
@@ -503,7 +585,8 @@ def _canvas(pane: _SceneEditorPane) -> None:
             with CustomNode("scene"):
                 with html.Div(classes=("['nf-sn', props.data.role, { sel: props.id === se_sel,"
                                        " err: !!se_errors[props.id] }]",)):
-                    Handle(position="left", type="target", id=("props.data.takes",), v_if="props.data.takes",
+                    Handle(position="left", type="target", id=("props.data.takes",),
+                           v_if="props.data.takes && !props.data.cells.length",
                            classes=("[props.data.takes, { many: props.data.many }]",))
                     Handle(position="right", type="source", id=("props.data.gives",), v_if="props.data.gives",
                            classes=("props.data.gives",))
@@ -511,9 +594,14 @@ def _canvas(pane: _SceneEditorPane) -> None:
                         html.Span("{{ props.data.kind }}")
                         html.Span("{{ props.id }}", classes="id")
                         html.Span("{{ se_ms[props.id] }}", classes="ms", v_if="se_ms[props.id]")
-                    with html.Div(classes="p"):
+                    with html.Div(classes="p", v_if="!props.data.cells.length"):
                         html.Span("{{ props.data.takes_name }}")
                         html.Span("{{ props.data.gives_name }}")
+                    with html.Div(classes="c", v_for="c in props.data.cells", key="c"):  # a bar port per cell
+                        Handle(position="left", type="target", id=("`${props.data.takes}:${c}`",),
+                               classes=("[props.data.takes, 'many']",))
+                        html.B("{{ c }}")
+                        html.Span("{{ se_cell_ms[c] }}", classes="ms", v_if="se_cell_ms[c]")
                     html.Div("{{ l }}", v_for="l in props.data.lines", classes="b")
                     html.Div("{{ se_errors[props.id] }}", classes="m", v_if="se_errors[props.id]")
         _menu()
@@ -599,6 +687,8 @@ def _editor_view(pane: _SceneEditorPane) -> None:
         with html.Div(classes="nf-se-foot"):
             html.Span("{{ se_msg || (se_changes ? se_changes + ' change' + (se_changes > 1 ? 's' : '') + ' since last apply'"
                       " : 'no changes since last apply') }}", classes=("['msg', { err: se_msg_err }]",))
+            v3.VBtn("Auto layout", size="small", variant="text", prepend_icon="mdi-auto-fix",
+                    title="arrange the nodes left to right", click="trigger('nf_se_arrange')")
             v3.VBtn("Revert", size="small", variant="outlined", disabled=("!se_changes",), click="trigger('nf_se_revert')")
             v3.VBtn("Apply", size="small", color="primary", variant="flat", disabled=("!se_changes",),
                     click="trigger('nf_se_apply')")

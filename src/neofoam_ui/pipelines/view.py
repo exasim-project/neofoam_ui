@@ -9,17 +9,22 @@ Channel ``grid``: the solver's cells with every cell field. Parameters per execu
 * image size ``width``/``height`` and ``scale`` (device pixels per CSS pixel: fonts grow);
 * ``export=<path>``: also write the shown scene there as a Catalyst script.
 
-Every scene shown once stays built: a ParaView proxy per node and a render view of its own.
+Every scene shown once stays built: a ParaView proxy per node and a render view per cell of
+its View's layout (more than one cell: arranged in a ParaView layout, :data:`shown_layout`).
 A new graph for a scene is applied as a diff (unchanged nodes keep their proxies, properties
-are set on them, inputs relinked); only the shown scene executes. Camera and zoom come from
-the scene's View node; the camera is fitted again for a new size. A scene that
+are set on them, inputs relinked; a new layout keeps the filters, a Display that changes cells
+is drawn anew in its cell's view); only the shown scene executes. Camera and zoom come from
+the scene's View node: one for all cells (``linked``) or each cell's own (``per_cell``); the
+camera is fitted again for a new size. A scene that
 cannot be built is dropped with its error (``report["error"]`` names the node), until another
 graph comes for it; the other scenes are not touched.
 
 Script arguments (``key=value``, each optional): with ``out=<dir>`` it writes
-``view_<timestep>.png`` of the whole domain there; the caller may capture :data:`shown_view` as well. ``report`` tells the
+``view_<timestep>.png`` of the whole domain there (a layout: all cells in one picture); the caller may capture :data:`shown_view` (or
+:data:`shown_layout`) as well. ``report`` tells the
 caller of the last execute: the domain ``bounds``, the default ``axis``, ``notes``, the shown
-``scene``, its ``error`` (and ``error_node``), each node's proxies (``proxies``, for timings), in
+``scene``, its ``error`` (and ``error_node``), each node's proxies (``proxies``, for timings; the
+View's: one render view per cell) and each cell's view (``cells``), in
 data mode the ``extracts`` (each Display's input, the source Catalyst Live sends, with the
 Display's settings), and ``exported`` after ``export=<path>`` (a Catalyst script of the scene).
 ``live=host:port`` lets a ParaView attach (Catalyst ▸ Connect) at every
@@ -28,18 +33,20 @@ Live only in ``mode=data``, where the input of the scene's first Display is upda
 nothing is drawn.
 """
 
+import inspect
+import os
 from typing import Any
 
 from paraview import catalyst, servermanager
-from paraview.simple import (Calculator, CellDatatoPointData, Clip, ColorBy, Contour, CreateExtractor, CreateView,
-                             Delete, ExtractSurface, GetScalarBar, Glyph, Slice,
+from paraview.simple import (Calculator, CellDatatoPointData, Clip, ColorBy, Contour, CreateExtractor, CreateLayout,
+                             CreateView, Delete, ExtractSurface, GetScalarBar, Glyph, Slice,
                              StreamTracer, Threshold, TrivialProducer)
 from vtkmodules.vtkCommonCore import vtkDoubleArray
 from vtkmodules.vtkCommonDataModel import vtkDataObjectTreeIterator
 from vtkmodules.vtkParallelCore import vtkCommunicator, vtkMultiProcessController
 from vtkmodules.vtkRenderingFreeType import vtkMathTextUtilities
 
-from neofoam_ui.scenes import FIELD, camera_fit, field_graph, inputs, ordered
+from neofoam_ui.scenes import FIELD, camera_fit, cell_of, cells, field_graph, inputs, ordered, shape
 from neofoam_ui.scenes.models import parse
 
 _args = dict(arg.split("=", 1) for arg in catalyst.get_args())
@@ -52,6 +59,8 @@ if _live or _data:
     options.EnableCatalystLive = int(bool(_live))
 
 grid = TrivialProducer(registrationName="grid")
+#: The PNG extractor of ``out=<dir>`` while the shown scene has one cell (ParaView's image
+#: extractors take a view, not a layout: a layout is written by :func:`_save_layout_png`).
 png = None
 if "out" in _args:
     options.ExtractsOutputDirectory = _args["out"]
@@ -63,8 +72,11 @@ _AXES = "xyz"
 _BIG = 1e300
 #: What the caller reads after an execute (see the module docstring).
 report: dict[str, Any] = {}
-#: The render view of the shown scene: what the caller captures.
+#: The render view of the shown scene (its first cell's): what the caller captures.
 shown_view = None
+#: The shown scene's layout when its View has more than one cell (else ``None``): what the caller
+#: captures then, all cells in one picture.
+shown_layout = None
 _state = {"bounds": None}
 #: The scenes built so far, by name, and those that failed (name: (graph text, error)).
 _scenes: dict[str, Any] = {}
@@ -256,7 +268,7 @@ def _create(scene, node, sources):
     elif kind == "View":
         scene.proxies[node["id"]] = scene.view
     elif kind == "Display":
-        rep = servermanager.CreateRepresentation(sources[0], scene.view)
+        rep = servermanager.CreateRepresentation(sources[0], scene.views[_cell_index(scene.graph)[node["id"]]])
         scene.proxies[node["id"]] = rep
     else:
         scene.proxies[node["id"]], scene.helpers[node["id"]] = _create_filter(scene, node, sources[0])
@@ -274,7 +286,7 @@ def _delete(scene, node, proxy, helpers):
     if node["type"] in ("grid", "View"):
         return
     if node["type"] == "Display":
-        scene.view.Representations.remove(proxy)
+        next(v for v in scene.views if proxy in v.Representations).Representations.remove(proxy)
     Delete(proxy)
     for helper in reversed(helpers):
         Delete(helper)
@@ -391,17 +403,20 @@ def _title(field, comp):
 
 #: A colour bar's height (title, bar, labels) in pixels at scale 1: the camera keeps room for each.
 _BAR_PX = 110
+#: The gap between the cells of a layout in pixels at scale 1.
+_SEPARATOR_PX = 3
 
 
 def _colour_bar(lut, title, ctx, view, row):
-    """The colour bar of ``lut``, in ``row`` (0: the lowest) of the bars stacked at the bottom."""
+    """The colour bar of ``lut`` in ``view``, in ``row`` (0: the lowest) of the bars stacked at the bottom."""
     scale = ctx.scale
+    height = view.ViewSize[1]
     bar = GetScalarBar(lut, view)
     bar.Title = title
     bar.ComponentTitle = ""
     bar.Orientation = "Horizontal"
     bar.WindowLocation = "Any Location"
-    bar.Position = [0.25, 0.02 + row * _BAR_PX * scale / ctx.height]
+    bar.Position = [0.25, 0.02 + row * _BAR_PX * scale / height]
     bar.ScalarBarLength = 0.5
     bar.TitleFontSize = round(22 * scale)
     bar.LabelFontSize = round(20 * scale)
@@ -419,10 +434,11 @@ class _Display:
 
 
 def _show_displays(scene, ctx):
-    """Colour the displays; those linked to the View show, each coloured one with its bar (``bar``)."""
+    """Colour the displays; those linked to the View show, each coloured one with its bar (``bar``)
+    in its cell. How many bars each cell has."""
     graph, sources = scene.graph, inputs(scene.graph)
-    linked = {s for node in graph["nodes"] if node["type"] == "View" for s in sources[node["id"]]}
-    bars = []
+    linked, index = cell_of(graph), _cell_index(graph)
+    bars = [[] for _ in scene.views]
     for node in ordered(graph):
         if node["type"] != "Display":
             continue
@@ -432,14 +448,24 @@ def _show_displays(scene, ctx):
         display = _Display(rep, _association(scene, sources[node["id"]][0]), ctx.time)
         coloured = _lut_of(display, node["props"], ctx)
         if coloured is not None and rep.Visibility and node["props"]["bar"]:
-            bars.append(coloured)
-    shown = {lut for lut, _ in bars}
-    for lut in scene.bars - shown:
-        GetScalarBar(lut, scene.view).Visibility = 0
-    for row, (lut, title) in enumerate(bars):
-        _colour_bar(lut, title, ctx, scene.view, row)
+            bars[index[node["id"]]].append(coloured)
+    shown = {(lut, i) for i, cell in enumerate(bars) for lut, _ in cell}
+    for lut, i in scene.bars - shown:
+        GetScalarBar(lut, scene.views[i]).Visibility = 0
+    for i, cell in enumerate(bars):
+        for row, (lut, title) in enumerate(cell):
+            _colour_bar(lut, title, ctx, scene.views[i], row)
     scene.bars |= shown
-    return len(bars)
+    return [len(cell) for cell in bars]
+
+
+def _cell_index(graph):
+    """Each Display's cell, as an index into the View's layout (one not linked: the first)."""
+    view = next((n for n in graph["nodes"] if n["type"] == "View"), None)
+    if view is None:
+        return {}
+    names, linked = cells(view["props"].get("layout", "1")), cell_of(graph)
+    return {n["id"]: names.index(linked.get(n["id"], names[0])) for n in graph["nodes"] if n["type"] == "Display"}
 
 
 def _association(scene, node_id):
@@ -479,53 +505,102 @@ def _fit_camera(view, pick, b, size, bar_px):
     view.CameraParallelScale = fit["scale"]
 
 
-def _place_camera(scene, ctx, bars):
-    """Image size and the View node's camera, fitted again when either or the bars change.
+def _size_views(scene, ctx):
+    """The image size: one view's, or the layout's split into its cells; each view's size."""
+    if len(scene.views) == 1:
+        scene.view.ViewSize = ctx.size
+        return [list(ctx.size)]
+    scene.layout.SeparatorWidth = max(1, round(_SEPARATOR_PX * ctx.scale))
+    scene.layout.SetSize(*ctx.size)
+    return [list(view.ViewSize) for view in scene.views]
+
+
+def _pick(props, cell):
+    """The camera preset and zoom of a cell: its own (per cell, if it has one), else the View's."""
+    own = props["cell_cameras"].get(cell) if props["cameras"] == "per_cell" else None
+    return (own["camera"], float(own["zoom"])) if own else (props["camera"], float(props["zoom"]))
+
+
+def _place_camera(scene, ctx, sizes, bars):
+    """Each cell's camera from the View node, fitted again when it, the cell's size or its bars change.
 
     The View node defines the camera entirely: a camera fitted for another size (the pane
-    resized, the scene shown again) would crop the domain."""
+    resized, the scene shown again) would crop the domain. Linked cells share one camera,
+    fitted to the first cell with room for the most bars any cell has."""
     props = next(n["props"] for n in scene.graph["nodes"] if n["type"] == "View")
-    pick = (props["camera"], float(props["zoom"]))
-    camera = (pick, ctx.size, bars)
-    scene.view.ViewSize = ctx.size
-    if png is not None:
-        png.Writer.ImageResolution = ctx.size
-    if scene.camera != camera:
-        scene.camera = camera
-        _fit_camera(scene.view, pick, ctx.bounds, ctx.size, _BAR_PX * ctx.scale * max(bars, 1))
+    names, linked = cells(props["layout"]), props["cameras"] == "linked"
+    for i, view in enumerate(scene.views):
+        pick, size = _pick(props, names[i]), sizes[0] if linked else sizes[i]
+        rows = max(bars) if linked else bars[i]
+        camera = (pick, size, rows)
+        if scene.cameras.get(i) != camera:
+            scene.cameras[i] = camera
+            _fit_camera(view, pick, ctx.bounds, size, _BAR_PX * ctx.scale * max(rows, 1))
 
 
 # -- scenes ------------------------------------------------------------------------------------
 
 
+def _new_view(name, index):
+    view = CreateView("RenderView", registrationName=f"{name}:view" + (f"{index}" if index else ""))
+    view.OrientationAxesVisibility = 0
+    return view
+
+
+def _locations(layout, name):
+    """Split an empty ParaView layout into the cells of the View ``layout`` ``name``: their locations, row by row."""
+    rows, columns = shape(name)
+    if rows == columns == 1:
+        return [0]
+    if rows == 1 or columns == 1:
+        first = layout.SplitHorizontal(0, 0.5) if rows == 1 else layout.SplitVertical(0, 0.5)
+        return [first, first + 1]
+    top = layout.SplitVertical(0, 0.5)
+    upper, lower = layout.SplitHorizontal(top, 0.5), layout.SplitHorizontal(top + 1, 0.5)
+    return [upper, upper + 1, lower, lower + 1]
+
+
 class _Scene:
-    """One scene as ParaView proxies: its graph, a proxy per node (and helpers), its render view."""
+    """One scene as ParaView proxies: its graph, a proxy per node (and helpers), a render view per cell."""
 
     def __init__(self, name):
         self.name = name
         self.graph = {"nodes": [], "edges": []}
         #: Node id → its proxy: grid → the producer, a filter → its filter, Display → its
-        #: representation, View → the scene's render view.
+        #: representation, View → the first cell's render view (:attr:`views`: all).
         self.proxies = {}
         self.helpers = {}
         self.kinds = {}
         #: The graph text it was built from (``""``: the built-in Field).
         self.text = None
-        self.view = CreateView("RenderView", registrationName=f"{name}:view")
-        self.view.OrientationAxesVisibility = 0
-        self.camera = None
+        #: A render view per cell, row by row; with more than one, arranged in :attr:`layout`.
+        self.views = [_new_view(name, 0)]
+        self.layout = None
+        self.arranged = "1"
+        #: Each view's last camera fit (by cell index) and the colour bars shown so far (lut, cell index).
+        self.cameras = {}
         self.bars = set()
         #: The node being worked on (named by an error).
         self.failing = None
 
-    def apply(self, graph, ctx):
-        """Build ``graph`` from what is built: new nodes, relinked inputs, removed nodes (last).
+    @property
+    def view(self):
+        """The first cell's render view."""
+        return self.views[0]
 
-        A filter's properties are set as it is made: a display updates its input when created."""
+    def apply(self, graph, ctx):
+        """Build ``graph`` from what is built: the cells' views, new nodes, relinked inputs, removed
+        nodes (last), the views of cells gone.
+
+        A filter's properties are set as it is made: a display updates its input when created. A
+        Display in another cell than before is made again in that cell's view."""
         new = {n["id"]: n["type"] for n in graph["nodes"]}
+        old_cells, new_cells = _cell_index(self.graph), _cell_index(graph)
+        moved = {k for k, i in old_cells.items() if new_cells.get(k, i) != i}
         gone = [(n, self.proxies.pop(n["id"]), self.helpers.pop(n["id"], []), self.kinds.pop(n["id"]))
-                for n in reversed(ordered(self.graph)) if new.get(n["id"]) != n["type"]]
+                for n in reversed(ordered(self.graph)) if new.get(n["id"]) != n["type"] or n["id"] in moved]
         self.graph = graph
+        self._arrange(graph)
         sources = inputs(graph)
         for node in ordered(graph):
             self.failing = node
@@ -539,6 +614,30 @@ class _Scene:
             self.failing = node
             _delete(self, node, proxy, helpers)
         self.failing = None
+        self._drop_views()
+
+    def _arrange(self, graph):
+        """A view for each cell of the View's layout, the views in a ParaView layout (more than one cell)."""
+        name = next(n["props"].get("layout", "1") for n in graph["nodes"] if n["type"] == "View")
+        count = len(cells(name))
+        while len(self.views) < count:
+            self.views.append(_new_view(self.name, len(self.views)))
+        if name == self.arranged:
+            return
+        self.arranged = name
+        if self.layout is None:
+            self.layout = CreateLayout(f"{self.name}:layout")  # traced by an export; captured as one picture
+        self.layout.SMProxy.Reset()
+        for view, location in zip(self.views, _locations(self.layout, name)):
+            self.layout.AssignView(location, view)
+
+    def _drop_views(self):
+        """Delete the views of cells the layout no longer has (their displays went already)."""
+        count = len(cells(self.arranged))
+        for i in range(len(self.views) - 1, count - 1, -1):
+            Delete(self.views.pop(i))
+            self.cameras.pop(i, None)
+        self.bars = {(lut, i) for lut, i in self.bars if i < count}
 
     def set_properties(self, ctx):
         """Every filter's properties (those of the pane's field may change at any execute)."""
@@ -570,18 +669,27 @@ class _Scene:
         return "grid" if self.proxies[node_id] is grid else f"{self.name}:{node_id}"
 
     def proxy_ids(self):
-        """Each node's proxies as the pipeline diagram names them (``pv<global id>``): its timings."""
+        """Each node's proxies as the pipeline diagram names them (``pv<global id>``): its timings
+        (the View's: every cell's view)."""
         out = {}
         for node_id, proxy in self.proxies.items():
-            proxies = [proxy, *self.helpers.get(node_id, [])]
+            proxies = self.views if self.kinds[node_id] == "View" else [proxy, *self.helpers.get(node_id, [])]
             out[node_id] = ["pv" + p.GetGlobalIDAsString() for p in proxies]
         return out
 
+    def cell_ids(self):
+        """Each cell's render view as the pipeline diagram names it: the cell's timing."""
+        return {cell: "pv" + view.GetGlobalIDAsString() for cell, view in zip(cells(self.arranged), self.views)}
+
     def close(self):
-        """Delete every proxy built (consumers first) and the view."""
+        """Delete every proxy built (consumers first), the views and the layout."""
         for node_id, proxy in reversed(list(self.proxies.items())):
             _delete(self, {"type": self.kinds[node_id]}, proxy, self.helpers.get(node_id, []))
-        Delete(self.view)
+        for view in self.views:
+            Delete(view)
+        if self.layout is not None:
+            pxm = servermanager.ProxyManager()
+            pxm.UnRegisterProxy("layouts", pxm.GetProxyName("layouts", self.layout), self.layout)
 
 
 def _graph_of(params):
@@ -670,28 +778,63 @@ def _drop(name, scene, text, exc):
 
 
 def _show(scene, params, ctx):
-    """Draw the scene in its view (image mode); a failure drops it."""
+    """Draw the scene in its views (image mode); a failure drops it."""
     try:
         scene.set_properties(ctx)
-        _place_camera(scene, ctx, _show_displays(scene, ctx))
+        sizes = _size_views(scene, ctx)
+        _place_camera(scene, ctx, sizes, _show_displays(scene, ctx))
         return True
     except Exception as exc:  # noqa: BLE001 - a broken scene leaves the others working
         _drop(scene.name, scene, params.get("graph", ""), exc)
         return False
 
 
-def _point_png(view):
+def _save_layout_png(layout, size, path):
+    """A ParaView layout as one PNG of ``size`` at ``path``: every rank renders each view (collective;
+    IceT composites each on rank 0), rank 0 merges the cells and writes the file.
+
+    Self-contained: an exported scene's script carries its source."""
+    import os  # noqa: PLC0415 - the function travels into exported scripts as source
+    from paraview.modules.vtkRemotingViews import vtkSMSaveScreenshotProxy  # noqa: PLC0415
+    from vtkmodules.vtkCommonDataModel import vtkVector2i  # noqa: PLC0415
+    from vtkmodules.vtkIOImage import vtkPNGWriter  # noqa: PLC0415
+    from vtkmodules.vtkParallelCore import vtkMultiProcessController  # noqa: PLC0415
+
+    layout.SetSize(*size)
+    image = vtkSMSaveScreenshotProxy.CaptureImage(layout.SMProxy, vtkVector2i(*size))
+    controller = vtkMultiProcessController.GetGlobalController()
+    if controller is not None and controller.GetLocalProcessId() > 0:
+        return
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    writer = vtkPNGWriter()
+    writer.SetFileName(path)
+    writer.SetInputData(image)
+    writer.Write()
+
+
+def _write_out(scene, ctx, timestep):
+    """``out=<dir>``: ``view_<timestep>.png`` of the shown scene, all its cells in one picture.
+
+    One cell: a PNG extractor of its view (Catalyst writes it after the execute); a layout: the
+    picture written now, the extractor off (one of a layout writes nothing; deleting one that
+    Catalyst knows aborts its next execute)."""
     global png
     if "out" not in _args:
         return
-    if png is None:
-        png = CreateExtractor("PNG", view, registrationName="png")
+    layout = len(scene.views) > 1
+    if png is None and not layout:
+        png = CreateExtractor("PNG", scene.view, registrationName="png")
         png.Writer.FileName = "view_{timestep:06d}.png"
-    png.Producer = view
+    if png is not None:
+        png.Enable = int(not layout)
+        png.Producer = scene.view
+        png.Writer.ImageResolution = list(ctx.size)
+    if layout:
+        _save_layout_png(scene.layout, list(ctx.size), os.path.join(_args["out"], f"view_{timestep:06d}.png"))
 
 
 def catalyst_execute(info):
-    global shown_view
+    global shown_view, shown_layout
     params = _params(info)
     # Bring the producer to this execute's data first: until then its output still holds the
     # previous step's arrays, whose memory the solver may have freed (nut is reallocated).
@@ -702,7 +845,7 @@ def catalyst_execute(info):
     b = _domain()
     report.clear()
     report.update(bounds=list(b), axis=_default_axis(b), notes=[], scene=params.get("scene") or FIELD)
-    shown_view = None
+    shown_view = shown_layout = None
     ctx = _Context(params, b, info.time)
     scene = _scene(params, ctx)
     if scene is None:
@@ -712,8 +855,9 @@ def catalyst_execute(info):
         return
     if _show(scene, params, ctx):
         shown_view = scene.view
-        _point_png(scene.view)
-        report["proxies"] = scene.proxy_ids()
+        shown_layout = scene.layout if len(scene.views) > 1 else None
+        _write_out(scene, ctx, info.timestep)
+        report["proxies"], report["cells"] = scene.proxy_ids(), scene.cell_ids()
         if params.get("export"):
             _export(scene, params["export"], ctx)
 
@@ -737,28 +881,76 @@ def _extract(scene, params, ctx, time):
             scene.proxies[source].UpdatePipeline(time)
 
 
+def _catalyst_state(export, views):
+    """ParaView's Catalyst export of the extractors (``catalyst_export``), with the views and their
+    layout: its exporter leaves layouts out, and an extractor of a layout reaches no view."""
+    from paraview import simple, smstate  # noqa: PLC0415 - only for an export
+    from paraview.detail.catalyst_export import _get_catalyst_postamble, _get_catalyst_preamble  # noqa: PLC0415
+
+    options = servermanager._getPyProxy(servermanager.ProxyManager().NewProxy("pythontracing", "PythonStateOptions"))
+    options.PropertiesToTraceOnCreate = smstate.RECORD_ACTIVE_MODIFIED_PROPERTIES
+    options.SkipHiddenDisplayProperties = True
+    options.SkipRenderingComponents = False
+    options.SkipActiveComponents = True
+    options.SkipLayoutComponents = False
+    options.ExtractsOutputDirectory = export.ExtractsOutputDirectory
+    return smstate.get_state(options=options, source_set=[*simple.GetExtractors(), *views],
+                             preamble=_get_catalyst_preamble(export), postamble=_get_catalyst_postamble(export))
+
+
+def _export_png(name, view, size):
+    """A PNG extractor of a view, ``<scene>_<timestep>.png``."""
+    # not through CreateExtractor: in situ it also tags the extractor for Catalyst, which would
+    # still write it after it is deleted (and fail on its writer)
+    extractor = servermanager._getPyProxy(servermanager.vtkSMExtractsController().CreateExtractor(
+        view.SMProxy, "PNG", f"{name}:png"))
+    extractor.Writer.FileName = name + "_{timestep:06d}.png"
+    extractor.Writer.ImageResolution = list(size)
+    return extractor
+
+
+def _layout_hook(scene, size):
+    """What an exported layout adds to its script: the layout written as ``<scene>_<timestep>.png``,
+    one picture per step, by :func:`_save_layout_png` (its source), in situ at each execute and
+    once in pvbatch."""
+    pxm = servermanager.ProxyManager()
+    layout, out = pxm.GetProxyName("layouts", scene.layout), f"{scene.name}_{{:06d}}.png"
+    path = f"os.path.join(options.ExtractsOutputDirectory, {out!r}.format(%s))"
+    return "\n".join([
+        "# " + "-" * 78,
+        "# The layout as one picture per step (ParaView's image extractors take a single view)",
+        "import os", "", "",
+        inspect.getsource(_save_layout_png).rstrip(), "", "",
+        "def catalyst_execute(info):",
+        f"    _save_layout_png(GetLayoutByName({layout!r}), {list(size)!r}, {path % 'info.timestep'})", "", "",
+        "if __name__ == '__main__':",
+        f"    _save_layout_png(GetLayoutByName({layout!r}), {list(size)!r}, {path % '0'})", ""])
+
+
 def _export(scene, path, ctx):
-    """Write the scene as a Catalyst script (ParaView's exporter), with a PNG extractor of its view.
+    """Write the scene as a Catalyst script (ParaView's exporter), with a PNG extractor of its view;
+    more than one cell: the script builds the views in their layout too and writes the layout as
+    one picture per step (ParaView's image extractors take a view, not a layout).
 
     Every rank builds the state (it reads the proxies only); rank 0 writes the file. The
     extractor exists only while the state is saved, so nothing is written now."""
     from paraview.detail.catalyst_export import _get_catalyst_state  # noqa: PLC0415 - only for an export
 
-    # not through CreateExtractor: in situ it also tags the extractor for Catalyst, which would
-    # still write it after it is deleted (and fail on its writer)
-    extractor = servermanager._getPyProxy(servermanager.vtkSMExtractsController().CreateExtractor(
-        scene.view.SMProxy, "PNG", f"{scene.name}:png"))
-    extractor.Writer.FileName = scene.name + "_{timestep:06d}.png"
-    extractor.Writer.ImageResolution = list(ctx.size)
+    layout = len(scene.views) > 1
+    extractors = [] if layout else [_export_png(scene.name, scene.view, ctx.size)]
     export = catalyst.Options()
     export.ExtractsOutputDirectory = f"postProcessing/{scene.name}"
-    for lut in scene.bars:  # a range the builder set each frame: the script rescales on its own
+    for lut, _ in scene.bars:  # a range the builder set each frame: the script rescales on its own
         lut.AutomaticRescaleRangeMode = "Grow and update every timestep"
     try:
-        state = _get_catalyst_state(servermanager._getPyProxy(export))
+        options = servermanager._getPyProxy(export)
+        state = _catalyst_state(options, scene.views) if layout else _get_catalyst_state(options)
     finally:
-        Delete(extractor)
+        for extractor in extractors:
+            Delete(extractor)
         Delete(export)
+    if layout:
+        state += "\n\n" + _layout_hook(scene, ctx.size)
     controller = vtkMultiProcessController.GetGlobalController()
     if controller is None or controller.GetLocalProcessId() == 0:
         with open(path, "w") as out:

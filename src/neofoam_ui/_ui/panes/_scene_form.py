@@ -18,6 +18,8 @@ __all__ = ()
 
 #: Properties that name a field of the solver.
 _FIELD_PROPS = ("field", "vectors")
+#: Properties set elsewhere than in the form: each cell's camera (the pane's camera buttons).
+_NOT_IN_FORM = ("cell_cameras",)
 #: An enum with at most this many values shows as buttons, else as a select.
 _BUTTONS = 5
 _SOLID = "(solid)"
@@ -67,7 +69,8 @@ def form(kind: str) -> list[dict[str, Any]]:
     """The form fields of node type ``kind``, in the model's order."""
     schema = _props_model(kind).model_json_schema()
     required = set(schema.get("required", []))
-    return [_field(name, prop, name in required) for name, prop in schema.get("properties", {}).items()]
+    return [_field(name, prop, name in required) for name, prop in schema.get("properties", {}).items()
+            if name not in _NOT_IN_FORM]
 
 
 def shown(fields: list[dict[str, Any]], props: dict[str, Any]) -> dict[str, Any]:

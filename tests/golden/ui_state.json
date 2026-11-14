@@ -31,6 +31,14 @@
   "fv_every": 1,
   "fv_field": null,
   "fv_fields": [],
+  "fv_grid": {
+   "cols": 1,
+   "names": [
+    "displays"
+   ],
+   "per_cell": false,
+   "rows": 1
+  },
   "fv_live": true,
   "fv_mode": "image",
   "fv_msg": "the field view starts once the solver context exists (after initialization)",
@@ -135,6 +143,7 @@
   "sc_new_name": "",
   "sc_rename": false,
   "scalars": [],
+  "se_cell_ms": {},
   "se_changes": 0,
   "se_errors": {},
   "se_fields": [],
@@ -177,6 +186,7 @@
   "nf_sc_save",
   "nf_se_add",
   "nf_se_apply",
+  "nf_se_arrange",
   "nf_se_delete",
   "nf_se_drop",
   "nf_se_prop",

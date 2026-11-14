@@ -126,19 +126,26 @@ class InSitu:
 
 
 def _capture(module: Any) -> Optional[bytes]:
-    """The pipeline's shown view (``shown_view``; another script: its first render view) as PNG,
-    composited over the ranks (collective); ``None`` off rank 0 or with no view to show."""
+    """The pipeline's shown layout (``shown_layout``: all its cells in one picture), else its shown
+    view (``shown_view``; another script: its first render view) as PNG, composited over the ranks
+    (collective: every rank renders each view, IceT composites it on rank 0); ``None`` off rank 0
+    or with no view to show."""
     from paraview import simple  # noqa: PLC0415 - on sys.path only once Catalyst is loaded
+    from paraview.modules.vtkRemotingViews import vtkSMSaveScreenshotProxy  # noqa: PLC0415
     from vtkmodules.vtkIOImage import vtkPNGWriter  # noqa: PLC0415
     from vtkmodules.vtkParallelCore import vtkMultiProcessController  # noqa: PLC0415
 
+    layout = getattr(module, "shown_layout", None) if module is not None else None
     if module is not None and hasattr(module, "shown_view"):
         view = module.shown_view
     else:
         view = next(iter(simple.GetRenderViews()), None)
-    if view is None:
+    if layout is not None:  # at the size the pipeline gave it: no magnification, fonts as set
+        image = vtkSMSaveScreenshotProxy.CaptureImage(layout.SMProxy, layout.SMProxy.GetSize())
+    elif view is not None:
+        image = view.CaptureWindow(1)
+    else:
         return None
-    image = view.CaptureWindow(1)
     controller = vtkMultiProcessController.GetGlobalController()
     if controller is not None and controller.GetLocalProcessId() > 0:
         return None

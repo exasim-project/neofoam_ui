@@ -3,15 +3,22 @@
 ``export <prefix> <scene file> <script>``: one frame of the polyMesh case (``T`` per cell,
 ``U`` = (T, 0, 0)) through the stepper's pipeline, writing the scene as a Catalyst script;
 prints the report's ``exported`` and ``error``. ``replay <prefix> <script> -``: the same frame
-through that script alone (its extracts go where its options say, under the working directory)."""
+through that script alone (its extracts go where its options say, under the working directory).
+Under ``mpirun`` every rank publishes the case's cells."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
-from neofoam_ui import catalyst
+if "OMPI_COMM_WORLD_SIZE" in os.environ:  # under mpirun: MPI from Catalyst's own mpi4py, before Catalyst
+    sys.path.append(os.path.join(sys.argv[2], "lib", f"python{sys.version_info.major}.{sys.version_info.minor}",
+                                 "site-packages"))
+    from mpi4py import MPI  # noqa: E402, F401
+
+from neofoam_ui import catalyst  # noqa: E402
 from neofoam_ui.geometry import polyhedral, read_polymesh
 
 CASE = Path(__file__).resolve().parents[1] / "scenes" / "cases" / "builder"
