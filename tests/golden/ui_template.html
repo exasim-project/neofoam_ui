@@ -1208,9 +1208,9 @@ data
 </VBtn>
 </span>
 </VBtnToggle>
-<VSelect :key="`w1015-${tts}`" title="the scene drawn (Scenes panel: new, save, …)" v-model="sc_current" density="compact" variant="outlined" :items="sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))" label="scene" hideDetails />
-<VSelect :key="`w1016-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
-<VSelect :key="`w1017-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
+<VSelect :key="`w1027-${tts}`" title="the scene drawn (Scenes panel: new, save, …)" v-model="sc_current" density="compact" variant="outlined" :items="sc_list.filter(s => !s.error).map(s => ({title: s.title + (s.unsaved ? ' ●' : ''), value: s.name}))" label="scene" hideDetails />
+<VSelect :key="`w1028-${tts}`" v-model="fv_field" density="compact" variant="outlined" :disabled="!fv_fields.length" :items="fv_fields" label="field" hideDetails />
+<VSelect :key="`w1029-${tts}`" v-show="fv_comps.length" v-model="fv_comp" density="compact" variant="outlined" :items="fv_comps" label="component" hideDetails />
 <VCheckbox style="flex: none;" title="update while running (off: only at pauses)" v-model="fv_live" label="live" density="compact" hideDetails />
 <VTextField v-model.number="fv_every" class="nf-num" title="a live frame at most every n time steps" v-show="fv_live" type="number" label="every n steps" density="compact" variant="outlined" hideDetails />
 <VTextField v-model.number="fv_secs" class="nf-num" title="and at least this many seconds apart" v-show="fv_live" type="number" label="≥ s apart" density="compact" variant="outlined" hideDetails />
@@ -1316,13 +1316,13 @@ Display
 View
 </div>
 </div>
-<div @dragover.prevent="" @drop.prevent="const k = $event.dataTransfer.getData('nf/node'); if (k) { const p = window.trame.refs.nf_se_editor.screenToFlowCoordinate({x: $event.clientX, y: $event.clientY}); trigger('nf_se_drop', [k, p.x, p.y]); }" class="nf-se-canvas">
-<node-editor :ref="(el) => trame.refs['nf_se_editor'] = el" :min-zoom="0.75" style="width: 100%; height: 100%;" :isValidConnection="(c) => c.source !== c.target && c.sourceHandle === c.targetHandle" @connect="trigger('trigger__N', [$event])" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('nf_se_select', [$event.node.id])" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="trigger('nf_se_select', [null])">
+<div @dragover.prevent="" @drop.prevent="const k = $event.dataTransfer.getData('nf/node'); if (k) { const p = window.trame.refs.nf_se_editor.screenToFlowCoordinate({x: $event.clientX, y: $event.clientY}); trigger('nf_se_drop', [k, p.x, p.y]); }" @contextmenu.prevent="" @keydown="if (['Delete', 'Backspace'].includes($event.key)) { $event.preventDefault(); trigger('nf_se_delete'); } else if ($event.key === 'Escape') { se_menu = null; }" class="nf-se-canvas" tabindex="0">
+<node-editor :ref="(el) => trame.refs['nf_se_editor'] = el" :min-zoom="0.75" :delete-key-code="null" style="width: 100%; height: 100%;" :isValidConnection="(c) => c.source !== c.target && c.sourceHandle === c.targetHandle" @connect="trigger('trigger__N', [$event])" @edgeClick="trigger('trigger__N', [$event.edge.id])" @edgeContextMenu="$event.event.preventDefault(); se_menu = true ? {kind: 'link', id: $event.edge.id, x: $event.event.clientX - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().left, y: $event.event.clientY - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().top} : null" @edgesChange="trigger('trigger__N', [$event])" @init="trigger('trigger__N')" @nodeClick="trigger('nf_se_select', [$event.node.id])" @nodeContextMenu="$event.event.preventDefault(); se_menu = $event.node.data.removable ? {kind: 'node', id: $event.node.id, x: $event.event.clientX - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().left, y: $event.event.clientY - $event.event.target.closest('.nf-se-canvas').getBoundingClientRect().top} : null" @nodeDragStop="trigger('trigger__N', [$event])" @nodesChange="trigger('trigger__N', [$event])" @paneClick="trigger('nf_se_select', [null])">
 <Background gap="16" size="1" patternColor="#c3c8d2" />
 <Controls :showInteractive="false" />
 <template v-slot:node-scene=props>
 <div :class="['nf-sn', props.data.role, { sel: props.id === se_sel, err: !!se_errors[props.id] }]">
-<Handle :class="props.data.takes" :id="props.data.takes" v-if="props.data.takes" position="left" type="target" />
+<Handle :class="[props.data.takes, { many: props.data.many }]" :id="props.data.takes" v-if="props.data.takes" position="left" type="target" />
 <Handle :class="props.data.gives" :id="props.data.gives" v-if="props.data.gives" position="right" type="source" />
 <div class="h">
 <span >
@@ -1335,6 +1335,14 @@ View
 {{ se_ms[props.id] }}
 </span>
 </div>
+<div class="p">
+<span >
+{{ props.data.takes_name }}
+</span>
+<span >
+{{ props.data.gives_name }}
+</span>
+</div>
 <div class="b" v-for="l in props.data.lines">
 {{ l }}
 </div>
@@ -1344,6 +1352,17 @@ View
 </div>
 </template>
 </node-editor>
+<div @contextmenu.prevent="se_menu = null" class="nf-se-menu-off" v-if="se_menu" @click="se_menu = null" />
+<div class="nf-se-menu" :style="{ left: se_menu.x + 'px', top: se_menu.y + 'px' }" v-if="se_menu">
+<div class="i del" @click="trigger(se_menu.kind === 'node' ? 'nf_se_remove_node' : 'nf_se_remove_link', [se_menu.id]); se_menu = null">
+<span >
+{{ se_menu.kind === 'node' ? 'Remove node' : 'Remove link' }}
+</span>
+<kbd >
+Del
+</kbd>
+</div>
+</div>
 </div>
 </div>
 <div class="nf-se-form" v-if="se_node">
@@ -1357,10 +1376,6 @@ View
 <span class="ml-4" style="opacity: .7">
 input {{ se_node.inputs.join(', ') || '—' }}
 </span>
-<VSpacer  />
-<VBtn size="x-small" variant="text" prependIcon="mdi-delete-outline" @click="trigger('nf_se_remove')">
-Remove node
-</VBtn>
 </div>
 <div class="err mb-1" v-if="se_errors[se_node.id]">
 {{ se_errors[se_node.id] }}
@@ -1376,7 +1391,7 @@ Remove node
 {{ c }}
 </VBtn>
 </VBtnToggle>
-<VSelect :key="`w988-${tts}`" style="max-width: 220px;" v-else v-model="se_form[f.name]" density="compact" variant="outlined" :items="f.items" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
+<VSelect :key="`w1000-${tts}`" style="max-width: 220px;" v-else v-model="se_form[f.name]" density="compact" variant="outlined" :items="f.items" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
 </template>
 <template v-else-if="f.kind === 'check'">
 <VCheckbox v-model="se_form[f.name]" density="compact" hideDetails @update:modelValue="trigger('nf_se_prop', [f.name, $event])" />
@@ -1614,7 +1629,7 @@ mdi-chart-line
 <span class="text-body-2 font-weight-medium">
 Post-processing tables
 </span>
-<VSelect :key="`w935-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
+<VSelect :key="`w941-${tts}`" class="nf-pt-sel" v-model="pt_sel" density="compact" variant="outlined" :disabled="!pt_names.length" multiple :items="pt_names" label="tables" chips closableChips hideDetails />
 <span class="nf-field-msg">
 {{ pt_msg }}
 </span>

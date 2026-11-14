@@ -6,7 +6,8 @@ A scene is checked when it is read (:func:`parse`, :func:`read_scenes`) and when
 gets it: a bad one raises :class:`SceneError` naming the node and the reason.
 
 Ports are typed: ``grid`` and the filters give *data*, a ``Display`` takes data and gives a
-*display*, the ``View`` takes displays. A filter and a display take exactly one input; a scene
+*display*, the ``View`` takes displays; each port has a name the editor shows (``takes_name``,
+``gives_name``). A filter and a display take exactly one input; a scene
 has one ``View`` and at most one ``grid``. Field properties are a field name or ``@field``
 (the pane's pick); components are ``mag``, ``0``–``2`` or ``@component``. Positions are 0–1 of
 the domain's extent along the axis (``auto``: the longest in-plane axis of a 2D case, else z).
@@ -65,6 +66,9 @@ class _Node(BaseModel):
     gives: ClassVar[Optional[Port]] = "data"
     #: Takes any number of inputs (else exactly one).
     many: ClassVar[bool] = False
+    #: The ports' names, as the editor shows them (``None`` where there is no port).
+    takes_name: ClassVar[Optional[str]] = "input"
+    gives_name: ClassVar[Optional[str]] = "output"
 
     id: FieldName
 
@@ -77,6 +81,8 @@ class GridNode(_Node):
     """The solver's cells with every cell field (one, shared by all scenes)."""
 
     takes: ClassVar[Optional[Port]] = None
+    takes_name: ClassVar[Optional[str]] = None
+    gives_name: ClassVar[Optional[str]] = "mesh"
     type: Literal["grid"]
     props: GridProps = GridProps()
 
@@ -212,6 +218,7 @@ class DisplayNode(_Node):
     """How its input is drawn: coloured by a field (map, range, log scale) or solid."""
 
     gives: ClassVar[Optional[Port]] = "display"
+    gives_name: ClassVar[Optional[str]] = "to view"
     type: Literal["Display"]
     props: DisplayProps = DisplayProps()
 
@@ -226,7 +233,9 @@ class ViewNode(_Node):
 
     takes: ClassVar[Optional[Port]] = "display"
     gives: ClassVar[Optional[Port]] = None
+    gives_name: ClassVar[Optional[str]] = None
     many: ClassVar[bool] = True
+    takes_name: ClassVar[Optional[str]] = "displays"
     type: Literal["View"]
     props: ViewProps = ViewProps()
 

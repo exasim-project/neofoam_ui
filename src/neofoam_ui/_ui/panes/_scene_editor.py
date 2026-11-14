@@ -4,8 +4,11 @@ node's property form; Apply shows the draft, Revert drops it.
 A palette entry clicked adds its node after the selected one, linked when the ports fit; one
 dragged onto the canvas is placed unlinked. Ports are typed (data → Display → View): a link
 between ports of different types is refused while dragging, and a node that takes one input
-keeps the newest. Each node shows its last execute time and, red, why it failed (the solver's
-build, or the check at Apply). Drafts are kept per scene until Apply or Revert.
+keeps the newest; the ports are named by the node models. A right-click on a node (not ``grid``
+or the View) or a link offers to remove it, as Del / Backspace do on the selected one: removals,
+like every edit, change the draft on the server (Vue Flow's own delete is off). Each node shows
+its last execute time and, red, why it failed (the solver's build, or the check at Apply).
+Drafts are kept per scene until Apply or Revert.
 """
 
 from __future__ import annotations
@@ -29,9 +32,11 @@ __all__ = ()
 _PALETTE = [("source", ["grid"]),
             ("filters", ["Surface", "Slice", "Clip", "Contour", "Threshold", "Calculator", "Glyph", "StreamTracer"]),
             ("output", ["Display", "View"])]
-#: Each node type's ports: what it takes and gives (``None``: no such port), and whether it takes many.
-_PORTS = {node.model_fields["type"].annotation.__args__[0]: (node.takes, node.gives, node.many)
-          for node in AnyNode.__origin__.__args__}  # type: ignore[attr-defined]
+#: Each node type's model: its ports (``takes``, ``gives``, ``many``) and their names.
+_PORTS: dict[str, Any] = {node.model_fields["type"].annotation.__args__[0]: node
+                          for node in AnyNode.__origin__.__args__}  # type: ignore[attr-defined]
+#: Nodes the editor does not remove (no menu, Del does nothing): the scene's source and its View.
+_FIXED = ("grid", "View")
 _ROLE = {"grid": "source", "Display": "display", "View": "view"}
 #: Layout of a scene without one: layers by depth, this far apart.
 _DX, _DY = 200, 110
@@ -51,20 +56,32 @@ _EDITOR_CSS = r"""
 .nf-se-pal .e:hover { border-color: rgb(var(--v-theme-primary)); }
 .nf-se-pal .e.off { opacity: .4; cursor: not-allowed; }
 .nf-se-canvas { flex: 1 1 auto; min-width: 0; position: relative; }
-.nf-sn { min-width: 132px; border: 1.5px solid rgba(128,128,128,.5); border-radius: 6px; background: #fff;
+.nf-sn { min-width: 140px; border: 1.5px solid rgba(128,128,128,.5); border-radius: 6px; background: #fff;
   font-size: 11px; text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .nf-sn.sel { box-shadow: 0 0 0 2px rgba(var(--v-theme-primary), .55); }
 .nf-sn.err { border-color: rgb(var(--v-theme-error)); }
-.nf-sn .h { padding: 3px 8px; font-weight: 600; display: flex; gap: 6px; align-items: baseline;
-  border-bottom: 1px solid rgba(128,128,128,.2); }
+.nf-sn .h { height: 24px; padding: 0 8px; font-weight: 600; display: flex; gap: 6px; align-items: center;
+  white-space: nowrap; border-bottom: 1px solid rgba(128,128,128,.2); border-radius: 5px 5px 0 0; }
 .nf-sn .h .id { font-weight: 400; opacity: .55; }
 .nf-sn .h .ms { margin-left: auto; font-weight: 400; opacity: .6; font-family: monospace; }
 .nf-sn .b { padding: 3px 8px; font-family: monospace; opacity: .8; white-space: nowrap; }
 .nf-sn .m { padding: 2px 8px 4px; color: rgb(var(--v-theme-error)); max-width: 220px; white-space: normal; }
 .nf-sn.source .h { background: #e6f4ea; } .nf-sn.filter .h { background: #e8f0fe; }
 .nf-sn.display .h { background: #f3e8fd; } .nf-sn.view .h { background: #fef3e2; }
-.nf-sn .vue-flow__handle { width: 9px; height: 9px; }
+.nf-sn .p { height: 22px; padding: 0 10px; display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; font-size: 10px; opacity: .7; border-bottom: 1px dashed rgba(128,128,128,.25); }
+.nf-sn .vue-flow__handle { opacity: 1; width: 12px; height: 12px; top: 35px; border: 2px solid #fff; }
+.nf-sn .vue-flow__handle.many { height: 18px; border-radius: 3px; }
 .nf-sn .vue-flow__handle.data { background: #1a73e8; } .nf-sn .vue-flow__handle.display { background: #9334e6; }
+.nf-se-canvas:focus { outline: none; }
+.nf-se-canvas .vue-flow__edge.selected .vue-flow__edge-path { stroke: rgb(var(--v-theme-primary)); stroke-width: 3; }
+.nf-se-menu-off { position: absolute; inset: 0; z-index: 10; }
+.nf-se-menu { position: absolute; z-index: 11; min-width: 150px; padding: 4px 0; font-size: 12px; border-radius: 6px;
+  background: rgb(var(--v-theme-surface)); border: 1px solid rgba(128,128,128,.35); box-shadow: 0 6px 18px rgba(0,0,0,.16); }
+.nf-se-menu .i { padding: 4px 12px; display: flex; justify-content: space-between; gap: 16px; cursor: pointer; }
+.nf-se-menu .i:hover { background: rgba(128,128,128,.12); }
+.nf-se-menu .i.del { color: rgb(var(--v-theme-error)); }
+.nf-se-menu kbd { font-family: monospace; font-size: 10px; opacity: .6; }
 .nf-se-form { flex: 0 0 auto; max-height: 45%; overflow: auto; border-top: 1px solid rgba(128,128,128,.25);
   padding: 6px 12px; font-size: 13px; }
 .nf-se-form .row { display: flex; align-items: center; gap: 10px; min-height: 34px; }
@@ -155,7 +172,8 @@ class _SceneEditorPane(BasePane):
         scenes.listeners.append(self.refresh)
         for name, action in (("nf_se_prop", self.prop), ("nf_se_add", self.add), ("nf_se_drop", self.drop), ("nf_se_select", self.select),
                              ("nf_se_apply", self.apply), ("nf_se_revert", self.revert),
-                             ("nf_se_remove", self.remove)):
+                             ("nf_se_remove_node", self.remove_node), ("nf_se_remove_link", self.remove_link),
+                             ("nf_se_delete", self.delete)):
             ctx.server.trigger(name)(action)
 
     # -- pane ---------------------------------------------------------------------------
@@ -164,6 +182,8 @@ class _SceneEditorPane(BasePane):
         s = self.ctx.state
         s.se_on = bool(s.se_on)
         s.se_sel = None
+        s.se_link = None
+        s.se_menu = None
         s.se_fields = []
         s.se_form = {}
         s.se_errors = {}
@@ -176,6 +196,7 @@ class _SceneEditorPane(BasePane):
         self._pushed = None
 
     def build(self) -> None:
+        self.ctx.state.client_only("se_menu")  # an open menu belongs to its browser
         _editor_view(self)
 
     def layout_changed(self) -> None:
@@ -199,6 +220,8 @@ class _SceneEditorPane(BasePane):
             return
         if s.se_sel and s.se_sel not in {n["id"] for n in graph.get("nodes", [])}:
             s.se_sel = None
+        if s.se_link and s.se_link not in {_link_id(*e) for e in graph.get("edges", [])}:
+            s.se_link = None
         self._push(graph)
         self._pushed = key
         self._form()
@@ -208,13 +231,16 @@ class _SceneEditorPane(BasePane):
         auto = _auto_layout(graph) if any(n["id"] not in layout for n in graph["nodes"]) else {}
         nodes = []
         for node in graph["nodes"]:
-            takes, gives, _ = _PORTS[node["type"]]
+            model = _PORTS[node["type"]]
             x, y = layout.get(node["id"]) or auto.get(node["id"], [0, 0])
             nodes.append({"id": node["id"], "type": "scene", "position": {"x": x, "y": y},
                           "data": {"kind": node["type"], "role": _ROLE.get(node["type"], "filter"),
-                                   "takes": takes, "gives": gives, "lines": _summary(node)}})
-        edges = [{"id": f"{a}->{b}", "source": a, "target": b, "sourceHandle": _PORTS[_type(graph, a)][1],
-                  "targetHandle": _PORTS[_type(graph, b)][0], "type": "default"}
+                                   "takes": model.takes, "gives": model.gives, "many": model.many,
+                                   "takes_name": model.takes_name, "gives_name": model.gives_name,
+                                   "removable": node["type"] not in _FIXED, "lines": _summary(node)}})
+        link = self.ctx.state.se_link
+        edges = [{"id": _link_id(a, b), "source": a, "target": b, "sourceHandle": _PORTS[_type(graph, a)].gives,
+                  "targetHandle": _PORTS[_type(graph, b)].takes, "type": "default", "selected": _link_id(a, b) == link}
                  for a, b in graph["edges"]]
         self._pushing = True
         try:
@@ -276,7 +302,7 @@ class _SceneEditorPane(BasePane):
         while any(abs(p[0] - x) < _DX / 2 and abs(p[1] - y) < _DY / 2 for p in layout.values()):
             y += _DY  # not on top of another node
         node_id = self._add_node(graph, kind, [x, y])
-        if after and _PORTS[_type(graph, after)][1] == _PORTS[kind][0] and _PORTS[kind][0] is not None:
+        if after and _PORTS[_type(graph, after)].gives == _PORTS[kind].takes and _PORTS[kind].takes is not None:
             graph["edges"].append([after, node_id])
             view = next((n["id"] for n in graph["nodes"] if n["type"] == "View"), None)
             if kind == "Display" and view is not None:  # shown at once: the scene's one View
@@ -296,19 +322,43 @@ class _SceneEditorPane(BasePane):
         graph.setdefault("layout", {})[node_id] = at
         return node_id
 
-    def remove(self) -> None:
-        """Remove the selected node and its links."""
-        s = self.ctx.state
+    def remove_node(self, node_id: str) -> None:
+        """Remove a node and its links from the draft (not ``grid`` or the View)."""
         graph = self._draft()
-        graph["nodes"] = [n for n in graph["nodes"] if n["id"] != s.se_sel]
-        graph["edges"] = [e for e in graph["edges"] if s.se_sel not in e]
-        graph.get("layout", {}).pop(s.se_sel, None)
-        s.se_sel = None
+        if _type(graph, node_id) in _FIXED:
+            return
+        graph["nodes"] = [n for n in graph["nodes"] if n["id"] != node_id]
+        graph["edges"] = [e for e in graph["edges"] if node_id not in e]
+        graph.get("layout", {}).pop(node_id, None)
+        if self.ctx.state.se_sel == node_id:
+            self.ctx.state.se_sel = None
         self._edit(graph, repush=True)
+
+    def remove_link(self, link_id: str) -> None:
+        """Remove a link (``source->target``) from the draft."""
+        graph = self._draft()
+        graph["edges"] = [e for e in graph["edges"] if _link_id(*e) != link_id]
+        if self.ctx.state.se_link == link_id:
+            self.ctx.state.se_link = None
+        self._edit(graph, repush=True)
+
+    def delete(self) -> None:
+        """Del / Backspace on the canvas: remove the selected link, else the selected node."""
+        s = self.ctx.state
+        if s.se_link:
+            self.remove_link(s.se_link)
+        elif s.se_sel:
+            self.remove_node(s.se_sel)
 
     def select(self, node_id: Optional[str]) -> None:
         self.ctx.state.se_sel = node_id
+        self.ctx.state.se_link = None
         self._form()
+
+    def select_link(self, link_id: str) -> None:
+        """A click on a link selects it (and no node)."""
+        self.select(None)
+        self.ctx.state.se_link = link_id
 
     def _form(self) -> None:
         """The selected node's form and its values."""
@@ -379,6 +429,10 @@ class _SceneEditorPane(BasePane):
                    for node, ids in proxies.items() if any(p in ms for p in ids)}
 
 
+def _link_id(source: str, target: str) -> str:
+    return f"{source}->{target}"
+
+
 def _type(graph: dict[str, Any], node_id: str) -> str:
     return next(n["type"] for n in graph["nodes"] if n["id"] == node_id)
 
@@ -389,7 +443,7 @@ def _one_input(links: list[tuple[str, str]], kinds: dict[str, str]) -> list[tupl
     for link in links:
         if link in out:
             continue
-        if not _PORTS[kinds[link[1]]][2]:
+        if not _PORTS[kinds[link[1]]].many:
             out = [old for old in out if old[1] != link[1]]
         out.append(link)
     return out
@@ -416,12 +470,33 @@ _DROP = ("const k = $event.dataTransfer.getData('nf/node'); if (k) {"
          " trigger('nf_se_drop', [k, p.x, p.y]); }")
 
 
+def _open_menu(item: str, kind: str, when: str = "true") -> str:
+    """Right-click on a node or a link (``$event.node`` / ``$event.edge``): its menu at the pointer, ``when`` true.
+
+    The position is relative to the canvas: a dock pane is transformed, so ``position: fixed`` would be off."""
+    at = "$event.event.target.closest('.nf-se-canvas').getBoundingClientRect()"
+    return (f"$event.event.preventDefault(); se_menu = {when} ? {{kind: '{kind}', id: $event.{item}.id,"
+            f" x: $event.event.clientX - {at}.left, y: $event.event.clientY - {at}.top}} : null")
+
+
+#: Keys on the canvas (the form's inputs are outside it): Del / Backspace remove through the server.
+_KEYS = ("if (['Delete', 'Backspace'].includes($event.key)) { $event.preventDefault(); trigger('nf_se_delete'); }"
+         " else if ($event.key === 'Escape') { se_menu = null; }")
+
+
 def _canvas(pane: _SceneEditorPane) -> None:
-    with html.Div(classes="nf-se-canvas", raw_attrs=['@dragover.prevent=""', f'@drop.prevent="{_DROP}"']):
+    with html.Div(classes="nf-se-canvas", tabindex="0",
+                  raw_attrs=['@dragover.prevent=""', f'@drop.prevent="{_DROP}"', '@contextmenu.prevent=""',
+                             f'@keydown="{_KEYS}"']):
         with NodeEditor(ref="nf_se_editor", style="width: 100%; height: 100%;", is_valid_connection=(_VALID_LINK,),
-                        node_click=(pane.select, "[$event.node.id]"), pane_click=(pane.select, "[null]")) as editor:
+                        node_click=(pane.select, "[$event.node.id]"), pane_click=(pane.select, "[null]"),
+                        edge_click=(pane.select_link, "[$event.edge.id]"),
+                        node_context_menu=_open_menu("node", "node", when="$event.node.data.removable"),  # not grid, View
+                        edge_context_menu=_open_menu("edge", "link")) as editor:
             pane.editor = editor
             editor._attributes["min_zoom"] = f':min-zoom="{_MIN_ZOOM}"'
+            # Vue Flow's own Del / Backspace would remove in the browser only: the server removes.
+            editor._attributes["delete_key_code"] = ':delete-key-code="null"'
             editor.graph_change = pane.on_graph_change
             Background(gap=16, size=1, pattern_color="#c3c8d2")
             Controls(show_interactive=False)
@@ -429,15 +504,30 @@ def _canvas(pane: _SceneEditorPane) -> None:
                 with html.Div(classes=("['nf-sn', props.data.role, { sel: props.id === se_sel,"
                                        " err: !!se_errors[props.id] }]",)):
                     Handle(position="left", type="target", id=("props.data.takes",), v_if="props.data.takes",
-                           classes=("props.data.takes",))
+                           classes=("[props.data.takes, { many: props.data.many }]",))
                     Handle(position="right", type="source", id=("props.data.gives",), v_if="props.data.gives",
                            classes=("props.data.gives",))
                     with html.Div(classes="h"):
                         html.Span("{{ props.data.kind }}")
                         html.Span("{{ props.id }}", classes="id")
                         html.Span("{{ se_ms[props.id] }}", classes="ms", v_if="se_ms[props.id]")
+                    with html.Div(classes="p"):
+                        html.Span("{{ props.data.takes_name }}")
+                        html.Span("{{ props.data.gives_name }}")
                     html.Div("{{ l }}", v_for="l in props.data.lines", classes="b")
                     html.Div("{{ se_errors[props.id] }}", classes="m", v_if="se_errors[props.id]")
+        _menu()
+
+
+def _menu() -> None:
+    """The open right-click menu (``se_menu``); a click anywhere else closes it."""
+    html.Div(v_if="se_menu", classes="nf-se-menu-off", click="se_menu = null",
+             raw_attrs=['@contextmenu.prevent="se_menu = null"'])
+    with html.Div(v_if="se_menu", classes="nf-se-menu", style=("{ left: se_menu.x + 'px', top: se_menu.y + 'px' }",)):
+        with html.Div(classes="i del", click="trigger(se_menu.kind === 'node' ? 'nf_se_remove_node'"
+                                             " : 'nf_se_remove_link', [se_menu.id]); se_menu = null"):
+            html.Span("{{ se_menu.kind === 'node' ? 'Remove node' : 'Remove link' }}")
+            html.Kbd("Del")
 
 
 #: Send a form value (the form shows its own copy, ``se_form``; the server sets the draft).
@@ -480,9 +570,6 @@ def _form() -> None:
             html.B("{{ se_node.type }}")
             html.Span("· {{ se_node.id }}", style="opacity: .6")
             html.Span("input {{ se_node.inputs.join(', ') || '—' }}", classes="ml-4", style="opacity: .7")
-            v3.VSpacer()
-            v3.VBtn("Remove node", size="x-small", variant="text", prepend_icon="mdi-delete-outline",
-                    click="trigger('nf_se_remove')")
         html.Div("{{ se_errors[se_node.id] }}", classes="err mb-1", v_if="se_errors[se_node.id]")
         with html.Div(classes="row", v_for="f in se_fields", key="f.name"):
             html.Span("{{ f.label }}{{ f.required ? ' *' : '' }}", classes="k")

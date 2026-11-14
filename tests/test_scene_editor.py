@@ -1,6 +1,7 @@
 """The scene editor (``_ui/panes/_scene_editor.py``, forms ``_scene_form.py``): the canvas of the
 current scene, adding nodes (click: after the selected one, linked; drop: unlinked), the form from
-the pydantic schema, drafts kept per scene until Apply / Revert, a refused Apply naming the node,
+the pydantic schema, removing nodes and links (right-click, Del) in the draft, port names from the
+node models, drafts kept per scene until Apply / Revert, a refused Apply naming the node,
 and what frames tell the nodes (build errors, times). Runs on the app as the page drives it, on a
 copy of a case; the typed-link check is the canvas's own JavaScript, run with Node.js."""
 
@@ -73,8 +74,7 @@ def test_the_layout_has_columns_by_role(tmp_path):
 
 def test_removing_a_node_leaves_the_others_where_they_are(case):
     _, pane, _ = _editor("se_layout_kept", case)
-    pane.select("s1")
-    pane.remove()
+    pane.remove_node("s1")
     assert _positions(pane) == {"grid": [0, 0], "d1": [400, 0], "view": [600, 0]}
 
 
@@ -182,9 +182,77 @@ def test_editing_field_edits_a_copy(case):
 
 def test_remove_takes_the_node_and_its_links(case):
     _, pane, _ = _editor("se_remove", case)
-    pane.select("d1")
-    pane.remove()
+    pane.remove_node("d1")
     assert pane.scenes.entry().draft["edges"] == [["grid", "s1"]]
+
+
+def test_remove_link_takes_only_that_link(case):
+    _, pane, _ = _editor("se_remove_link", case)
+    pane.remove_link("s1->d1")
+    assert pane.scenes.entry().draft["edges"] == [["grid", "s1"], ["d1", "view"]]
+
+
+def test_a_removal_shows_on_the_canvas(case):
+    """The server removes, then pushes the draft: the canvas holds what the draft holds."""
+    _, pane, _ = _editor("se_remove_canvas", case)
+    pane.remove_node("s1")
+    assert _canvas(pane) == ({"grid": "grid", "d1": "Display", "view": "View"}, [("d1", "view", "display", "display")])
+
+
+def test_delete_removes_the_selected_node(case):
+    _, pane, _ = _editor("se_delete_node", case)
+    pane.select("s1")
+    pane.delete()
+    assert [n["id"] for n in pane.scenes.entry().draft["nodes"]] == ["grid", "d1", "view"]
+
+
+def test_delete_removes_the_selected_link(case):
+    app, pane, _ = _editor("se_delete_link", case)
+    pane.select_link("grid->s1")
+    pane.delete()
+    assert pane.scenes.entry().draft["edges"] == [["s1", "d1"], ["d1", "view"]] and app.state.se_link is None
+
+
+def test_the_selected_link_stays_selected_when_the_canvas_is_redrawn(case):
+    _, pane, _ = _editor("se_link_selected", case)
+    pane.select_link("s1->d1")
+    pane.remove_link("grid->s1")
+    assert [e["id"] for e in pane.editor.graph["edges"] if e["selected"]] == ["s1->d1"]
+
+
+def test_revert_brings_a_removed_node_back(case):
+    _, pane, _ = _editor("se_remove_revert", case)
+    pane.remove_node("s1")
+    pane.revert()
+    assert _canvas(pane) == ({"grid": "grid", "s1": "Slice", "d1": "Display", "view": "View"},
+                             [("d1", "view", "display", "display"), ("grid", "s1", "data", "data"),
+                              ("s1", "d1", "data", "data")])
+
+
+@pytest.mark.parametrize("node", ["grid", "view"])
+def test_grid_and_view_are_not_removed(case, node):
+    _, pane, _ = _editor(f"se_fixed_{node}", case)
+    pane.select(node)
+    pane.delete()
+    assert pane.scenes.entry().draft is None
+
+
+def test_only_removable_nodes_offer_a_menu(case):
+    _, pane, _ = _editor("se_removable", case)
+    assert {n["id"]: n["data"]["removable"] for n in pane.editor.graph["nodes"]} == \
+        {"grid": False, "s1": True, "d1": True, "view": False}
+
+
+def test_the_ports_are_named_by_the_node_models(case):
+    _, pane, _ = _editor("se_port_names", case)
+    assert {n["id"]: (n["data"]["takes_name"], n["data"]["gives_name"]) for n in pane.editor.graph["nodes"]} == \
+        {"grid": (None, "mesh"), "s1": ("input", "output"), "d1": ("input", "to view"), "view": ("displays", None)}
+
+
+def test_vue_flows_own_delete_is_off(case):
+    """Its Backspace removed a node in the browser only and blanked the canvas; the server removes now."""
+    _, pane, _ = _editor("se_no_vue_delete", case)
+    assert pane.editor._attributes["delete_key_code"] == ':delete-key-code="null"'
 
 
 def test_a_build_error_marks_its_node(case):
