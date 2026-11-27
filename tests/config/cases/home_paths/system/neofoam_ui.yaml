@@ -1,0 +1,8 @@
+# ~ expands in path values; $VARS and relative paths stay as written
+worker:
+  python: ~/neofoam/.venv/bin/python
+  mpirun: ~/bin/mpirun
+catalyst:
+  prefix: ~/catalyst
+  script: $PIPELINES/mine.py
+  out: postProcessing/mine

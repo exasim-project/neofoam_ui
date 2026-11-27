@@ -5,31 +5,58 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "neofoam_ui"
 version = "0.1.0"
-description = "trame UI plugin for NeoFOAM: step through the solver DAG like an activity simulation"
+description = "trame UIs for NeoFOAM: the case wizard and a DAG stepper that steps through a solver run"
 authors = [{ name = "Henning Scheufler", email = "henning.scheufler@web.de" }]
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "click>=8",
+    "typer",
+    "pydantic>=2",
+    "pyyaml>=6",
     "trame>=3.12,<4",
     "trame-vuetify>=3.0",
     "trame-flow>=2.2.2",
     "trame-plotly>=3.0",
     "trame-dockview>=2.0.1",
+    "trame-vtk>=2.8",
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+# The AI prompt-fill of the case wizard and `neofoam agent fill`: an OpenAI-compatible
+# client (local Ollama, OpenAI-style endpoints) plus the Anthropic backend for hosted
+# Claude models. The wizard and `neofoam agent fill --no-llm` work without it.
+agent = ["pydantic-ai-slim[openai,anthropic]>=0.0.40"]
+# tests/wizard/test_browser_forms.py (opt-in, `-m browser`); the browser itself comes
+# from `playwright install chromium`. jsonschema backs the schema-parity tests.
+test = ["pytest", "playwright", "jsonschema"]
+
+# neofoam itself is not listed: it is a scikit-build source build (it ships pybFoam),
+# installed into the same environment. The case wizard and the agent import it; the
+# DAG stepper does not (its solver runs in a worker process with its own interpreter).
 
 [project.scripts]
 neofoam-ui = "neofoam_ui.app:main"
 
+# `neofoam ui wizard|run` and `neofoam agent fill` (neofoam.core.entry_points).
+[project.entry-points."neofoam.cli"]
+ui = "neofoam_ui.cli:app"
+agent = "neofoam_ui.agent.cli:app"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# The JSONForms Vue bundle (Vite-built, checked in) the case wizard serves.
+"neofoam_ui.wizard.jsonforms_module" = ["static/*.js", "static/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # the helper solvers the tests import (worker processes get them on their own PYTHONPATH)
 pythonpath = ["tests/helpers"]
+markers = [
+    "browser: drives the wizard in headless Chromium; opt-in, select with -m browser",
+]
 
 [tool.ruff.lint]
 # Imports at the top of the module; the few that cannot be (a dependency only the solver's

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "title": "Three displays, two bars",
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "surf", "type": "Surface"},
+    {"id": "d1", "type": "Display", "props": {"field": "U", "component": "mag"}},
+    {"id": "s1", "type": "Slice", "props": {"axis": "y", "position": 0.5}},
+    {"id": "d2", "type": "Display", "props": {"field": "U", "component": "0", "opacity": 0.5}},
+    {"id": "d3", "type": "Display", "props": {"field": "T", "bar": false}},
+    {"id": "view", "type": "View"}
+  ],
+  "edges": [["grid", "surf"], ["surf", "d1"], ["d1", "view"], ["grid", "s1"], ["s1", "d2"], ["d2", "view"],
+            ["s1", "d3"], ["d3", "view"]]
+}

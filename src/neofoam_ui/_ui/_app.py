@@ -24,8 +24,8 @@ from neofoam_ui._ui._worker_link import _WorkerLink
 from neofoam_ui._ui.panes._dag import _DagPane
 from neofoam_ui._ui.panes._field import _FieldPane
 from neofoam_ui._ui.panes._plots import _PlotsPane
+from neofoam_ui._ui.panes._scene_editor import _SceneEditorPane
 from neofoam_ui.extensions import ExtensionRegistry, Pane
-from neofoam_ui.protocol import CATALYST_ENV
 
 __all__ = ()
 
@@ -50,11 +50,11 @@ class StepperApp:
         self.wait_ui = wait_ui
         #: MPI ranks; > 1 starts the worker under ``mpirun`` (see neofoam_ui.parallel).
         self.np = np
-        #: The worker: its interpreter (e.g. a NeoFOAM venv), case, Catalyst prefix, rank 0's address.
+        #: The worker: its interpreter (e.g. a NeoFOAM venv), case, Catalyst prefix (``None``: the
+        #: worker's config files), rank 0's address.
         self.link = _WorkerLink(solver_spec, case, python or sys.executable, np, shlex.split(mpirun),
-                                catalyst or os.environ.get(CATALYST_ENV), sync_host)
+                                catalyst, sync_host)
         self.link.bind(self._receive, self._on_stderr, self._on_exit)
-        self.server.enable_module({"serve": {"insitu": self.link.insitu_dir}})
         self.model = _RunModel()
         self.pusher = _Pusher(self.state)
         self._restarting = False
@@ -62,7 +62,9 @@ class StepperApp:
         registry = registry if registry is not None else ExtensionRegistry()
         registry.load_entry_points()
         self.dag = _DagPane(self)
-        self.panes: list[Pane] = [self.dag, _FieldPane(self), _PlotsPane(self)]
+        field = _FieldPane(self)
+        self.link.data_url = field.data_url
+        self.panes: list[Pane] = [self.dag, field, _PlotsPane(self), _SceneEditorPane(self, field.scenes)]
         self.panes += [factory(self) for factory in registry.panes]
         #: The panels of the layout (built with the page, :mod:`neofoam_ui._ui._panels`).
         self.panels: list[Any] = []
@@ -91,6 +93,11 @@ class StepperApp:
         return next(p for p in self.panes if p.name == name)
 
     @property
+    def case(self) -> str:
+        """The case directory (the worker's working directory)."""
+        return os.path.abspath(self.link.case or ".")
+
+    @property
     def proc(self) -> Any:
         """The worker process (``None`` while there is none)."""
         return self.link.proc
@@ -98,16 +105,6 @@ class StepperApp:
     @proc.setter
     def proc(self, proc: Any) -> None:
         self.link.proc = proc
-
-    @property
-    def insitu_dir(self) -> str:
-        """Served as ``insitu/``: one directory of in-situ images per run."""
-        return self.link.insitu_dir
-
-    @property
-    def run_dir(self) -> str:
-        """The current run's directory below :attr:`insitu_dir` (``""`` without Catalyst)."""
-        return self.link.run_dir
 
     def send(self, cmd: dict[str, Any]) -> None:
         self.link.send(cmd)

@@ -56,8 +56,8 @@ class PaneContext(Protocol):
     np: int
 
     @property
-    def run_dir(self) -> str:
-        """The current run's directory below the served ``insitu/`` (its images)."""
+    def case(self) -> str:
+        """The case directory (the worker runs there)."""
 
     def send(self, cmd: dict[str, Any]) -> None:
         """A command to the worker (see :mod:`neofoam_ui.worker`); dropped without a worker."""

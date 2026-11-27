@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "cut", "type": "Slice", "props": {"axis": "x", "position": 0.6}},
+    {"id": "d1", "type": "Display"},
+    {"id": "view", "type": "View"}
+  ],
+  "edges": [["grid", "cut"], ["cut", "d1"], ["d1", "view"]]
+}

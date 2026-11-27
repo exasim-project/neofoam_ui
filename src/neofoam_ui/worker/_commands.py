@@ -123,7 +123,16 @@ def _step(w: _Worker, cmd: dict[str, Any]) -> None:
 def _view(w: _Worker, cmd: dict[str, Any]) -> None:
     # Takes effect at the next live frame of a run; the queued command renders it
     # right away when paused (and is a no-op after a run already showed it).
-    w.session.request_view(cmd.get("field"), str(cmd.get("component", "mag")), bool(cmd.get("on", True)))
+    w.session.set_view_options({str(k): str(v) for k, v in (cmd.get("options") or {}).items()})
+    w.session.request_view(cmd.get("field"), str(cmd.get("component", "mag")), bool(cmd.get("on", True)),
+                           str(cmd.get("mode", "image")))
+    w.queue.put({"cmd": "view"})
+
+
+@_command("export")
+def _export(w: _Worker, cmd: dict[str, Any]) -> None:
+    # Written by the next frame: at a pause the queued view renders it now.
+    w.session.export_view(str(cmd["path"]))
     w.queue.put({"cmd": "view"})
 
 

@@ -2,7 +2,7 @@
 trame state and template the browser binds to, and the message trace of a session.
 
 The golden files in ``tests/golden`` were recorded before the refactor; regenerate them
-(``NEOFOAM_UI_REGOLD=1 pytest tests/test_contracts.py``) only for an intended change.
+(``NEOFOAM_TEST_REGOLD=1 pytest tests/test_contracts.py``) only for an intended change.
 """
 
 import importlib
@@ -25,7 +25,7 @@ from neofoam_ui.toy.heat1d import Heat1D
 
 GOLDEN = Path(__file__).parent / "golden"
 SRC = Path(__file__).resolve().parents[1] / "src"
-REGOLD = bool(os.environ.get("NEOFOAM_UI_REGOLD"))
+REGOLD = bool(os.environ.get("NEOFOAM_TEST_REGOLD"))
 
 
 def _golden(name: str, value: str) -> str:
@@ -158,24 +158,32 @@ PUBLIC = {
                           "MeshProvider", "Mode", "Op", "PassControl", "Peers", "PointMapping", "ProgramContext", "Region", "RegionProvider", "RenderBackend",
                           "Renderer", "ResultObserver", "SelfDrivingSolver", "Session", "Solver",
                           "ThreadedProgram", "UNTRACKED", "ViewFieldProvider", "assign_ids", "topological_order"],
-    "neofoam_ui.protocol": ["CATALYST_ENV", "CATALYST_LIVE_ENV", "CATALYST_OUT_ENV", "CATALYST_SCRIPT_ENV",
-                            "COMMANDS", "DELAY_ENV", "LOSSY", "MESSAGES", "RANK_OPS", "SYNC_ENV",
-                            "UI_URGENT", "WAIT_ENV", "WORKER_URGENT"],
-    "neofoam_ui.app": ["StepperApp", "main", "parse_args"],
+    "neofoam_ui.protocol": ["COMMANDS", "LOSSY", "MESSAGES", "RANK_OPS", "UI_URGENT", "WORKER_URGENT"],
+    "neofoam_ui.config": ["CatalystConfig", "Config", "UiConfig", "WorkerConfig", "load_config"],
+    "neofoam_ui.app": ["Launch", "StepperApp", "main", "parse_args"],
+    "neofoam_ui.cli": ["app"],
     "neofoam_ui.extensions": ["ENTRY_POINT_GROUP", "BasePane", "ExtensionRegistry", "Pane", "PaneContext",
                               "PaneToggle"],
     "neofoam_ui.worker": ["load_solver", "main"],
-    "neofoam_ui.parallel": ["SYNC_ENV", "rank_info"],
-    "neofoam_ui.catalyst": ["ENV", "FrameDriver", "LIVE_ENV", "OUT_ENV", "SCRIPT_ENV", "InSitu", "configured",
-                            "custom_script", "frame_driver", "set_frame_driver"],
+    "neofoam_ui.parallel": ["rank_info"],
+    "neofoam_ui.catalyst": ["FrameDriver", "InSitu", "configured", "custom_script", "frame_driver",
+                            "set_frame_driver", "settings", "use"],
     "neofoam_ui.geometry": ["cell_centres_geometry", "cell_count", "polyhedral", "read_polymesh"],
     "neofoam_ui.pptables": ["NodeDescriber", "describe_table", "observe", "register_describer", "rows_message"],
     "neofoam_ui.adapters": [],
     "neofoam_ui.adapters.neofoam": ["ObservedNeoFoamSolver", "incompressible_fluid", "multi_run",
                                     "neofoam_solver", "register_insitu"],
+    "neofoam_ui.scenes": ["FIELD", "SCENES_DIR", "camera_fit", "cell_of", "cells", "field_graph", "inputs", "ordered",
+                          "shape"],
+    "neofoam_ui.scenes.models": ["CalculatorNode", "CellCamera", "ClipNode", "ContourNode", "DisplayNode", "GlyphNode", "GridNode",
+                                 "Scene", "SceneError", "SceneFile", "SliceNode", "StreamTracerNode", "SurfaceNode",
+                                 "ThresholdNode", "ViewNode", "parse", "read_scenes", "write_scene"],
     "neofoam_ui.toy": [],
     "neofoam_ui.toy.heat1d": ["Heat1D", "Heat1DContext", "run_plain"],
 }
+
+#: Moved from NeoFOAM with its own module layout (and tested with it, in an env with neofoam).
+NEOFOAM_STYLE = ("neofoam_ui.wizard", "neofoam_ui.agent")
 
 
 @pytest.mark.parametrize("module", sorted(PUBLIC))
@@ -186,7 +194,7 @@ def test_public_api(module):
 
 
 def test_every_other_module_is_private():
-    """Every module outside ``PUBLIC`` has a ``_`` in its path and exports nothing itself."""
+    """Every module outside ``PUBLIC`` and ``NEOFOAM_STYLE`` has a ``_`` in its path and exports nothing."""
     root = SRC / "neofoam_ui"
     for path in sorted(root.rglob("*.py")):
         parts = list(path.relative_to(SRC).with_suffix("").parts)
@@ -194,6 +202,8 @@ def test_every_other_module_is_private():
             parts.pop()
         name = ".".join(parts)
         if name in PUBLIC or name == "neofoam_ui.pipelines.view":  # the Catalyst script, loaded by path
+            continue
+        if name.startswith(NEOFOAM_STYLE):
             continue
         assert any(p.startswith("_") for p in parts), f"{name}: a public module not in the API"
         assert "__all__ = ()" in path.read_text(), f"{name}: a private module exports names"

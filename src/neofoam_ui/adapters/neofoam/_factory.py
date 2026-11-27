@@ -55,7 +55,7 @@ def register_insitu() -> None:
     Under the stepper the frames go through its field view
     (:func:`neofoam_ui.catalyst.set_frame_driver`): they reach the UI with the pipeline diagram,
     and a field picked in the UI wins (serial runs). On its own the entry writes ``view_*.png``
-    to ``$NEOFOAM_UI_CATALYST_OUT``, else ``postProcessing/<name>`` of the case. Collective:
+    to ``catalyst.out`` of the config (:mod:`neofoam_ui.config`), else ``postProcessing/<name>`` of the case. Collective:
     every rank calls it at the same steps, on the solver thread. Needs neofoam importable.
     """
     importlib.import_module("neofoam_ui.adapters.neofoam._insitu")

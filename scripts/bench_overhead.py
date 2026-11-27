@@ -17,13 +17,12 @@ The UI modes run the real :class:`~neofoam_ui.app.StepperApp` in this process (t
 trame server is not started, so no browser renders; everything up to the state push
 is real), imported from ``--src`` (default this checkout's ``src``; point it at an
 older ``src`` tree to compare). Needs a sourced OpenFOAM and the NeoFOAM interpreter
-(``--python``, default ``$NEOFOAM_DIR/.venv/bin/python``); ``NEOFOAM_UI_CATALYST`` for
+(``--python``, default ``$NEOFOAM_DIR/.venv/bin/python``); ``--catalyst PREFIX`` for
 ``field``. Prints a table and appends the results as JSON lines to ``--out``.
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import os
@@ -33,7 +32,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import click
 from trame.app import get_server
 
 HERE = Path(__file__).resolve().parents[1]
@@ -130,6 +132,15 @@ async def _run_ui(case: Path, python: str, np_: int, mode: str, catalyst: str | 
         s.wait_ui = mode.endswith("-wait")
     elif mode.endswith("-wait"):
         raise SystemExit("this neofoam_ui has no 'wait for UI' option")
+    frames = 0
+    receive = app.link._on_message  # count the frames the UI got
+
+    def count(msg: dict) -> None:
+        nonlocal frames
+        frames += msg["type"] == "frame"
+        receive(msg)
+
+    app.link._on_message = count
     t0 = time.time()
     await app.spawn()
     while not str(s.status).startswith("paused"):
@@ -139,41 +150,38 @@ async def _run_ui(case: Path, python: str, np_: int, mode: str, catalyst: str | 
     while not (s.finished or s.failed or not s.connected):
         await asyncio.sleep(0.01)
     t_end = time.time()
-    run_dir = getattr(app, "run_dir", None) or getattr(app, "_run_dir", "")  # an older UI: _run_dir
-    out_dir = os.path.join(app.insitu_dir, run_dir)
-    frames = len(os.listdir(out_dir)) if run_dir and os.path.isdir(out_dir) else 0
     app.stop()
     try:
         await asyncio.wait_for(app.proc.wait(), 60)
     except asyncio.TimeoutError:
         app.proc.kill()
-    shutil.rmtree(app.insitu_dir, ignore_errors=True)
     if s.failed or not s.finished:
         raise RuntimeError(f"{mode}: the run did not finish: {s.status}")
-    return {"total": t_end - t0, "run": t_end - t_init, "pngs_kept": frames}
+    return {"total": t_end - t0, "run": t_end - t_init, "frames": frames}
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--np", type=int, default=1)
-    parser.add_argument("--end-time", type=float, default=0.02)
-    parser.add_argument("--repeat", type=int, default=2)
-    parser.add_argument("--modes", default="plain,dag-off,ui,field,plots,ui-wait,field-wait,plots-wait")
-    parser.add_argument("--src", default=str(HERE / "src"), help="neofoam_ui sources to benchmark")
-    parser.add_argument("--label", default="")
-    parser.add_argument("--python", default=str(NEOFOAM / ".venv" / "bin" / "python"))
-    parser.add_argument("--work", help="directory for the case (default: a temporary one)")
-    parser.add_argument("--out", help="append the results here as JSON lines")
-    args = parser.parse_args()
+@click.command(help=__doc__.splitlines()[0])
+@click.option("--np", type=int, default=1)
+@click.option("--end-time", type=float, default=0.02)
+@click.option("--repeat", type=int, default=2)
+@click.option("--modes", default="plain,dag-off,ui,field,plots,ui-wait,field-wait,plots-wait")
+@click.option("--src", default=str(HERE / "src"), help="neofoam_ui sources to benchmark")
+@click.option("--label", default="")
+@click.option("--python", default=str(NEOFOAM / ".venv" / "bin" / "python"))
+@click.option("--work", help="directory for the case (default: a temporary one)")
+@click.option("--out", help="append the results here as JSON lines")
+@click.option("--catalyst", metavar="PREFIX", help="Catalyst 2 + ParaView install (the field modes)")
+def main(**options: Any) -> None:
+    args = SimpleNamespace(**options)
     sys.path.insert(0, os.path.abspath(args.src))
-    catalyst = os.environ.get("NEOFOAM_UI_CATALYST")
+    catalyst = args.catalyst
     work = Path(args.work or tempfile.mkdtemp(prefix="neofoam_ui_bench_"))
     work.mkdir(parents=True, exist_ok=True)
     case = prepare(work, args.end_time, args.np)
     results = []
     for mode in args.modes.split(","):
         if mode.startswith("field") and not catalyst:
-            print(f"{mode}: skipped (set NEOFOAM_UI_CATALYST)")
+            print(f"{mode}: skipped (pass --catalyst)")
             continue
         best: dict | None = None
         for _ in range(args.repeat):

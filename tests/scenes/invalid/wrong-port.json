@@ -1,0 +1,3 @@
+{"version": 1,
+ "nodes": [{"id": "grid", "type": "grid"}, {"id": "s1", "type": "Slice"}, {"id": "view", "type": "View"}],
+ "edges": [["grid", "s1", "left"]]}

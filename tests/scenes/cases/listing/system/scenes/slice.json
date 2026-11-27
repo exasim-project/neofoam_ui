@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "s1", "type": "Slice", "props": {"axis": "x", "position": 0.9}},
+    {"id": "d1", "type": "Display"},
+    {"id": "view", "type": "View", "props": {"camera": "+x"}}
+  ],
+  "edges": [["grid", "s1"], ["s1", "d1"], ["d1", "view"]]
+}

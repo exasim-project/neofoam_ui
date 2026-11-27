@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "title": "Slice normal to y, seen from -y",
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "s1", "type": "Slice", "props": {"axis": "y", "position": 0.5}},
+    {"id": "d1", "type": "Display"},
+    {"id": "view", "type": "View", "props": {"camera": "-y"}}
+  ],
+  "edges": [["grid", "s1"], ["s1", "d1"], ["d1", "view"]]
+}

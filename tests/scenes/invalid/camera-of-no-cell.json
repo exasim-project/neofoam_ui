@@ -1,0 +1,5 @@
+{"version": 1,
+ "nodes": [{"id": "grid", "type": "grid"}, {"id": "d1", "type": "Display"},
+           {"id": "view", "type": "View", "props": {"layout": "1x2", "cameras": "per_cell",
+                                                    "cell_cameras": {"tl": {"camera": "+x"}}}}],
+ "edges": [["grid", "d1"], ["d1", "view", "left"]]}

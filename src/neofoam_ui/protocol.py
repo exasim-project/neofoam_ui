@@ -7,7 +7,9 @@ Dependency-free: imported by both sides (the worker's interpreter need not have 
 * **worker → UI** (worker stdout, one JSON object per line): ``{"type": <MESSAGES>, ...}``.
 * **rank 0 → follower rank** (socket, one JSON object per line): ``{"op": <RANK_OPS>, ...}``,
   see :mod:`neofoam_ui.parallel`.
-* **environment** the UI sets for the worker, or the user for either.
+* **UI → worker command line**: ``python -m neofoam_ui.worker <module:Factory> [--sync host:port]
+  [--catalyst PREFIX] [--data host:port]``, see :mod:`neofoam_ui.worker`; the rest comes from
+  the config files (:mod:`neofoam_ui.config`).
 """
 
 from __future__ import annotations
@@ -16,43 +18,18 @@ from types import MappingProxyType
 from typing import Mapping
 
 __all__ = [
-    "CATALYST_ENV",
-    "CATALYST_LIVE_ENV",
-    "CATALYST_OUT_ENV",
-    "CATALYST_SCRIPT_ENV",
     "COMMANDS",
-    "DELAY_ENV",
     "LOSSY",
     "MESSAGES",
     "RANK_OPS",
-    "SYNC_ENV",
     "UI_URGENT",
-    "WAIT_ENV",
     "WORKER_URGENT",
 ]
-
-# -- environment --------------------------------------------------------------------------------
-
-#: Catalyst 2 + ParaView install prefix for the in-situ field view.
-CATALYST_ENV = "NEOFOAM_UI_CATALYST"
-#: Directory the worker's Catalyst writes its images to (set by the UI).
-CATALYST_OUT_ENV = "NEOFOAM_UI_CATALYST_OUT"
-#: Another Catalyst pipeline script than ``pipelines/view.py`` (gets every cell field).
-CATALYST_SCRIPT_ENV = "NEOFOAM_UI_CATALYST_SCRIPT"
-#: ``host:port`` for ParaView's Catalyst Live (``off`` or unset: none). The pipeline script
-#: ``pipelines/view.py`` reads the same name on its own (it imports nothing from here).
-CATALYST_LIVE_ENV = "NEOFOAM_UI_CATALYST_LIVE"
-#: ``host:port`` rank 0 listens on for the other ranks of an MPI run (set by the UI).
-SYNC_ENV = "NEOFOAM_UI_SYNC"
-#: Default animation delay in ms (the UI's ``--delay``).
-DELAY_ENV = "NEOFOAM_UI_DELAY_MS"
-#: Default of "wait for UI" (the UI's ``--wait-ui``).
-WAIT_ENV = "NEOFOAM_UI_WAIT"
 
 # -- UI → worker ----------------------------------------------------------------------------------
 
 COMMANDS = frozenset({"step", "pause", "breakpoints", "every_pass", "delay", "watch", "wait", "ack", "view",
-                      "live", "frames", "stop"})
+                      "live", "frames", "export", "stop"})
 
 # -- worker → UI ----------------------------------------------------------------------------------
 

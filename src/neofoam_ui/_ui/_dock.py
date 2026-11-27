@@ -94,6 +94,7 @@ _SCRIPT = r"""
   function defaultDock(d) {
     d.addPanel('step', BY.step.title, BY.step.tmpl, {});
     d.addPanel('plots', BY.plots.title, BY.plots.tmpl, {position: {referencePanel: 'step', direction: 'within'}, inactive: true});
+    d.addPanel('editor', BY.editor.title, BY.editor.tmpl, {position: {referencePanel: 'step', direction: 'within'}, inactive: true});
     d.addPanel('cfd', BY.cfd.title, BY.cfd.tmpl, {position: {referencePanel: 'step', direction: 'within'}, inactive: true});
     d.addPanel('console', BY.console.title, BY.console.tmpl, {position: {referencePanel: 'step', direction: 'below'}, initialHeight: 260});
     d.addPanel('fields', BY.fields.title, BY.fields.tmpl, {position: {referencePanel: 'console', direction: 'within'}, inactive: true});

@@ -22,7 +22,7 @@
 
 ## Hard constraints
 
-- NeoFOAM is not a dependency: tests that need it run its interpreter (`NEOFOAM_PYTHON`, `NEOFOAM_SRC`) in a subprocess and are skipped without it. Catalyst/ParaView (`NEOFOAM_UI_CATALYST`) and Node.js are optional the same way.
+- NeoFOAM is not a dependency: tests that need it run its interpreter (`NEOFOAM_PYTHON`, `NEOFOAM_SRC`) in a subprocess and are skipped without it. Catalyst/ParaView (`NEOFOAM_TEST_CATALYST`, a test-only variable: tests hand it to the code as `--catalyst` or in a temp config file) and Node.js are optional the same way.
 - One solver per worker process — several runs go through separate worker subprocesses.
 - Golden files change only on purpose: regenerate them, review the diff, commit it with the change.
 - Never delete or weaken an existing test to get green.

@@ -9,9 +9,11 @@ run goes on, with no view open; Catalyst is faked inside the worker for that
 without the stepper writes images of its own, which needs a real Catalyst + ParaView.
 
 Opt-in: needs a NeoFOAM interpreter (``NEOFOAM_PYTHON``) and a sourced OpenFOAM; the image
-tests also ``NEOFOAM_UI_CATALYST``. The worker is a subprocess: one solver per process.
+tests also ``NEOFOAM_TEST_CATALYST`` (passed as ``--catalyst``, or written to the case's
+``system/neofoam_ui.yaml`` for a run without the stepper). The worker is a subprocess: one solver per process.
 """
 
+import base64
 import json
 import os
 import shutil
@@ -19,18 +21,21 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from neofoam_case import pitzdaily
 
 PYTHON = os.environ.get("NEOFOAM_PYTHON")
-CATALYST = os.environ.get("NEOFOAM_UI_CATALYST")
+CATALYST = os.environ.get("NEOFOAM_TEST_CATALYST")
 pytestmark = pytest.mark.skipif(
     not PYTHON or not os.environ.get("WM_PROJECT_DIR"),
     reason="set NEOFOAM_PYTHON and source OpenFOAM to run NeoFOAM",
 )
-needs_catalyst = pytest.mark.skipif(not CATALYST, reason="set NEOFOAM_UI_CATALYST to render with Catalyst")
+needs_catalyst = pytest.mark.skipif(not CATALYST, reason="set NEOFOAM_TEST_CATALYST to render with Catalyst")
 TESTS = Path(__file__).resolve().parent
 SRC = TESTS.parent / "src"
 CASE = TESTS / "neofoam" / "cases" / "insitu_view"
+#: The signature every PNG starts with.
+PNG = b"\x89PNG\r\n\x1a\n"
 #: The case's end time (``helpers/neofoam_case.py``).
 END_TIME = 5e-4
 
@@ -46,9 +51,9 @@ def _env(**extra: str) -> dict:
     return {**os.environ, "PYTHONPATH": path, **extra}
 
 
-def _run_worker(case: Path, solver: str, **env: str) -> list[dict]:
-    """Every message of a worker that runs ``solver`` to the end."""
-    proc = subprocess.Popen([PYTHON, "-u", "-m", "neofoam_ui.worker", solver], cwd=case, env=_env(**env),
+def _run_worker(case: Path, solver: str, *options: str) -> list[dict]:
+    """Every message of a worker that runs ``solver`` (with the worker's ``options``) to the end."""
+    proc = subprocess.Popen([PYTHON, "-u", "-m", "neofoam_ui.worker", solver, *options], cwd=case, env=_env(),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     proc.stdin.write(json.dumps({"cmd": "step", "mode": "run"}) + "\n")
     proc.stdin.flush()
@@ -87,17 +92,18 @@ def test_the_insitu_operation_is_a_node_of_the_graph(tmp_path):
 
 @needs_catalyst
 def test_the_stepper_receives_catalyst_images_while_running(tmp_path):
-    out = tmp_path / "images"
-    messages = _run_worker(_case(tmp_path), "neofoam_ui.adapters.neofoam:incompressible_fluid",
-                           NEOFOAM_UI_CATALYST_OUT=str(out))
+    case = _case(tmp_path)
+    messages = _run_worker(case, "neofoam_ui.adapters.neofoam:incompressible_fluid", "--catalyst", CATALYST)
     frames = _frames(messages)
-    assert frames and all((out / f["file"]).is_file() for f in frames[-3:])
+    assert frames and all(base64.b64decode(f["image"])[:8] == PNG for f in frames[-3:])
     assert "pipeline" in frames[0]
+    assert not (case / "postProcessing" / "view").exists()  # the stepper's frames are no files
 
 
 @needs_catalyst
 def test_a_plain_solver_run_writes_the_images_of_the_entry(tmp_path):
     case = _case(tmp_path)
+    (case / "system" / "neofoam_ui.yaml").write_text(yaml.safe_dump({"catalyst": {"prefix": CATALYST}}))
     run = ("from neofoam_ui.adapters.neofoam import register_insitu\n"
            "register_insitu()\n"
            "from neofoam.solver.incompressibleFluid.incompressibleFluid import run\n"

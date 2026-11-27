@@ -1,0 +1,7 @@
+# one case over the user's settings
+catalyst:
+  prefix: /case/catalyst
+  script: pipelines/mine.py
+ui:
+  delay_ms: 120
+  wait_ui: true

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "title": "T at x 90 % left, at x 10 % right",
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "s1", "type": "Slice", "props": {"axis": "x", "position": 0.9}},
+    {"id": "s2", "type": "Slice", "props": {"axis": "x", "position": 0.1}},
+    {"id": "d1", "type": "Display"},
+    {"id": "d2", "type": "Display"},
+    {"id": "view", "type": "View", "props": {"camera": "+x", "layout": "1x2"}}
+  ],
+  "edges": [["grid", "s1"], ["grid", "s2"], ["s1", "d1"], ["s2", "d2"], ["d1", "view", "left"],
+            ["d2", "view", "right"]]
+}

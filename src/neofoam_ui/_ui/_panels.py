@@ -3,11 +3,11 @@
 Two kinds of panel:
 
 * **views** (``kind="main"``): wide; tabs of the dock (trame-dockview) in the main area,
-  split and docked freely. The step view (the diagram), plots, the CFD view (Catalyst) and
+  split and docked freely. The step view (the diagram), plots, the scene editor, the CFD view (Catalyst) and
   every extension pane, the console and the field table.
 * **side panels** (``kind="side"``): narrow; stacked and collapsible in the left or the
   right sidebar, movable to the other one. Containment tree, call stack, breakpoints,
-  inspector, variables, options, legend.
+  inspector, variables, options, legend, scenes.
 
 Each panel's widgets are a trame template of their own (:attr:`_Panel.template`): the dock,
 the sidebars and the phone's stack show it with ``<trame-template>``, so it is built once.
@@ -19,13 +19,14 @@ whether frames are wanted).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, cast
 
 from trame.widgets import html
 from trame.widgets import vuetify3 as v3
 
 if TYPE_CHECKING:
     from neofoam_ui._ui._app import StepperApp
+    from neofoam_ui._ui.panes._field import _FieldPane
 
 __all__ = ()
 
@@ -65,7 +66,8 @@ class _Panel:
 def _catalogue(app: StepperApp) -> list[_Panel]:
     """Every panel, in launcher order: the views (the built-in ones, the extension panes), then
     the side panels."""
-    dag, field, plots = app.dag, app.pane("field"), app.pane("plots")
+    dag, field, plots = app.dag, cast("_FieldPane", app.pane("field")), app.pane("plots")
+    editor = app.pane("scene_editor")
 
     def view(pane: Any, pid: str, icon: Optional[str] = None) -> _Panel:
         t = pane.toggle
@@ -73,11 +75,12 @@ def _catalogue(app: StepperApp) -> list[_Panel]:
             return _Panel(pane.name, pane.name, pane.name, "mdi-puzzle-outline", "main", pane.build)
         return _Panel(pid, t.label, t.short or t.label, icon or t.icon, "main", pane.build, t.key, t.title)
 
-    builtin = {dag.name, field.name, plots.name}
+    builtin = {dag.name, field.name, plots.name, editor.name}
     side = dag.side_panels()
     return [
         view(dag, "step"),
         view(plots, "plots"),
+        view(editor, "editor"),
         view(field, "cfd"),
         _Panel("console", "Console", "Console", "mdi-console", "main", _console,
                tip="the simulation console, newest first"),
@@ -88,6 +91,9 @@ def _catalogue(app: StepperApp) -> list[_Panel]:
                tip="the init steps and the ops per region; a click selects", side="left", open=True),
         _Panel("breakpoints", "Breakpoints", "Breaks", "mdi-record-circle-outline", "side", side["breakpoints"],
                side="left", open=True, collapsed=True, badge="bps.length"),
+        _Panel("scenes", "Scenes", "Scenes", "mdi-layers-outline", "side", field.build_scenes,
+               tip="the in-situ scenes of the case: switch, new, duplicate, rename, delete, save", side="left",
+               open=True),
         _Panel("inspector", "Inspector", "Inspect", "mdi-information-outline", "side", side["inspector"],
                tip="the selected node", open=True),
         _Panel("callstack", "Call stack", "Stack", "mdi-layers-outline", "side", side["callstack"],

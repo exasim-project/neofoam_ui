@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "title": "side-by-side's filters in a 2x2 layout: x 90 % top left, x 10 % bottom right",
+  "nodes": [
+    {"id": "grid", "type": "grid"},
+    {"id": "s1", "type": "Slice", "props": {"axis": "x", "position": 0.9}},
+    {"id": "s2", "type": "Slice", "props": {"axis": "x", "position": 0.1}},
+    {"id": "d1", "type": "Display"},
+    {"id": "d2", "type": "Display"},
+    {"id": "view", "type": "View", "props": {"camera": "+x", "layout": "2x2"}}
+  ],
+  "edges": [["grid", "s1"], ["grid", "s2"], ["s1", "d1"], ["s2", "d2"], ["d1", "view", "tl"],
+            ["d2", "view", "br"]]
+}

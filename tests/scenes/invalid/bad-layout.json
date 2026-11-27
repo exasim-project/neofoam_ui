@@ -1,0 +1,3 @@
+{"version": 1,
+ "nodes": [{"id": "grid", "type": "grid"}, {"id": "view", "type": "View", "props": {"layout": "3x3"}}],
+ "edges": []}

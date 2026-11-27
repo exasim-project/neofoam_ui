@@ -13,14 +13,12 @@ from typing import Any, Optional
 from neofoam_ui import catalyst
 from neofoam_ui.engine import Session
 from neofoam_ui.parallel._mpi import _finish
-from neofoam_ui.parallel._ranks import _address
 
 __all__ = ()
 
 
-def _follow(solver: Any, rank: int, timeout: float = 300.0) -> int:
-    """Run ``solver`` as follower ``rank`` until rank 0 says stop."""
-    address = _address()
+def _follow(solver: Any, rank: int, address: tuple[str, int], timeout: float = 300.0) -> int:
+    """Run ``solver`` as follower ``rank`` until rank 0 (at ``address``) says stop."""
     deadline = time.monotonic() + timeout
     while True:  # rank 0 may not be listening yet
         try:

@@ -11,7 +11,7 @@ import numpy as np
 from rank_toy import RankHeat
 
 from neofoam_ui.engine import Session
-from neofoam_ui.parallel import SYNC_ENV, rank_info
+from neofoam_ui.parallel import rank_info
 
 HELPERS = Path(__file__).with_name("helpers")
 SPEC = "rank_toy:RankHeat"
@@ -25,9 +25,8 @@ def _port():
 
 def _worker(rank, size, port, **kw):
     env = {**os.environ, "OMPI_COMM_WORLD_RANK": str(rank), "OMPI_COMM_WORLD_SIZE": str(size),
-           SYNC_ENV: f"127.0.0.1:{port}",
            "PYTHONPATH": os.pathsep.join([str(HELPERS), os.environ.get("PYTHONPATH", "")])}
-    return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", SPEC], env=env,
+    return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", SPEC, "--sync", f"127.0.0.1:{port}"], env=env,
                             text=True, **kw)
 
 

@@ -16,11 +16,10 @@ from self_driven import RankSelfDriven, SelfDriven
 from test_parallel import _port
 
 from neofoam_ui import catalyst
+from neofoam_ui.config import CatalystConfig
 from neofoam_ui.adapters.neofoam._base import _NeoFoamBase as _FieldsMixin
-from neofoam_ui.catalyst import InSitu
 from neofoam_ui.engine import _tracking as engine
 from neofoam_ui.engine import UNTRACKED, Session
-from neofoam_ui.parallel import SYNC_ENV
 from neofoam_ui.protocol import LOSSY
 from neofoam_ui.toy.heat1d import Heat1D
 from neofoam_ui.worker._out import _Out
@@ -171,22 +170,21 @@ def test_a_delay_animates_every_event():
     assert len(of(messages, "running")) == events - 1  # every event it passed (not the end)
 
 
-# -- live frames: interval and retention ---------------------------------------------------------
+# -- live frames: their interval ---------------------------------------------------------
 
 
 class FakeInSitu:
-    def __init__(self):
+    def __init__(self, out_dir=None):
         self.step = 0
 
     def execute(self, geom, fields, time, params):
         self.step += 1
-        return f"view_{self.step - 1:06d}.png"
+        return b"png"
 
 
 @pytest.fixture
-def fake_catalyst(monkeypatch, tmp_path):
-    monkeypatch.setenv(catalyst.ENV, "/nowhere")
-    monkeypatch.setenv(catalyst.OUT_ENV, str(tmp_path))
+def fake_catalyst(monkeypatch):
+    catalyst.use(CatalystConfig(prefix="/nowhere"))
     monkeypatch.setattr(catalyst, "InSitu", FakeInSitu)
 
 
@@ -203,15 +201,6 @@ def test_live_frames_at_their_interval(fake_catalyst, every, seconds, expected):
     frames = len(of(messages, "frame")) - n  # live ones, and the final pause's if values changed
     steps = session.calls["time_loop"] - 1  # the loop tests after the first
     assert frames == {"all": steps, "third": steps // 3 + 1, "none": 1}[expected]
-
-
-def test_only_the_newest_images_are_kept(tmp_path):
-    insitu = types.SimpleNamespace(out_dir=str(tmp_path), step=0, _pruned=0)
-    for step in range(30):
-        (tmp_path / f"view_{step:06d}.png").write_bytes(b"png")
-        insitu.step = step + 1
-        InSitu.prune(insitu, 5)
-    assert sorted(p.name for p in tmp_path.iterdir()) == [f"view_{s:06d}.png" for s in range(25, 30)]
 
 
 # -- post-processing rows: converted on rank 0 only -------------------------------------------------
@@ -382,9 +371,9 @@ def test_followers_pass_the_events_of_a_free_run_alike(monkeypatch):
 
     def worker(rank, **kw):
         env = {**os.environ, "OMPI_COMM_WORLD_RANK": str(rank), "OMPI_COMM_WORLD_SIZE": "2",
-               SYNC_ENV: f"127.0.0.1:{port}",
                "PYTHONPATH": os.pathsep.join([HELPERS, os.environ.get("PYTHONPATH", "")])}
-        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven"],
+        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven",
+                                 "--sync", f"127.0.0.1:{port}"],
                                 env=env, text=True, **kw)
 
     root = worker(0, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -437,10 +426,10 @@ def test_followers_honour_a_pause_at_the_next_time_step():
     port = _port()
 
     def worker(rank, **kw):
-        env = {**os.environ, "OMPI_COMM_WORLD_RANK": str(rank), "OMPI_COMM_WORLD_SIZE": "2",
-               SYNC_ENV: f"127.0.0.1:{port}", "SELF_DRIVEN_SLEEP": "0.02",
+        env = {**os.environ, "OMPI_COMM_WORLD_RANK": str(rank), "OMPI_COMM_WORLD_SIZE": "2", "SELF_DRIVEN_SLEEP": "0.02",
                "PYTHONPATH": os.pathsep.join([HELPERS, os.environ.get("PYTHONPATH", "")])}
-        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven"],
+        return subprocess.Popen([sys.executable, "-m", "neofoam_ui.worker", "self_driven:RankSelfDriven",
+                                 "--sync", f"127.0.0.1:{port}"],
                                 env=env, text=True, **kw)
 
     root = worker(0, stdin=subprocess.PIPE, stdout=subprocess.PIPE)

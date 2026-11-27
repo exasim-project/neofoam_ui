@@ -1,0 +1,3 @@
+# the user file without XDG_CONFIG_HOME
+worker:
+  np: 3

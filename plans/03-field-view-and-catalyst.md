@@ -19,12 +19,35 @@ solver rank r (worker)                                 UI (trame)
                      conduit Blueprint node: this rank's polyhedra + every cell field,
                      arrays passed by pointer (no copy)
                      └─ libcatalyst-paraview ─► pipelines/view.py (paraview.simple)
-                          IceT compositing over all ranks ─► view_<step>.png (rank 0)
-  {"type": "frame", "file": "view_000003.png", ...} ───────────► <img src="insitu/run1/...">
+                          image mode: CaptureWindow on every rank, IceT composites ─► PNG bytes (rank 0)
+                          data mode:  Catalyst Live ─► the UI's ParaView (pvpython) ─► trame remote view
+  {"type": "frame", "mode": "image", "image": "<base64 PNG>", ...} ───► <img src="data:image/png;base64,...">
+  {"type": "frame", "mode": "data", "image": null, ...}           ───► recolour the Live data, redraw
 ```
 
-- **No field data passes through the UI.** The only thing sent per pause is the PNG file name.
-  The UI serves the directory (`insitu/`, a temp dir per UI, one `run<N>` per worker start).
+- **Two modes, a toggle `image | data` in the pane's bar** (`{"cmd": "view", ..., "mode": "image|data"}`;
+  the choice applies to the next frame, switching at a pause renders again).
+- **Image mode: no field data passes through the UI.** Rank 0 encodes the composited image in
+  memory (`InSitu.execute` → `CaptureWindow` → `vtkPNGWriter.WriteToMemory`); the bytes travel
+  in the `frame` message (base64) and the pane shows them as a data URL. No files, no served
+  directory. A solver's own `insitu` entry outside the stepper still writes `view_*.png`
+  (`catalyst.out` of the config, else `postProcessing/<name>`): with an output directory the
+  pipeline adds its PNG extractor and nothing is captured.
+- **Data mode: Catalyst Live, trame renders.** Only when the UI runs under the `pvpython` of a
+  ParaView 6.0 *with web modules* (`paraview.modules.vtkPVClientWeb`, for trame-vtk's
+  `paraview.VtkRemoteView`); otherwise the button is greyed out with the reason. The UI picks a
+  free port and passes it to the worker as `--data localhost:<port>` (the pipeline gets it as
+  the script argument `data=…`); it
+  listens (`live.ConnectToCatalyst`) when data mode is first chosen, polls the socket every
+  20 ms, and listens again after the worker restarts. The pipeline publishes to Live only for
+  frames in data mode (it sets `options.EnableCatalystLive` per execute), updates `surface`
+  itself (Live sends the extracts as they are) and renders no picture. The UI extracts
+  `surface` (default) or `grid` (*volume*, picked in the bar; the pick redraws the current
+  frame, `"redraw": true`); only the extracted source travels. Live's pause is not used: the
+  stepper steps. `_ui/_live.py` colours the data by the viewed field (Viridis, data range).
+  The Catalyst-only build of §2 has no web modules: run the UI with a ParaView 6.0.1 release
+  (`~/software/ParaView-6.0.1/bin/pvpython --venv .pixi/envs/default -m neofoam_ui.app …`); the
+  worker keeps the Catalyst build. Live's handshake carries the version (6.0), not the build.
 - **Whole domain under MPI.** Every rank publishes its own subdomain; ParaView composites.
   Image size, camera and colour range come from an MPI all-reduce in the pipeline, so the
   ranks agree (different image sizes crash IceT's gather).
@@ -32,16 +55,31 @@ solver rank r (worker)                                 UI (trame)
   followers with `{"op": "render", "params": …}` on the sync socket; each rank calls
   `catalyst_execute` on its solver thread (where MPI was initialised).
 - **Live frames:** while running, a frame is rendered at every time step (outer loop test) unless the pane's *live* toggle is off (`{"cmd": "live", "on": false}`); then only at pauses.
-- **Catalyst Live:** `NEOFOAM_UI_CATALYST_LIVE=host:port` enables Live in the pipeline and
-  renders at every pause even with the pane closed. Connect a ParaView 6.0 GUI (*Catalyst ▸
-  Connect*).
+- **Display options** (`{"cmd": "view", ..., "options": {...}}`, passed to the pipeline as
+  parameters; names in `pipelines/view.py`'s docstring). Image mode: the stage's size in device
+  pixels (≤ 2 per CSS pixel, reported after 300 ms at rest; the pane's picture has no empty
+  bands), camera presets ±x/±y/±z/reset at zoom 1 and zoom (buttons over the picture, the mouse
+  wheel), colour range auto/fixed, colour map, log scale (refused with a ⚠ note in the message
+  when the range reaches ≤ 0; the pipeline reports it with the domain bounds and the default cut
+  axis, `InSitu.report`). Settings rest 250 ms before the ranks render (each frame at a pause is
+  collective). A new size refits only the reset camera at zoom 1. Data mode sends only the cut;
+  camera and colours are applied by `_ui/_live.py`. All settings survive a restart; a fixed
+  range goes back to auto with another field or component.
+- **Slice / clip:** *show* = surface | slice | clip (| volume in data mode); axis x/y/z (default:
+  the longest in-plane axis of a 2D case, else z), position 0–100 % of the domain (shown as the
+  coordinate), clip keeps the lower side unless *flip*. In data mode the cut is the extracted
+  source (only it travels).
+- **Catalyst Live to a desktop ParaView:** `catalyst.live: host:port` in the config enables Live in
+  the pipeline at every frame and renders at every pause even with the pane closed. Connect a
+  ParaView 6.0 GUI (*Catalyst ▸ Connect*). Data mode is unavailable then (one Live per run).
 - **Fields offered:** the solver's optional `view_fields(ctx)` (default `fields`). The NeoFOAM
   adapter adds every `volScalarField`/`volVectorField` on the mesh registry (`k`, `epsilon`,
   `nut`, …; not `*_0` / `*PrevIter`); the statistics table keeps `ctx.fields`.
 - **Switching while running:** the worker sets `Session.view` from its command reader
   (`request_view`), so the next live frame shows it; each frame names the request it answers
   (`view`), and the UI ignores frames for an earlier choice.
-- Another pipeline: `NEOFOAM_UI_CATALYST_SCRIPT=<file>` (a Catalyst-v2 script, channel `grid`,
+- Another pipeline: `catalyst.script: <file>` in the config (under the stepper its own extracts go to
+  `postProcessing/catalyst` of the case; the image is captured from its first render view) (a Catalyst-v2 script, channel `grid`,
   parameters `field=…` and `component=mag|0|1|2` via `info.catalyst_params`).
 
 - **Post-processing diagram** (toolbar *Pipeline*, `_ui/panes/_pipeline.py`): after each execute rank 0
@@ -53,7 +91,7 @@ solver rank r (worker)                                 UI (trame)
   `pipeline_ms` always: the whole execute plus per node from the second execute on (Start/End
   observers on rank 0's algorithms and render windows; displays and extractors are not timed
   separately). `_ui/_layout/_pipeline.py` draws it in a second VueFlow editor, layered by
-  data flow. Opening the pane also turns rendering on; any `NEOFOAM_UI_CATALYST_SCRIPT` pipeline
+  data flow. Opening the pane also turns rendering on; any `catalyst.script` pipeline
   shows as itself.
 
 ### 1.1 Geometry (`geometry.py`)
@@ -90,9 +128,14 @@ Install prefix `~/software/paraview-catalyst/install` (482 MB), all for the NeoF
    -DVTK_USE_X=OFF -DVTK_OPENGL_HAS_EGL=ON -DPARAVIEW_USE_QT=OFF`. About 18.8k targets with
    `-j8`; source and build trees are in `~/software/paraview-catalyst/{src,build}`.
 
-Use: `NEOFOAM_UI_CATALYST=<prefix>` in the UI's environment (or `--catalyst <prefix>`). The UI
-passes it and the image directory (`NEOFOAM_UI_CATALYST_OUT`) to the worker. Unset → the pane
-says how to enable it; nothing else changes.
+Use: `catalyst.prefix: <prefix>` in a config file (`neofoam_ui.config`: the user's
+`~/.config/neofoam_ui/config.yaml`, or the case's `system/neofoam_ui.yaml`, which wins), or
+`--catalyst <prefix>` (wins over both). The UI passes it to the worker as `--catalyst` (and,
+when it offers data mode, its Live address as `--data`); the worker reads the rest of the
+`catalyst` section (`script`, `out`, `live`) from the same files, and hands the pipeline
+script `key=value` arguments (`out=`, `live=`, `data=`). A solver's own `insitu` entry outside
+the stepper reads the files of its case. Unset → the pane says how to enable it; nothing else
+changes.
 
 Long-term: a Spack/conda recipe for this pair (conda-forge would need a `libcatalyst` package
 and `PARAVIEW_ENABLE_CATALYST=ON` in its `paraview` feedstock).
@@ -105,7 +148,7 @@ and `PARAVIEW_ENABLE_CATALYST=ON` in its `paraview` feedstock).
   only rank 0 describes, a failing description keeps the frames, layout; real ParaView: the
   default and another script described with settings and times): the view protocol with Catalyst faked (frames only on
   change, field fallback, components, no geometry, unconfigured, failing Catalyst, other ranks
-  told), polyMesh → polyhedra; with `NEOFOAM_UI_CATALYST` set also a Blueprint `verify` and a
+  told), polyMesh → polyhedra; with `NEOFOAM_TEST_CATALYST` set also a Blueprint `verify` and a
   real ParaView render (polyhedral and line) in a fresh interpreter.
   Run those with the venv: `PYTHONPATH=src $NEOFOAM_PYTHON -m pytest tests/test_field_view.py`.
 - pitzDaily in the UI (playwright): serial and `np 2`, several time steps, the image updates;
@@ -114,8 +157,6 @@ and `PARAVIEW_ENABLE_CATALYST=ON` in its `paraview` feedstock).
 
 ## 4. Open points
 
-- Interactive view in the browser (rotate/zoom): ParaView Live to a desktop works today; in the
-  page it would need remote rendering (trame + ParaView) attached to the in-situ pipeline.
 - Dynamic meshes: rebuild the geometry when `mesh.changing()`.
 - The scalar bar title shows the array name, not `|U|`.
 - Pipeline diagram: no per-node time for displays and extractors (only the whole execute);
